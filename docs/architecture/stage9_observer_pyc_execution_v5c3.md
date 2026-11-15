@@ -23,16 +23,25 @@ as well as the V3 and runtime inventories. Changing a declaration without
 changing its independently maintained pin is refused. V3 itself contains no
 APT snapshot authority; these checks do not promote V4c acceptance.
 
-The collector is trusted controller-side executable code, outside the guest.
-Its implementation and its observations require separate review. A Python
-protocol, a collector name, a JSON document, or a claimed `CONTROLLER_OBSERVED`
-string does not authenticate a collector or prove hypervisor enforcement. This
-change supplies no qualified libvirt adapter. Until an operator supplies and
-reviews that integration, no exact run is possible through the mechanism.
+Collector identity has no separately approved verification mechanism in this
+version. Every `CONTROLLER_OBSERVED` claim is therefore refused with
+`EXECUTION_BLOCKED` / `COLLECTOR_IDENTITY_UNVERIFIED` before any `inspect`,
+`execute` or `stop` callback. Only a plain-string `SYNTHETIC` label permits
+mechanism tests, whose successful result is always `SYNTHETIC_MECHANISM_MATCH`.
+The admitted label is captured once; changing it during a synthetic run cannot
+promote the result or relabel its records as controller observations.
+
+A Python protocol implementation, collector name, process declaration, nonce,
+JSON document or SHA-256 report checksum authenticates no collector and proves
+no actual VM execution or hypervisor enforcement. This version cannot emit or
+export `LOCAL_EXECUTION_OBSERVATION`; `exact_target_test` stays `NOT_TESTED`.
+A prepared VM or a new adapter alone cannot unlock that status. A separately
+approved collector-identification mechanism must first be implemented and
+reviewed; no caller-provided name, label, flag or report can enable it.
 
 | Level | Meaning | V5c3 treatment |
 | --- | --- | --- |
-| A, local execution observation | An outside controller observes a qualified disposable VM and measures input, process and output | Available only through an explicitly trusted controller integration; synthetic mechanism results are separately labelled |
+| A, local execution observation | An outside controller observes a qualified disposable VM and measures input, process and output | BLOCKED: no separately approved collector-identification mechanism; this version never emits this status |
 | Guest report | Data printed by the worker inside the VM | Always `GUEST_REPORTED`; cannot attest the VM or substitute for independently collected bytes |
 | B, independently bound execution evidence | Run provenance, nonce, measurements and integrity linked to an independently maintained registry | `UNVERIFIED`; no registry or signing authority is introduced |
 | C, accepted reconstruction evidence | Evidence formally accepted under a separately approved policy and authority | `UNVERIFIED`; no automatic promotion from A or B |
@@ -42,6 +51,10 @@ Every result retains Stage 9 `IN_PROGRESS`, Observer 3A `BLOCKED`, Stage 3B
 `UNVERIFIED`, durable anti-rollback and runtime qualification `BLOCKED`.
 
 ## Required outside-controller procedure
+
+This is the future procedure after a separately approved collector-identification
+mechanism is implemented. It cannot bypass the current synthetic-only API.
+All source, runtime, isolation, process and output checks remain required.
 
 1. Select an already prepared disposable offline KVM/libvirt VM. Inspect its
    actual hypervisor configuration and effective runtime state. Do not modify
@@ -63,7 +76,8 @@ Every result retains Stage 9 `IN_PROGRESS`, Observer 3A `BLOCKED`, Stage 3B
    outside the guest. A requested limit or in-guest declaration is insufficient.
    Keep enforcement active for the complete run and output capture. Stop the
    whole VM on timeout, interruption, failed measurement or collection error.
-5. Supply the pinned V5c2 policy, V5b archives and inventory, independently
+5. After collector identification is separately approved and implemented,
+   supply the pinned V5c2 policy, V5b archives and inventory, independently
    expected source hash and PYC digest, exact repository commit and reviewed
    collector. The orchestrator validates source provenance, generates a fresh
    run ID/nonce and supplies the canonical request and exact source bytes.
@@ -156,6 +170,9 @@ not establish runtime closure.
 
 ## What is needed to unblock exact execution
 
+- A separately approved and implemented mechanism that verifies collector
+  identity independently of its labels, name, process declarations, nonces and
+  report checksums. The current API has no real-observation admission path.
 - An already prepared VM meeting every isolation requirement and an operator
   authorized to use it, with independently observed enforcement evidence.
 - A reviewed outside-guest collector implementation bound to that VM and image,

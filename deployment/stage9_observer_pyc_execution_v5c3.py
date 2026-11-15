@@ -1,10 +1,10 @@
 """Controlled reconstruction collection, separate from acceptance of evidence.
 
-The only execution boundary is an explicitly supplied, live outside-VM
-collector. This module never launches a host process or interprets a PYC body.
-A collector is trusted code, not a JSON report or independent VM attestation.
-No concrete controller is qualified by this module; absent one, execution is
-blocked. Synthetic collectors exercise mechanics and cannot verify a target run.
+Only synthetic collectors may exercise this mechanism. Real observation is
+blocked until a separately approved collector-identification mechanism exists;
+collector labels, names and process reports cannot authenticate their origin.
+This module never launches a host process or interprets a PYC body. Synthetic
+collectors cannot verify a target run or qualify a concrete VM controller.
 """
 
 from __future__ import annotations
@@ -142,7 +142,11 @@ class ProcessObservationV5c3:
 
 
 class PreparedVMCollectorV5c3(Protocol):
-    """Trusted external controller interface; implementing it is not approval.
+    """Collection interface; implementing it supplies no identity or approval.
+
+    Only the SYNTHETIC claim is admitted for mechanism tests. A claimed
+    CONTROLLER_OBSERVED origin is blocked before callbacks: no separately
+    approved collector-identification mechanism is implemented here.
 
     inspect must observe effective hypervisor state and freeze the complete
     runtime tree. execute must stage immutable source/request in read-only
@@ -238,7 +242,6 @@ class ReconstructionResultV5c3:
         "EXECUTION_FAILED",
         "RECONSTRUCTION_MISMATCH",
         "SYNTHETIC_MECHANISM_MATCH",
-        "LOCAL_EXECUTION_OBSERVATION",
     ]
     reason_codes: tuple[str, ...]
     files: tuple[ExecutionRecordV5c3, ...] = ()
@@ -264,9 +267,7 @@ class ReconstructionResultV5c3:
     refused: Literal[True] = field(default=True, init=False)
 
     @property
-    def exact_target_test(self) -> str:
-        if self.consistency == "LOCAL_EXECUTION_OBSERVATION":
-            return "LOCAL_OBSERVATION_UNACCEPTED"
+    def exact_target_test(self) -> Literal["NOT_TESTED"]:
         return "NOT_TESTED"
 
 
@@ -316,6 +317,17 @@ def serialize_reconstruction_result_v5c3(result: ReconstructionResultV5c3) -> by
     checksum neither authenticates origin nor supplies independent evidence.
     """
     _require(type(result) is ReconstructionResultV5c3, "FORMAT_REJECTED")
+    _require(
+        type(result.consistency) is str
+        and result.consistency
+        in {
+            "EXECUTION_BLOCKED",
+            "EXECUTION_FAILED",
+            "RECONSTRUCTION_MISMATCH",
+            "SYNTHETIC_MECHANISM_MATCH",
+        },
+        "RESULT_STATUS_REJECTED",
+    )
     _require(len(result.files) + len(result.diagnostic_records) <= 128, "LIMIT_EXCEEDED")
     payload = asdict(result)
     payload["exact_target_test"] = result.exact_target_test
@@ -578,19 +590,20 @@ def reconstruct_pyc_set_v5c3(
     resource_limits: ExecutionLimitsV5c3 = ExecutionLimitsV5c3(),
     limits: Limits = _DEFAULT_LIMITS,
 ) -> ReconstructionResultV5c3:
-    """Capture source, control a prepared VM and atomically compare actual bytes.
+    """Exercise synthetic collection and atomically compare actual bytes.
 
     The caller must supply independently maintained policy/inventory pins and
-    trusted controller code. A matching guest report is never consumed as
-    proof. Runtime inventory identity is checked before every launch and after
-    every run; source and output are immutable bytes measured in this process.
-    A failed member or failed VM stop invalidates the complete declared set.
+    synthetic collector code. Real controller claims are blocked before any
+    callbacks until a separate identification mechanism is approved. A matching
+    guest report is never consumed as proof. Runtime inventory identity is
+    checked before every launch and after every run; source and output are
+    immutable bytes measured in this process. A failed member or failed VM stop
+    invalidates the complete declared set.
     """
     records: list[ExecutionRecordV5c3] = []
     controller_used = False
     execution_started = False
     reason: str | None = None
-    synthetic = True
     try:
         _validate_limits(limits)
         for descriptor in fields(Limits):
@@ -656,15 +669,17 @@ def reconstruct_pyc_set_v5c3(
         sources = _source_bytes(inventory_raw, archives, requests, budget)
         _require(collector is not None, "QUALIFIED_ISOLATION_UNAVAILABLE")
         assert collector is not None
+        declared_origin = collector.origin
         _require(
-            collector.origin in {"CONTROLLER_OBSERVED", "SYNTHETIC"},
+            type(declared_origin) is str
+            and declared_origin in {"CONTROLLER_OBSERVED", "SYNTHETIC"},
             "GUEST_REPORTED_ISOLATION_REJECTED",
         )
+        _require(declared_origin == "SYNTHETIC", "COLLECTOR_IDENTITY_UNVERIFIED")
         _require(
             type(collector.collector_id) is str and 0 < len(collector.collector_id) <= 256,
             "COLLECTOR_ID_MISSING",
         )
-        synthetic = collector.origin == "SYNTHETIC"
         _require(expected_runtime_inventory is not None, "RUNTIME_INVENTORY_MISSING")
         assert expected_runtime_inventory is not None
         _digest(expected_runtime_inventory_sha256)
@@ -775,7 +790,7 @@ def reconstruct_pyc_set_v5c3(
                 process.interrupted,
                 process.interruption_reason,
                 collector.collector_id,
-                collector.origin,
+                declared_origin,
                 process.complete,
             )
             records.append(record)
@@ -830,7 +845,7 @@ def reconstruct_pyc_set_v5c3(
             consistency = "EXECUTION_FAILED"
         return ReconstructionResultV5c3(consistency, (reason,), diagnostic_records=diagnostics)
     return ReconstructionResultV5c3(
-        "SYNTHETIC_MECHANISM_MATCH" if synthetic else "LOCAL_EXECUTION_OBSERVATION",
+        "SYNTHETIC_MECHANISM_MATCH",
         (),
         files=tuple(replace(record, comparison="OUTPUT_BYTES_MATCH") for record in records),
     )

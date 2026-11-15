@@ -32,6 +32,7 @@ Required missing evidence:
 | Requirement | Current state | Needed to unblock |
 | --- | --- | --- |
 | Qualified disposable offline VM | MISSING | Outside inspection of effective network/storage/shares/secrets/socket/production boundaries and resource enforcement |
+| Approved collector identification | MISSING / BLOCKED | Separately approved implementation that verifies identity independently; labels, names, process declarations, nonces and report checksums are not authentication |
 | Concrete outside-guest collector | MISSING | Reviewed integration for complete frozen image capture, bounded process execution, complete runtime accesses/maps, actual output capture and whole-VM stop |
 | Complete exact runtime bytes and inventory | MISSING | Exact interpreter, loader, libraries, compiler imports/native modules/configurations and package/snapshot bindings |
 | Independent real reconstruction plan | MISSING | Accepted local source/snapshot/target/optimization/dfile and independently expected complete PYC digest; synthetic fixture plans do not qualify |
@@ -52,8 +53,8 @@ bounded manifests. No synthetic result is promoted to a target observation.
 
 | Check | Result |
 | --- | --- |
-| Observer V1–V5c3 and explicit CI inventory regressions | 3017 passed, 30 skipped |
-| V5c3 mechanism tests in that run | 197 passed (worker 40, orchestration 96, runtime identity 61) |
+| Observer V1–V5c3 and explicit CI inventory regressions | 3021 passed, 30 skipped |
+| V5c3 mechanism tests in that run | 201 passed (worker 40, orchestration 100, runtime identity 61) |
 | New V5c3 branch-inclusive coverage | 97% combined; worker 95%, orchestration 96%, runtime identity 98% |
 | Changed-code coverage gate | PASS: 97%, unchanged required minimum 70% |
 | V5c2 focused integrity/regression invocation | 216 passed, zero skipped |
@@ -82,6 +83,33 @@ generated Python caches are removed before its working-tree scan.
 
 Codebase Memory MCP/CLI was unavailable. Relevant source and CI configuration
 were read directly, and the explicit quality-inventory contract was tested.
+
+## P2: collector-origin classification repair
+
+Review of HEAD `d60afdaf52071d1b96b552101d548f215af93ad3` found that changing
+the synthetic collector's self-declared `origin` to `CONTROLLER_OBSERVED`
+selected a real local-observation status. Four new regression cases failed on
+that HEAD: two collector names, an origin change during a synthetic run, and
+export of a manually declared local-observation result.
+
+The API now refuses every controller-observation claim before invoking any
+collector callback, with `EXECUTION_BLOCKED` / `COLLECTOR_IDENTITY_UNVERIFIED`.
+Successful mechanism tests always produce `SYNTHETIC_MECHANISM_MATCH` and retain
+the originally admitted synthetic label. The result and export have no admitted
+real-observation status; `exact_target_test` stays `NOT_TESTED`. This is an
+unconditional block until collector identification is separately approved and
+implemented. No name allowlist, process declaration, nonce or report checksum
+provides an override. Existing source, runtime, isolation and measured-output
+checks and all qualification barriers remain unchanged.
+
+After the repair, all four new cases pass and all 201 V5c3 cases pass within
+the 3021-pass Observer regression run above. The 30 V4 cryptographic integration
+skips still require preprovisioned `gpgv`; none is counted as PASS. Configured
+mypy Linux/Win32, exact workflow Ruff/format scopes, the mandatory all-files
+format hook, full pre-commit, offline Betterleaks and blocking Semgrep/rule
+fixtures are required again for this update. Hosted checks on its new HEAD
+remain PENDING until their own runs complete. No exact interpreter or VM run
+was performed.
 
 ## Windows CI regression repair
 

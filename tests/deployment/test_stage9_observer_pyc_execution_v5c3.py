@@ -306,6 +306,46 @@ def test_absent_prepared_vm_blocks_exact_execution(case: ExecutionCase) -> None:
     _refused(result)
 
 
+@pytest.mark.parametrize(
+    "collector_id", ["synthetic-unit-test-collector", "approved-vm-controller"]
+)
+def test_self_declared_controller_origin_is_blocked(case: ExecutionCase, collector_id: str) -> None:
+    case.collector.collector_id = collector_id
+    case.collector.origin = "CONTROLLER_OBSERVED"
+    result = case.reconstruct()
+    assert result.consistency == "EXECUTION_BLOCKED"
+    assert result.reason_codes == ("COLLECTOR_IDENTITY_UNVERIFIED",)
+    assert result.diagnostic_records == ()
+    assert case.collector.inspect_calls == 0
+    assert case.collector.execute_calls == 0
+    assert case.collector.stop_calls == 0
+    _refused(result)
+    payload = json.loads(execution.serialize_reconstruction_result_v5c3(result))["payload"]
+    assert payload["consistency"] == "EXECUTION_BLOCKED"
+    assert payload["exact_target_test"] == "NOT_TESTED"
+    assert payload["files"] == []
+
+
+def test_changing_origin_during_synthetic_run_cannot_promote_evidence(case: ExecutionCase) -> None:
+    def claim_controller(process: Any) -> Any:
+        case.collector.origin = "CONTROLLER_OBSERVED"
+        return process
+
+    case.collector.mutate_process = claim_controller
+    result = case.reconstruct()
+    assert result.consistency == "SYNTHETIC_MECHANISM_MATCH"
+    assert result.files[0].collector_origin == "SYNTHETIC"
+    assert case.collector.execute_calls == case.collector.stop_calls == 1
+    _statuses_remain_blocked(result)
+
+
+def test_manually_claimed_local_observation_cannot_be_exported(case: ExecutionCase) -> None:
+    claimed = replace(case.reconstruct(), consistency="LOCAL_EXECUTION_OBSERVATION")
+    with pytest.raises(execution.ExecutionRefusalV5c3) as caught:
+        execution.serialize_reconstruction_result_v5c3(claimed)
+    assert caught.value.execution_reason == "RESULT_STATUS_REJECTED"
+
+
 @pytest.mark.parametrize("origin", ["GUEST_REPORTED", "unknown", "", None])
 def test_guest_or_unknown_report_cannot_authorize_a_run(case: ExecutionCase, origin: Any) -> None:
     case.collector.origin = origin
