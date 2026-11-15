@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -294,10 +295,9 @@ def test_synthetic_nofollow_rejects_symlink_and_bounded_read(
 
 
 def test_synthetic_hardlink_and_writable_metadata_rejected() -> None:
-    base = os.stat(__file__)
-    # stat_result has no named _replace; construct platform-independent fields.
-    values = list(base)
-    values[4] = 0
+    # Policy metadata is POSIX data; Windows checkout modes are not this fixture.
+    values = [stat.S_IFREG | 0o600, 1, 1, 1, 0, 0, 9, 0, 0, 0]
+    identity._protected_metadata(os.stat_result(values), directory=False)
     values[3] = 2
     with pytest.raises(identity.IdentityRefusalV5d1, match="IDENTITY_HARDLINK_REJECTED"):
         identity._protected_metadata(os.stat_result(values), directory=False)
