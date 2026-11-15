@@ -812,6 +812,10 @@ def test_observer_v5b_preserves_explicit_quality_and_coverage_scopes():
         "stage9_observer_pyc_execution_v5c3",
         "stage9_observer_compile_worker_v5c3",
         "stage9_observer_runtime_identity_v5c3",
+        "stage9_observer_collector_identity_v5d1",
+        "stage9_observer_kvm_domain_v5d1",
+        "stage9_observer_kvm_image_v5d1",
+        "stage9_observer_kvm_preflight_v5d1",
     ):
         source = f"deployment/{module}.py"
         test = f"tests/deployment/test_{module}.py"
@@ -821,6 +825,32 @@ def test_observer_v5b_preserves_explicit_quality_and_coverage_scopes():
         assert formatted.count(test) == 1
         assert covered.count(test) == 1
         assert covered.count(f"--cov=deployment.{module}") == 1
+    cli = "scripts/stage9_observer_kvm_preflight_v5d1.py"
+    assert typed_files.count(cli) == 1
+    assert formatted.count(cli) == 1
+    assert covered.count("--cov=scripts.stage9_observer_kvm_preflight_v5d1") == 1
+    platform_jobs = yaml.safe_load(
+        (ROOT / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    contract = platform_jobs["linux-evidence-contract"]
+    commands = [step.get("run", "") for step in contract["steps"]]
+    for module in (
+        "stage9_observer_collector_identity_v5d1",
+        "stage9_observer_kvm_domain_v5d1",
+        "stage9_observer_kvm_image_v5d1",
+        "stage9_observer_kvm_preflight_v5d1",
+    ):
+        source = f"deployment/{module}.py"
+        test = f"tests/deployment/test_{module}.py"
+        assert sum(source in shlex.split(command) for command in commands) == 3
+        assert sum(test in shlex.split(command) for command in commands) == 3
+    # Ordinary CI only runs data/mocked boundary regressions; host preflight is
+    # an operator action and cannot establish physical evidence in these jobs.
+    assert not any(
+        cli in shlex.split(command)
+        for command in commands
+        if "pytest" not in command and "ruff" not in command and "mypy" not in command
+    )
     assert "--cov-config=.coveragerc" in covered
     coverage_config = ConfigParser()
     coverage_config.read(ROOT / ".coveragerc")

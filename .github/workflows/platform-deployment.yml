@@ -67,6 +67,7 @@ jobs:
           python -m pip install pytest PyYAML jsonschema "cryptography>=50.0.1,<51"
           "psycopg[binary]>=3.2,<4" "ruff==0.14.11" "mypy==1.10.0"
           "pre-commit>=4,<5" "coverage>=7.10,<8" "diff-cover>=9,<12"
+          "defusedxml==0.7.1" "types-defusedxml==0.7.0.20240218"
           types-PyYAML types-requests "grpcio>=1.62,<2" "protobuf>=4.24,<6" packaging
       - name: Install syscall observation tool on disposable hosted runner
         run: |
@@ -121,7 +122,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes strace
       - run: >-
-          python -m pip install pytest pyyaml "cryptography>=50.0.1,<51" jsonschema
+          python -m pip install pytest pyyaml "cryptography>=50.0.1,<51" jsonschema "defusedxml==0.7.1"
+          "types-defusedxml==0.7.0.20240218"
           "psycopg[binary]>=3.2,<4" "ruff==0.14.11" "mypy==1.10.0" types-PyYAML types-requests
       - name: Sprawdź lint wszystkich modułów ścieżki dowodowej
         run: >-
@@ -134,6 +136,11 @@ jobs:
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
+          deployment/stage9_observer_collector_identity_v5d1.py
+          deployment/stage9_observer_kvm_domain_v5d1.py
+          deployment/stage9_observer_kvm_image_v5d1.py
+          deployment/stage9_observer_kvm_preflight_v5d1.py
+          scripts/stage9_observer_kvm_preflight_v5d1.py
           scripts/prepare_stage9_vm_bundle.py
           scripts/prepare_stage9_protected_tree.py
           scripts/stage9_runtime_provenance.py
@@ -174,6 +181,10 @@ jobs:
           tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_stage9_observer_collector_identity_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_domain_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_image_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py
           tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -189,6 +200,11 @@ jobs:
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
+          deployment/stage9_observer_collector_identity_v5d1.py
+          deployment/stage9_observer_kvm_domain_v5d1.py
+          deployment/stage9_observer_kvm_image_v5d1.py
+          deployment/stage9_observer_kvm_preflight_v5d1.py
+          scripts/stage9_observer_kvm_preflight_v5d1.py
           scripts/prepare_stage9_vm_bundle.py
           scripts/prepare_stage9_protected_tree.py
           scripts/stage9_runtime_provenance.py
@@ -229,6 +245,10 @@ jobs:
           tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_stage9_observer_collector_identity_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_domain_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_image_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py
           tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py
@@ -244,6 +264,11 @@ jobs:
           deployment/stage9_vm_trial.py
           deployment/stage9_vm_environment.py
           deployment/stage9_vm_native.py
+          deployment/stage9_observer_collector_identity_v5d1.py
+          deployment/stage9_observer_kvm_domain_v5d1.py
+          deployment/stage9_observer_kvm_image_v5d1.py
+          deployment/stage9_observer_kvm_preflight_v5d1.py
+          scripts/stage9_observer_kvm_preflight_v5d1.py
           scripts/prepare_stage9_vm_bundle.py
           scripts/prepare_stage9_protected_tree.py
           scripts/stage9_runtime_provenance.py
@@ -306,6 +331,10 @@ jobs:
           tests/deployment/test_stage9_runtime_provenance.py
           tests/deployment/test_stage9_vm_environment.py
           tests/deployment/test_stage9_vm_native.py
+          tests/deployment/test_stage9_observer_collector_identity_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_domain_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_image_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py
           tests/deployment/test_prepare_stage9_vm_bundle.py
           tests/deployment/test_linux_physical_collector.py
           tests/deployment/test_linux_physical_native.py

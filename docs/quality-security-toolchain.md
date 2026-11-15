@@ -1,5 +1,23 @@
 # Quality, security, and code-intelligence toolchain
 
+V5d1 dodaje odczytowy kontroler lokalnego libvirt, oddzielną granicę tożsamości
+kolektora i pomiar niezmiennych obrazów. Cztery moduły oraz CLI rozszerzają
+skonfigurowany mypy Linux/Win32, jawny Ruff/format i branch coverage
+`quality-ratchet`; testy syntetyczne powtarza hermetyczny job
+`linux-evidence-contract`. Zachowane są istniejące zakresy, próg 70%, timeouty
+i osobne ręczne bramki sprzętowe. CI nie uruchamia preflight na hoście operatora,
+nie wykonuje badanego interpretera i nie przyznaje `HOST_PREFLIGHT_VERIFIED`.
+`LOCAL_EXECUTION_OBSERVATION` pozostaje zablokowane nawet przy zgodnej
+konfiguracji XML i poprawnym podpisie polityki; brak niezależnego pomiaru
+załadowanego kodu, środowiska i egzekwowania izolacji pozostaje odmową.
+[Procedura V5d1](architecture/stage9_observer_kvm_preflight_v5d1.md) oddziela
+implementację i testy syntetyczne od dowodów fizycznego hosta oraz autoryzacji
+konkretnego eksperymentu. Metadane domeny są parsowane przez przypięty
+`defusedxml==0.7.1`, dostępny w extra `test` oraz odrębnym
+`observer-kvm-preflight`; binding libvirt pochodzi z zatwierdzonego systemu hosta.
+Mypy używa przypiętego `types-defusedxml==0.7.0.20240218`; pakiet typów
+wchodzi do narzędzi testów/jakości oraz odizolowanego środowiska hooka.
+
 V5c3 dodaje osobny kontrakt lokalnej obserwacji wykonania, kontrolę tożsamości
 runtime i narzędzie kompilacji dla przygotowanej izolowanej VM. Trzy moduły
 oraz ich testy rozszerzają istniejące mypy Linux/Win32, jawny Ruff/format

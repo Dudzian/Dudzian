@@ -1,0 +1,499 @@
+{
+  "profile": "stage9-closure-matrix-v5d1",
+  "revision": 1,
+  "base_commit": "da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a",
+  "updated_local_date": "2026-11-15",
+  "clock": "LOCAL_UNAUTHENTICATED",
+  "scope": "Stage 9 Observer 3A V5d1 closure prerequisites and downstream qualification; retained Stage 9 sources of trust are unchanged.",
+  "evidence_policy": "PASS requires evidence for the named scope. Synthetic tests and design documents never satisfy physical gates. Missing measurements remain BLOCKED or NOT_TESTED. Artifact checksums are local integrity references, not authority acceptance.",
+  "state": {
+    "stage_9": "IN_PROGRESS",
+    "observer_3a": "BLOCKED",
+    "stage_3b": "NOT AUTHORIZED",
+    "production": "NO-GO",
+    "pyc_reconstruction": "UNVERIFIED",
+    "exact_cpython_execution": "NOT_TESTED",
+    "execution_authorization": "EXECUTION_NOT_AUTHORIZED",
+    "execution": "EXECUTION_BLOCKED",
+    "host_preflight": "NOT_TESTED"
+  },
+  "gates": [
+    {
+      "condition_id": "S9-3A-V5D1-IMPL",
+      "condition_name": "Concrete read-only libvirt preflight implementation",
+      "contract_revision": "stage9-observer-kvm-preflight-v5d1",
+      "status": "PASS",
+      "evidence_artifact": {
+        "path": "deployment/stage9_observer_kvm_preflight_v5d1.py",
+        "sha256": "2b2020ec3bf096a86f239f04f7fbb161bb623279e269bdec00d5b2a6f51db6cd",
+        "kind": "IMPLEMENTATION_SOURCE",
+        "proves": "Concrete fixed-policy read-only collection mechanism exists; source inspection alone does not establish physical qualification."
+      },
+      "measurement_environment": "Managed Linux Cloud workspace; repository source inspection only",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION",
+      "result_classification": "IMPLEMENTED"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-SYNTHETIC",
+      "condition_name": "Synthetic positive and negative mechanism regressions",
+      "contract_revision": "stage9-observer-kvm-preflight-v5d1",
+      "status": "PASS",
+      "evidence_artifact": {
+        "path": "docs/architecture/evidence/stage9_observer_kvm_preflight_v5d1_local_validation.json",
+        "sha256": "4126e0d77665957a8ba126e9a287fb63e5f664b29102e76f14d7348833bb355e",
+        "kind": "LOCAL_SOFTWARE_VALIDATION_SUMMARY",
+        "proves": "3167 Observer tests passed, 30 skipped; includes 241 synthetic V5d1 cases; 177 workflow contract tests passed. No physical-host qualification."
+      },
+      "measurement_environment": "Managed Cloud Linux x86_64, host CPython 3.11.17; no operator-host KVM/libvirt measurement",
+      "verifier_identity": "Recorded local pytest/Ruff/mypy/pre-commit/Betterleaks1.9.0/Semgrep1.179.0 processes; local unauthenticated evidence, independent physical verifier MISSING",
+      "expectation_source_independence": "Synthetic fixtures and retained repository contracts verify software behavior; independent operator-host expectations and policy approval remain unobserved",
+      "missing_prerequisites": [],
+      "qualification_admissible": false,
+      "qualification_decision": "SOFTWARE_CHECK_PASSED; NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION",
+      "result_classification": "SYNTHETIC_TESTED"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-QUALITY",
+      "condition_name": "Required local quality and security gates",
+      "contract_revision": "quality-security-toolchain/Tier-B",
+      "status": "PASS",
+      "evidence_artifact": {
+        "path": "docs/architecture/evidence/stage9_observer_kvm_preflight_v5d1_local_validation.json",
+        "sha256": "4126e0d77665957a8ba126e9a287fb63e5f664b29102e76f14d7348833bb355e",
+        "kind": "LOCAL_SOFTWARE_VALIDATION_SUMMARY",
+        "proves": "Required local software quality gates passed: Ruff, formats, mypy Linux/Win32, pre-commit, Betterleaks and blocking Semgrep/rule fixtures. Advisory scan limitations remain explicit; no physical-host qualification."
+      },
+      "measurement_environment": "Managed Cloud Linux x86_64, host CPython 3.11.17; no operator-host KVM/libvirt measurement",
+      "verifier_identity": "Recorded local pytest/Ruff/mypy/pre-commit/Betterleaks1.9.0/Semgrep1.179.0 processes; local unauthenticated evidence, independent physical verifier MISSING",
+      "expectation_source_independence": "Synthetic fixtures and retained repository contracts verify software behavior; independent operator-host expectations and policy approval remain unobserved",
+      "missing_prerequisites": [],
+      "qualification_admissible": false,
+      "qualification_decision": "SOFTWARE_CHECK_PASSED; NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION",
+      "result_classification": "LOCAL_SOFTWARE_GATES_PASSED"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-NATIVE-CI",
+      "condition_name": "Native Windows and Ubuntu regression evidence",
+      "contract_revision": "repository-CI-at-exact-HEAD",
+      "status": "NOT_TESTED",
+      "evidence_artifact": {
+        "path": "docs/architecture/evidence/stage9_observer_kvm_preflight_v5d1_base_ci.md",
+        "sha256": "9429676e11388c416369e271ea1f4f71d2f79b456a83f0a8cc0ae30cd577ecae",
+        "kind": "BASE_CI_READ_ONLY_INSPECTION",
+        "proves": "Separates completed base-branch native jobs from pending exact merge/new-PR jobs and explains unchanged missing-physical-evidence failure. Does not establish final PR native CI success."
+      },
+      "measurement_environment": "Read-only GitHub workflow/job inspection at the timestamp recorded in the artifact; final V5d1 native jobs not observed",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Completed full native Windows and Ubuntu CI on the final V5d1 PR revision; base branch successes do not establish this result."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-IDENTITY-POLICY",
+      "condition_name": "Independent operator approval policy and custody",
+      "contract_revision": "stage9-observer-controller-policy-v5d1",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Independently maintained protected host anchor, signed exact policy, approved environment and reviewed code closure are absent from this Cloud observation."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-LAUNCH",
+      "condition_name": "Independent controller launch and loaded execution identity",
+      "contract_revision": "stage9-observer-controller-identity-v5d1",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Accepted external launch attestation and complete loaded-code/environment measurements are absent; self hashes and signatures cannot establish them."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-HOST",
+      "condition_name": "Local operator KVM/libvirt host qualification",
+      "contract_revision": "stage9-observer-kvm-preflight-v5d1",
+      "status": "NOT_TESTED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "No real read-only observation on the independently approved Ubuntu operator host has been retained."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-DOMAIN",
+      "condition_name": "Stable domain identity and complete configuration observations",
+      "contract_revision": "stage9-observer-kvm-domain-v5d1",
+      "status": "NOT_TESTED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Actual UUID/state/live and persistent configuration observations, independent manifest and drift evidence are absent."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-ISOLATION",
+      "condition_name": "Effective complete VM isolation enforcement",
+      "contract_revision": "PreparedVMCollectorV5c3/ControllerObservationV5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Independent effective QEMU/host network, devices, shares, sockets, credentials, namespaces, LSM, seccomp and resource-enforcement evidence is absent; domain XML is incomplete evidence."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-CHANNEL",
+      "condition_name": "Approved independent measurement and output channel",
+      "contract_revision": "stage9-observer-kvm-preflight-v5d1",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Endpoint identity, channel isolation, complete trustworthy collection and independent output extraction require an accepted observer; guest declarations do not qualify."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-IMAGE",
+      "condition_name": "Immutable exact disk and complete backing-chain measurement",
+      "contract_revision": "stage9-observer-kvm-image-v5d1",
+      "status": "NOT_TESTED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Real immutable supported image/chain measurements, approved expectations and lifecycle fence are absent; writable or uncertain views require IMAGE_MEASUREMENT_BLOCKED."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5C3-RUNTIME",
+      "condition_name": "Complete frozen exact CPython runtime and package inventory",
+      "contract_revision": "RuntimeInventoryV5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Actual complete interpreter, loader, ELF/native modules, Python data/import/configuration bytes and accepted common package/snapshot provenance are absent."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-TRACE",
+      "condition_name": "Complete independent actual runtime-access and ELF mapping trace",
+      "contract_revision": "ProcessObservationV5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Accepted external observer/kernel/hypervisor substrate, complete process/object scope, loss detection and exact immutable-content binding are absent; DT_NEEDED is insufficient."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5C3-STOP",
+      "condition_name": "Whole-VM timeout, termination and cleanup capability",
+      "contract_revision": "PreparedVMCollectorV5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Separately reviewed authorized controller and independent whole-VM stop/cleanup proof are absent; the V5d1 read-only connection cannot supply this operation."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5C3-PLAN",
+      "condition_name": "Independent reconstruction source/request/output expectations",
+      "contract_revision": "ReconstructionRequestV5c3/PycReconstructionPolicyV5c2",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Approved concrete source, snapshot, target, dfile, optimization, worker/tool image and independently expected complete PYC digest are absent."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5D1-AUTHORIZATION",
+      "condition_name": "Separate authorization of the concrete target experiment",
+      "contract_revision": "stage9-observer-pyc-execution-v5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "No explicit authorization for a concrete exact-CPython run exists; EXECUTION_NOT_AUTHORIZED remains mandatory."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-V5C3-ADMISSION",
+      "condition_name": "Accepted real-observation admission contract",
+      "contract_revision": "stage9-observer-pyc-execution-result-v5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "V5c3 admits only synthetic mechanism collection; V5d1 must not unlock LOCAL_EXECUTION_OBSERVATION. A separately reviewed later contract change is required."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-EXACT-CPYTHON",
+      "condition_name": "First authorized exact Ubuntu CPython execution",
+      "contract_revision": "stage9-observer-pyc-execution-record-v5c3",
+      "status": "NOT_TESTED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "No exact target interpreter has run; all preceding identity, isolation, image/runtime, tracing, lifecycle, plan and authorization gates must close first."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-PYC",
+      "condition_name": "Independently verified PYC reconstruction",
+      "contract_revision": "stage9-observer-pyc-execution-result-v5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "No independently measured authorized output or accepted reconstruction evidence exists; PYC_RECONSTRUCTION remains UNVERIFIED."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-LEVEL-B",
+      "condition_name": "Independently bound execution provenance registry",
+      "contract_revision": "stage9-observer-pyc-execution-result-v5c3/level-B",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Independent origin/run/integrity registry and approval are absent; local hashes, nonces and JSON receipts do not authenticate provenance."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-LEVEL-C",
+      "condition_name": "External acceptance authority and decision",
+      "contract_revision": "stage9-observer-pyc-execution-result-v5c3/level-C",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "A separately approved acceptance authority, policy and concrete decision are absent."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-TIME",
+      "condition_name": "Authenticated evidence freshness",
+      "contract_revision": "stage9-observer-pyc-execution-result-v5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Qualified authenticated clock and freshness policy are absent; the local clock is unauthenticated."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-3A-ANTIROLLBACK",
+      "condition_name": "Independent durable anti-rollback acceptance",
+      "contract_revision": "stage9-observer-pyc-execution-result-v5c3",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Independent durable state and approved rollback domain are absent; V5d1 must not modify persistent anti-rollback."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    },
+    {
+      "condition_id": "S9-CLOSURE",
+      "condition_name": "Stage 9 closure and production qualification",
+      "contract_revision": "CryptoHunter.Stage9CurrentStatusV1/Observer3A",
+      "status": "BLOCKED",
+      "evidence_artifact": {
+        "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
+        "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
+      },
+      "measurement_environment": "DOCUMENT_REVIEW_ONLY; no operator-host or exact target measurement",
+      "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
+      "expectation_source_independence": "Design requirements from the user request and retained V5c3 contract; external operator-approved expectations NOT_OBSERVED",
+      "missing_prerequisites": [
+        "Observer 3A and its execution/evidence prerequisites remain open. Stage 3B is NOT AUTHORIZED and Production remains NO-GO."
+      ],
+      "qualification_admissible": false,
+      "qualification_decision": "NOT_ADMISSIBLE_FOR_PHYSICAL_STAGE9_QUALIFICATION"
+    }
+  ]
+}

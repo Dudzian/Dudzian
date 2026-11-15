@@ -1,0 +1,450 @@
+{
+  "profile": "stage9-observer-kvm-preflight-local-validation-v5d1",
+  "observed_local_utc": "2026-11-15T17:01:03.295905+00:00",
+  "clock": "LOCAL_UNAUTHENTICATED",
+  "base_commit": "da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a",
+  "branch": "codex/stage9-observer-v5d1-kvm",
+  "environment": {
+    "kind": "MANAGED_CLOUD_LINUX",
+    "python": "3.11.17",
+    "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "native_libvirt_measurement": "NOT_TESTED"
+  },
+  "result_classifications": [
+    "IMPLEMENTED",
+    "SYNTHETIC_TESTED",
+    "EXECUTION_NOT_AUTHORIZED",
+    "EXECUTION_BLOCKED",
+    "NOT_TESTED"
+  ],
+  "source_artifacts": [
+    {
+      "path": ".github/workflows/platform-deployment.yml",
+      "sha256": "dae1572728f45879812d21b7f731f603a9aeb5d0308d43a5de90818b75ec0a16"
+    },
+    {
+      "path": ".github/workflows/quality-security.yml",
+      "sha256": "b4081f1a3b7fa4076e85203fb3dab0b4aa5fdd09230a91599d24e35e2fa5a4c2"
+    },
+    {
+      "path": ".pre-commit-config.yaml",
+      "sha256": "9915e41ef261e43bfc55e759e16ba8dd83c738f5c2e662ae04ad31ca88dae9f4"
+    },
+    {
+      "path": "deployment/stage9_observer_collector_identity_v5d1.py",
+      "sha256": "16baa482219061e1b0a4be99acc27d85979219ceedee750342ef4548064fdab5"
+    },
+    {
+      "path": "deployment/stage9_observer_kvm_domain_v5d1.py",
+      "sha256": "b2f82f5b237e9c4fd724e5b1838a54a728fba82014f1fda73eadb7aff2ab08f2"
+    },
+    {
+      "path": "deployment/stage9_observer_kvm_image_v5d1.py",
+      "sha256": "97a3a0931de8aae9bf557aefd8495e273c91558df4f480afbc8110fe081cbbf8"
+    },
+    {
+      "path": "deployment/stage9_observer_kvm_preflight_v5d1.py",
+      "sha256": "2b2020ec3bf096a86f239f04f7fbb161bb623279e269bdec00d5b2a6f51db6cd"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "1469071aabd10a024f33b4b41ee7a0366f46f4856e74df722a0cb74b0670e9ff"
+    },
+    {
+      "path": "scripts/stage9_observer_kvm_preflight_v5d1.py",
+      "sha256": "4b444ab47da8bf154c6d027690304541f66b2efcd51bd9d57d13855ccf005100"
+    },
+    {
+      "path": "tests/deployment/test_stage9_observer_collector_identity_v5d1.py",
+      "sha256": "029e6cf2ffb4cc18abb2836675aa083f5c9604a45ab7af10ee9ae7cdf8910f8d"
+    },
+    {
+      "path": "tests/deployment/test_stage9_observer_kvm_domain_v5d1.py",
+      "sha256": "48588a0833d7eec5e6cda9368edcc11c0fddf203232ec18cc6adc90c8d0932ea"
+    },
+    {
+      "path": "tests/deployment/test_stage9_observer_kvm_image_v5d1.py",
+      "sha256": "28dd500f6f4518f6be9c78f4129fef0fe32e81efee52ab78b14ecfbe82346773"
+    },
+    {
+      "path": "tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py",
+      "sha256": "9400c604c1225f1b566f7a63261b7c5c1c7af940fbbcd28ff704623512dee735"
+    },
+    {
+      "path": "tests/scripts/test_history_reproposal_quality_ci.py",
+      "sha256": "cb631b6eb4129a0c91250164ce2fd3e00daa42db659c86dd94a643e1e18c1de4"
+    }
+  ],
+  "observer_regression": {
+    "tests": 3197,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 30,
+    "passed": 3167
+  },
+  "v5d1_synthetic_test_count": 241,
+  "coverage": {
+    "line_rate": 0.9475,
+    "branch_rate": 0.8623
+  },
+  "checks": [
+    {
+      "check": "observer-regression",
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q tests/deployment/test_stage9_observer_*.py tests/test_stage9_observer_contract.py --confcutdir=tests/deployment --cov=deployment.stage9_observer_collector_identity_v5d1 --cov=deployment.stage9_observer_kvm_domain_v5d1 --cov=deployment.stage9_observer_kvm_image_v5d1 --cov=deployment.stage9_observer_kvm_preflight_v5d1 --cov=scripts.stage9_observer_kvm_preflight_v5d1 --cov-branch --cov-report=term-missing --cov-report=xml:work/v5d1-coverage.xml --junitxml=work/v5d1-observer-regression.xml",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "b888ee57592aa836a3819f9f12d4f990aa91064071512bf7776b3a89329c6ee4",
+      "output_tail": [
+        "........................................................................ [ 94%]",
+        "........................................................................ [ 96%]",
+        "........................................................................ [ 99%]",
+        ".............................                                            [100%]",
+        "================================ tests coverage ================================",
+        "_______________ coverage: platform linux, python 3.11.17-final-0 _______________",
+        "",
+        "Name                                                    Stmts   Miss Branch BrPart  Cover   Missing",
+        "---------------------------------------------------------------------------------------------------",
+        "deployment/stage9_observer_collector_identity_v5d1.py     236     32     38      6    82%   128->exit, 176-178, 227, 341, 380-404, 428, 429->431, 431->433, 437, 457-460, 487-488",
+        "deployment/stage9_observer_kvm_domain_v5d1.py             330      6    174     14    96%   40->exit, 43->exit, 46->exit, 48->exit, 50->exit, 52->exit, 55->exit, 58->exit, 60->exit, 195, 211, 224, 261-262, 564, 610->609",
+        "deployment/stage9_observer_kvm_image_v5d1.py              208     12     34      4    93%   117-119, 127-132, 151, 176->184, 187, 198-199, 276->278",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py          187      1     30      2    99%   172, 330->333, 333->338",
+        "scripts/stage9_observer_kvm_preflight_v5d1.py              11      0      0      0   100%",
+        "---------------------------------------------------------------------------------------------------",
+        "TOTAL                                                     972     51    276     26    93%",
+        "Coverage XML written to file work/v5d1-coverage.xml",
+        "3167 passed, 30 skipped in 48.31s"
+      ]
+    },
+    {
+      "check": "workflow-contracts",
+      "command": ".venv/bin/python -m pytest -q tests/scripts/test_history_reproposal_quality_ci.py tests/scripts/test_linux_physical_evidence_workflow.py tests/scripts/test_platform_core_evidence_workflow.py --confcutdir=tests/scripts",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "7e8e3e7d17ac2fcbe7a99ff92d3f768010f00738c34493526194f7ff71b0bee3",
+      "output_tail": [
+        "........................................................................ [ 40%]",
+        "........................................................................ [ 81%]",
+        ".................................                                        [100%]",
+        "177 passed in 15.68s"
+      ]
+    },
+    {
+      "check": "ruff",
+      "command": ".venv/bin/python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/stage9_observer_{collector_identity,kvm_domain,kvm_image,kvm_preflight}_v5d1.py",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "output_tail": [
+        "All checks passed!"
+      ]
+    },
+    {
+      "check": "explicit-format",
+      "command": "Exact python -m ruff format --check command from quality-security.yml step Format Stage 9 signing and credential substrate",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "a604952119833842dee785962a8300fc911d7a180ce45a41c910a6ef9dde2273",
+      "output_tail": [
+        "362 files already formatted"
+      ]
+    },
+    {
+      "check": "mypy-linux",
+      "command": ".venv/bin/python -m mypy --config-file=pyproject.toml",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "2d9803b711ce93fc1bff4b996f40c58e54099b7fde0403f4011a2955e05f99aa",
+      "output_tail": [
+        "bot_core/risk/simulation.py:535: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:14: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:59: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:108: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:109: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:132: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:133: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "Success: no issues found in 417 source files"
+      ]
+    },
+    {
+      "check": "mypy-win32",
+      "command": ".venv/bin/python -m mypy --platform win32 --config-file=pyproject.toml",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "2d9803b711ce93fc1bff4b996f40c58e54099b7fde0403f4011a2955e05f99aa",
+      "output_tail": [
+        "bot_core/risk/simulation.py:535: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:14: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:59: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:108: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:109: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:132: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "ui/tests/test_app_import_paths.py:133: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
+        "Success: no issues found in 417 source files"
+      ]
+    },
+    {
+      "check": "format-preflight",
+      "command": ".venv/bin/python -m pre_commit run ruff-format --all-files",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "370442f018ade47bf8c4df3e9a82d9ee38eb53948d2e813c3609b4b23daa2752",
+      "output_tail": [
+        "ruff format..............................................................Passed"
+      ]
+    },
+    {
+      "check": "pre-commit",
+      "command": ".venv/bin/python -m pre_commit run --all-files",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "dc0aea4530ebb2144a6fe1802ce2a3e0ad21e63d7a22e1c71d52af6d60702061",
+      "output_tail": [
+        "[INFO] Initializing environment for https://github.com/pre-commit/mirrors-mypy:types-PyYAML,types-defusedxml==0.7.0.20240218,types-requests,grpcio>=1.62,protobuf>=4.24,packaging,cryptography>=50.0.1,<51,psycopg[binary]>=3.2,<4.",
+        "[INFO] Installing environment for https://github.com/pre-commit/mirrors-mypy.",
+        "[INFO] Once installed this environment will be reused.",
+        "[INFO] This may take a few minutes...",
+        "ruff (legacy alias)......................................................Passed",
+        "ruff format..............................................................Passed",
+        "mypy.....................................................................Passed",
+        "Betterleaks (staged files, offline)......................................Passed"
+      ]
+    },
+    {
+      "check": "betterleaks-final",
+      "command": "work/tools/betterleaks dir --baseline-path .betterleaks-baseline.json --redact=100 --no-banner --no-color --exit-code=1 --report-format json --report-path work/v5d1-betterleaks-report.json .",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "b4bb560d422ebea472e86f239da081ec84cc4ffb043e5021b8fef8ab0438e2fc",
+      "output_tail": [
+        "5:00PM INF scanned ~142276731 bytes (142.28 MB) in 1.94s",
+        "5:00PM INF no leaks found"
+      ]
+    },
+    {
+      "check": "semgrep-final",
+      "command": "semgrep scan --config .semgrep/cryptohunter.yml --metrics=off --disable-version-check --error bot_core core deployment scripts",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "eef4534657b4714990bf59ed5375e1dccaf92d60c4c9dd7511083feb14ef163f",
+      "output_tail": [
+        "  Scanning 1238 files tracked by git with 5 Code rules:",
+        "  Scanning 1149 files with 5 python rules.",
+        "                ",
+        "                ",
+        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+        "\u2502 Scan Summary \u2502",
+        "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
+        "\u2705 Scan completed successfully.",
+        " \u2022 Findings: 0 (0 blocking)",
+        " \u2022 Rules run: 5",
+        " \u2022 Targets scanned: 1149",
+        " \u2022 Parsed lines: ~100.0%",
+        " \u2022 Scan skipped: ",
+        "   \u25e6 Files larger than  files 1.0 MB: 1",
+        "   \u25e6 Files matching .semgrepignore patterns: 4",
+        " \u2022 Scan was limited to files tracked by git",
+        " \u2022 For a detailed list of skipped files and lines, run semgrep with the --verbose flag",
+        "Ran 5 rules on 1149 files: 0 findings."
+      ]
+    },
+    {
+      "check": "semgrep-test",
+      "command": "semgrep scan --test --config .semgrep/cryptohunter.yml .semgrep/cryptohunter.py --metrics=off --disable-version-check --jobs 1",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "b328d4ccd47def55a554514e6fb600d2b8e54f93bd0f11f3e98f8935a55a605f",
+      "output_tail": [
+        "               ",
+        "               ",
+        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+        "\u2502 Scan Status \u2502",
+        "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
+        "  Scanning 1 file with 5 Code rules:",
+        "  Scanning 1 file with 5 python rules.",
+        "5/5: \u2713 All tests passed",
+        "No tests for fixes found."
+      ]
+    },
+    {
+      "check": "semgrep-advisory-focused",
+      "command": "semgrep scan --config p/python --config p/security-audit --metrics=off --disable-version-check deployment/stage9_observer_{collector_identity,kvm_domain,kvm_image,kvm_preflight}_v5d1.py scripts/stage9_observer_kvm_preflight_v5d1.py",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "974c6004da4fba05e14708358b5b46b9289a516e9657bf6f82ed0260a50066d1",
+      "output_tail": [
+        " \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500                                                               ",
+        "  python          198       5          Community     346                                                                ",
+        "  <multilang>       2       5                                                                                           ",
+        "                                                                                                                        ",
+        "                ",
+        "                ",
+        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+        "\u2502 Scan Summary \u2502",
+        "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
+        "\u2705 Scan completed successfully.",
+        " \u2022 Findings: 0 (0 blocking)",
+        " \u2022 Rules run: 200",
+        " \u2022 Targets scanned: 5",
+        " \u2022 Parsed lines: ~100.0%",
+        " \u2022 No ignore information available",
+        "Ran 200 rules on 5 files: 0 findings.",
+        "(need more rules? `semgrep login` for additional free Semgrep Registry rules)",
+        ""
+      ]
+    },
+    {
+      "check": "diff-cover",
+      "command": ".venv/bin/diff-cover work/v5d1-coverage.xml --compare-branch=origin/main --fail-under=70",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_sha256": "7b083978540fad8604f7fa5d1f9ef9bb3e84b2aaeec1ebba79dbc0cf41474ba7",
+      "output_tail": [
+        "-------------",
+        "Diff Coverage",
+        "Diff: origin/main...HEAD, staged and unstaged changes",
+        "-------------",
+        "deployment/stage9_observer_collector_identity_v5d1.py (86.4%): Missing lines 176-178,227,341,380-382,384-391,393,395-399,403-404,428,437,457-460,487-488",
+        "deployment/stage9_observer_kvm_domain_v5d1.py (98.2%): Missing lines 195,211,224,261-262,564",
+        "deployment/stage9_observer_kvm_image_v5d1.py (94.2%): Missing lines 117-119,127-128,130-132,151,187,198-199",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py (99.5%): Missing lines 172",
+        "scripts/stage9_observer_kvm_preflight_v5d1.py (100%)",
+        "-------------",
+        "Total:   972 lines",
+        "Missing: 51 lines",
+        "Coverage: 94%",
+        "-------------",
+        ""
+      ]
+    }
+  ],
+  "security": {
+    "betterleaks": {
+      "exit_code": 0,
+      "log": "work/v5d1-betterleaks.log",
+      "log_sha256": "2d7871bc975f81429b650f28607af877c9a03616c84d110f9238878fb1055e6e",
+      "findings": 0,
+      "version": "1.9.0",
+      "scope": "exact full working-tree CI command, baseline unchanged",
+      "cleanup": "removed only generated test_runtime_bootstrap pytest pyc and .pytest_cache/v/cache/nodeids containing fixture strings before final successful full scan"
+    },
+    "semgrep": {
+      "exit_code": 0,
+      "log": "work/v5d1-semgrep.log",
+      "log_sha256": "eef4534657b4714990bf59ed5375e1dccaf92d60c4c9dd7511083feb14ef163f",
+      "findings": 0,
+      "rules": 5,
+      "targets": 1149,
+      "version": "1.179.0",
+      "scope": "bot_core core deployment scripts"
+    },
+    "semgrep-test": {
+      "exit_code": 0,
+      "log": "work/v5d1-semgrep-test.log",
+      "log_sha256": "b328d4ccd47def55a554514e6fb600d2b8e54f93bd0f11f3e98f8935a55a605f",
+      "tests": "5/5 passed"
+    },
+    "semgrep-advisory": {
+      "exit_code": 0,
+      "log": "work/v5d1-semgrep-advisory.log",
+      "log_sha256": "05329982dbd2fedec48699dc2c281795861fa7eefb8bdd2f46ab75a4c1e47839",
+      "findings": 26,
+      "warnings": 9,
+      "timeouts": 8,
+      "v5d1_scanned": [
+        "deployment/stage9_observer_collector_identity_v5d1.py",
+        "deployment/stage9_observer_kvm_domain_v5d1.py",
+        "deployment/stage9_observer_kvm_image_v5d1.py",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py",
+        "scripts/stage9_observer_kvm_preflight_v5d1.py"
+      ],
+      "v5d1_findings": [
+        {
+          "rule": "python.lang.security.use-defused-xml.use-defused-xml",
+          "path": "deployment/stage9_observer_kvm_domain_v5d1.py",
+          "line": 16
+        }
+      ],
+      "v5d1_findings_status": "RESOLVED_BY_DEFUSEDXML_AND_FINAL_FOCUSED_SCAN"
+    },
+    "semgrep-advisory-focused": {
+      "exit_code": 0,
+      "log": "work/v5d1-semgrep-advisory-focused.log",
+      "log_sha256": "974c6004da4fba05e14708358b5b46b9289a516e9657bf6f82ed0260a50066d1",
+      "findings": 0,
+      "warnings": [],
+      "scanned": [
+        "deployment/stage9_observer_collector_identity_v5d1.py",
+        "deployment/stage9_observer_kvm_domain_v5d1.py",
+        "deployment/stage9_observer_kvm_image_v5d1.py",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py",
+        "scripts/stage9_observer_kvm_preflight_v5d1.py"
+      ],
+      "supersedes_v5d1_findings_only": "Initial full community scan remains preserved with legacy findings/timeouts; final focused scan verifies remediation on all five new files without exclusions or suppressions."
+    },
+    "semgrep-final": {
+      "exit_code": 0,
+      "log": "work/v5d1-semgrep-final.log",
+      "log_sha256": "eef4534657b4714990bf59ed5375e1dccaf92d60c4c9dd7511083feb14ef163f",
+      "findings": 0,
+      "rules": 5,
+      "targets": 1149,
+      "scope": "exact final custom blocking CI scope: bot_core core deployment scripts"
+    }
+  },
+  "cloud_readonly_refusal": {
+    "domain": null,
+    "execution": "EXECUTION_BLOCKED",
+    "execution_authorization": "EXECUTION_NOT_AUTHORIZED",
+    "host_preflight": "NOT_TESTED",
+    "identity": {
+      "authority_id": null,
+      "environment_sha256": "dcf7a8ddbfe4d063d663fd390b09fbc4ca11829bf87919b72cc35b95c70da029",
+      "execution": "EXECUTION_NOT_AUTHORIZED",
+      "identity": "COLLECTOR_IDENTITY_UNVERIFIED",
+      "measurements": [],
+      "policy_revision": null,
+      "policy_sha256": null,
+      "policy_signature_verified": false,
+      "profile": "stage9-observer-controller-identity-v5d1",
+      "reason_codes": [
+        "INDEPENDENT_LAUNCH_ATTESTATION_MISSING",
+        "LOADED_EXECUTION_CLOSURE_UNVERIFIED",
+        "IDENTITY_PATH_NOT_PROTECTED"
+      ]
+    },
+    "images": [],
+    "implementation": "IMPLEMENTED",
+    "observation_sha256": [],
+    "observer3a": "BLOCKED",
+    "production": "NO-GO",
+    "profile": "stage9-observer-kvm-preflight-v5d1",
+    "pyc_reconstruction": "UNVERIFIED",
+    "qualification": "BLOCKED",
+    "reason_codes": [
+      "INDEPENDENT_LAUNCH_ATTESTATION_MISSING",
+      "LOADED_EXECUTION_CLOSURE_UNVERIFIED",
+      "IDENTITY_PATH_NOT_PROTECTED",
+      "LOCAL_EXECUTION_OBSERVATION_DISABLED_V5D1",
+      "EXPERIMENT_AUTHORIZATION_MISSING"
+    ],
+    "requirements_sha256": null,
+    "runtime_observation": "NOT_TESTED",
+    "stage3b": "NOT AUTHORIZED",
+    "stage9": "IN_PROGRESS"
+  },
+  "qualification_admissible": false,
+  "limitations": [
+    "Synthetic libvirt and image tests do not qualify physical gates.",
+    "No operator-host KVM/libvirt measurement or exact target CPython experiment was performed.",
+    "Hosted native Windows/Ubuntu checks on the Draft PR remain pending independently of local Linux and Win32 typing.",
+    "Full advisory Semgrep legacy findings, timeouts and parser warning are retained separately; final focused new-source scan is required.",
+    "No VM mutation, privilege elevation, target bytecode, maintainer script, trust-root change, durable anti-rollback mutation or merge was performed."
+  ],
+  "state": {
+    "stage9": "IN_PROGRESS",
+    "observer3a": "BLOCKED",
+    "stage3b": "NOT AUTHORIZED",
+    "production": "NO-GO",
+    "pyc_reconstruction": "UNVERIFIED"
+  }
+}
