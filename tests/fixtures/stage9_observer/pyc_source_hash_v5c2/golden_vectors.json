@@ -1,0 +1,170 @@
+{
+  "format": "stage9-pyc-source-hash-golden-v5c2",
+  "algorithm_id": "cpython-3.12.3-ubuntu0.17-siphash13-le-v1",
+  "reference_source_sha256": "3b3686ea5c9187d5ee36ff4f69db159775b5e9f4462eecb95d1195d280e7c488",
+  "source_materials_sha256": "3c8059a18aa39de90a20e3db634a8f6113648f15672c6b51a54099f96e008e0a",
+  "provenance": "Static output from standalone exact distribution-patched Python/pyhash.c siphash13 C excerpt; independent of verifier Python implementation. Target CPython was not run.",
+  "vectors": [
+    {
+      "id": "empty",
+      "source_size": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "baf18eedc9387a25",
+      "source_hex": ""
+    },
+    {
+      "id": "one-byte",
+      "source_size": 1,
+      "source_sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "6aab892215f1cd94",
+      "source_hex": "78"
+    },
+    {
+      "id": "length-7",
+      "source_size": 7,
+      "source_sha256": "57355ac3303c148f11aef7cb179456b9232cde33a818dfda2c2fcb9325749a6b",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "424a50829057fb4d",
+      "source_hex": "00010203040506"
+    },
+    {
+      "id": "length-8",
+      "source_size": 8,
+      "source_sha256": "8a851ff82ee7048ad09ec3847f1ddf44944104d2cbd17ef4e3db22c6785a0d45",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "e508f08f76923f7a",
+      "source_hex": "0001020304050607"
+    },
+    {
+      "id": "length-9",
+      "source_size": 9,
+      "source_sha256": "f8348e0b1df00833cbbbd08f07abdecc10c0efb78829d7828c62a7f36d0cc549",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "cdc7d5e2bd634ff3",
+      "source_hex": "000102030405060708"
+    },
+    {
+      "id": "length-15",
+      "source_size": 15,
+      "source_sha256": "7071fc3188fde7e7e500d4768f1784bede1a22e991648dcab9dc3219acff1d4c",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "ddfc935498846f8f",
+      "source_hex": "000102030405060708090a0b0c0d0e"
+    },
+    {
+      "id": "length-16",
+      "source_size": 16,
+      "source_sha256": "be45cb2605bf36bebde684841a28f0fd43c69850a3dce5fedba69928ee3a8991",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "dfe2a33895112269",
+      "source_hex": "000102030405060708090a0b0c0d0e0f"
+    },
+    {
+      "id": "length-17",
+      "source_size": 17,
+      "source_sha256": "3e5718fea51a8f3f5baca61c77afab473c1810f8b9db330273b4011ce92c787e",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "4901ef3ff28c0a82",
+      "source_hex": "000102030405060708090a0b0c0d0e0f10"
+    },
+    {
+      "id": "length-32",
+      "source_size": 32,
+      "source_sha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "a890355e09dda6b5",
+      "source_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "id": "length-64",
+      "source_size": 64,
+      "source_sha256": "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "97b52f513d2348d8",
+      "source_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+    },
+    {
+      "id": "nul",
+      "source_size": 17,
+      "source_sha256": "0a88111852095cae045340ea1f0b279944b2a756a213d9b50107d7489771e159",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "b4080ac780110f0e",
+      "source_hex": "0000000000000000000000000000000000"
+    },
+    {
+      "id": "lf",
+      "source_size": 11,
+      "source_sha256": "1202258c0b217e969e8bef5992c42f26924110aefdc8524ee8ec3adbebf7f625",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "0bc3e3a8ab4ff6bb",
+      "source_hex": "76616c7565203d2033370a"
+    },
+    {
+      "id": "crlf",
+      "source_size": 12,
+      "source_sha256": "ae92fee72995ab35fcc347ecb3944c82c44f6c0b2dc6c0fd9ff4b09bd18fe474",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "5563d1193652b345",
+      "source_hex": "76616c7565203d2033370d0a"
+    },
+    {
+      "id": "non-ascii",
+      "source_size": 28,
+      "source_sha256": "9b8daf09f13ba7299cf78a6523c46e23a74c8b29ff7b034d0b5738cef2f0039e",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "7d807641c74921cc",
+      "source_hex": "2320c5bcc3b3c5827720f09f90a20a76616c7565203d2022c3a9220a"
+    },
+    {
+      "id": "long-source",
+      "source_size": 360448,
+      "source_sha256": "f24112b0a1863ae766922a04214143029cf777bef67aa8ee7e63e16b0e88e46d",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "0f719f583e2c571c",
+      "source_repeat_hex": "76616c7565203d2033370a",
+      "repeat_count": 32768
+    },
+    {
+      "id": "one-byte-mutation",
+      "source_size": 11,
+      "source_sha256": "021bb596fd8bbfe7f1813b39e82eb8afb71b506a800ede88d8e83b8411645bfd",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "3d2b398a9dfe6c77",
+      "source_hex": "76616c7565203d2033380a"
+    },
+    {
+      "id": "changed-magic",
+      "source_size": 11,
+      "source_sha256": "1202258c0b217e969e8bef5992c42f26924110aefdc8524ee8ec3adbebf7f625",
+      "magic_hex": "cc0d0d0a",
+      "expected_hex": "10bdb62d8b319586",
+      "source_hex": "76616c7565203d2033370a"
+    },
+    {
+      "id": "integration-second-source",
+      "source_size": 11,
+      "source_sha256": "8dedaa381fe9fcda35784f9c29d4b4b3cd8d15c656a28552e4b38aa8384b1f75",
+      "magic_hex": "cb0d0d0a",
+      "expected_hex": "c58b0fde5804a619",
+      "source_hex": "76616c7565203d2037330a"
+    },
+    {
+      "id": "wrong-low16-key",
+      "source_size": 11,
+      "source_sha256": "1202258c0b217e969e8bef5992c42f26924110aefdc8524ee8ec3adbebf7f625",
+      "magic_hex": "cb0d0000",
+      "expected_hex": "4db70e9b9f4dc7c2",
+      "source_hex": "76616c7565203d2033370a"
+    },
+    {
+      "id": "wrong-magic-endian",
+      "source_size": 11,
+      "source_sha256": "1202258c0b217e969e8bef5992c42f26924110aefdc8524ee8ec3adbebf7f625",
+      "magic_hex": "0a0d0dcb",
+      "expected_hex": "ee431659497dbc99",
+      "source_hex": "76616c7565203d2033370a"
+    }
+  ]
+}

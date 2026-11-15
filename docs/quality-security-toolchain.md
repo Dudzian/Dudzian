@@ -1,5 +1,15 @@
 # Quality, security, and code-intelligence toolchain
 
+V5c2 dodaje niezależne obliczanie hasha źródła PEP 552, porównanie rzeczywistych
+bajtów V5b z nagłówkiem PYC i osobny kontrakt przyszłej rekonstrukcji. Trzy
+moduły oraz ich testy wchodzą do istniejącego mypy Linux/Win32, jawnego
+Ruff/format i pomiaru branch coverage w `quality-ratchet`, bez zmiany progów,
+limitów, pominięć lub bramek. Wektory są statycznymi wynikami niezależnej
+referencji C z dokładnych źródeł Ubuntu. `HASH_MATCH_LOCAL` nie akceptuje
+algorytmu produkcyjnie i nie dowodzi wykonania; rekonstrukcja pozostaje
+`UNVERIFIED`. [Kontrakt V5c2](architecture/stage9_observer_pyc_source_hash_v5c2.md)
+opisuje osobne statusy i brakujące dowody.
+
 Poprawki po review PR #3265 dodają osobny, ręcznie wybierany zakres
 `stage9-safe` w `platform-deployment.yml`, dla Python 3.11 i 3.12 i dokładnego
 HEAD. Zachowuje on próg diff coverage 70%, format, Ruff, mypy i skan sekretów;
