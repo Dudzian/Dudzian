@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from configparser import ConfigParser
 import json
 import os
 from pathlib import Path
@@ -787,3 +788,37 @@ def test_history_completion_gate_rejects_nonpassing_or_skipped_test_evidence(tmp
     )["run"]
     result = _run_step(command, tmp_path)
     assert result.returncode != 0
+
+
+def test_observer_v5b_preserves_explicit_quality_and_coverage_scopes():
+    quality = _jobs()["quality-ratchet"]
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    typed_files = config["tool"]["mypy"]["files"]
+    lint = shlex.split(_step(quality, "Ruff baseline gate")["run"])
+    formatted = shlex.split(
+        _step(quality, "Format Stage 9 signing and credential substrate")["run"]
+    )
+    covered = shlex.split(
+        _step(quality, "Property and critical pure-logic tests with branch coverage")["run"]
+    )
+    for module in (
+        "stage9_observer_image_v5a",
+        "stage9_observer_member_source_v5b",
+        "stage9_observer_materialization_v5b",
+    ):
+        source = f"deployment/{module}.py"
+        test = f"tests/deployment/test_{module}.py"
+        assert typed_files.count(source) == 1
+        assert lint.count(source) == 1
+        assert formatted.count(source) == 1
+        assert formatted.count(test) == 1
+        assert covered.count(test) == 1
+        assert covered.count(f"--cov=deployment.{module}") == 1
+    assert "--cov-config=.coveragerc" in covered
+    coverage_config = ConfigParser()
+    coverage_config.read(ROOT / ".coveragerc")
+    assert coverage_config.getboolean("run", "branch")
+    assert _step(quality, "Mypy configured scope")["run"] == "python -m mypy"
+    assert (
+        _step(quality, "Mypy Windows configured scope")["run"] == "python -m mypy --platform win32"
+    )

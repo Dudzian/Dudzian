@@ -124,6 +124,8 @@ files = [
   "deployment/stage9_observer_checkpoint_v4c.py",
   "deployment/stage9_observer_apt_v4c.py",
   "deployment/stage9_observer_image_v5a.py",
+  "deployment/stage9_observer_member_source_v5b.py",
+  "deployment/stage9_observer_materialization_v5b.py",
   "scripts/verify_stage9_real_deb_v2.py",
   "scripts/verify_stage9_real_deb_v3.py",
   "deployment/stage9_trusted_installation_files.py",

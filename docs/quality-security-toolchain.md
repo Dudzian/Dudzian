@@ -618,3 +618,13 @@ gates are unchanged. Synthetic DEBs use binary writes with explicit LF bytes
 for portable fixtures. V5a executes no transformations, investigated code,
 installer or network operation. A static `MATCH` never upgrades V4 trust,
 independent image acceptance, host/runtime qualification or production status.
+
+The separate bounded V5b member reader and materialization verifier join the
+existing configured Linux/Windows mypy, explicit Ruff/format and branch-coverage
+scopes. Their tests use immutable synthetic DEB bytes and separately identified
+expected images; Linux snapshot tests read temporary files through no-follow
+descriptors. These checks do not install packages, execute their contents or
+qualify a native runtime. V5a success semantics, the 70% changed-code threshold,
+all existing limits and privileged execution gates remain unchanged. The
+[technical contract](architecture/stage9_observer_materialization_v5b.md) records
+the supported profile and refused transformations.
