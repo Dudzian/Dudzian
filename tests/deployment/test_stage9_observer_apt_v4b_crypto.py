@@ -6,9 +6,12 @@ import base64
 import hashlib
 import json
 import os
+import re
+import select
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,33 +30,52 @@ _FIXTURES = Path(__file__).parents[1] / "fixtures" / "stage9_observer" / "apt_v4
 _TEST_TIME = 1767225600
 
 
-def _gpg(home: Path, *arguments: str, raw: bytes | None = None) -> bytes:
+def _gpg_command(home: Path, *arguments: str) -> list[str]:
     executable = shutil.which("gpg")
     if executable is None:
         pytest.skip("A preprovisioned local gpg is required for disposable TEST key generation")
-    return subprocess.run(
-        [
-            executable,
-            "--no-options",
-            "--homedir",
-            str(home),
-            "--batch",
-            "--no-tty",
-            "--pinentry-mode",
-            "loopback",
-            "--passphrase",
-            "",
-            "--faked-system-time",
-            "20260101T000000",
-            *arguments,
-        ],
+    return [
+        executable,
+        "--no-options",
+        "--homedir",
+        str(home),
+        "--batch",
+        "--no-tty",
+        "--pinentry-mode",
+        "loopback",
+        "--passphrase",
+        "",
+        "--faked-system-time",
+        # Each invocation starts at the same instant. Without ! the clock
+        # advances during key generation, so a slow key can be newer than
+        # the next signing process and GPG correctly refuses a time warp.
+        "20260101T000000!",
+        *arguments,
+    ]
+
+
+def _gpg_diagnostic(home: Path, stderr: bytes) -> str:
+    text = stderr.decode("utf-8", errors="replace").replace(str(home), "<TEST_GNUPGHOME>")
+    text = re.sub(r"\b[0-9A-Fa-f]{16,64}\b", "<TEST_KEY_ID>", text)
+    return re.sub(r"[^\x20-\x7e\n]", "?", text)[:2048]
+
+
+def _gpg(home: Path, *arguments: str, raw: bytes | None = None) -> bytes:
+    result = subprocess.run(
+        _gpg_command(home, *arguments),
         input=raw,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        check=True,
+        check=False,
         timeout=30,
         env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GNUPGHOME": str(home)},
-    ).stdout
+    )
+    operation = next((argument for argument in arguments if argument.startswith("--")), "gpg")
+    assert result.returncode == 0, (
+        f"Disposable TEST GPG {operation}: exit={result.returncode}; "
+        f"stderr={_gpg_diagnostic(home, result.stderr)}"
+    )
+    return result.stdout
 
 
 def _fingerprints(home: Path) -> list[str]:
@@ -90,11 +112,29 @@ class TestSignerV4b:
 
 
 @contextmanager
-def runtime_test_signer(directory: Path) -> Iterator[TestSignerV4b]:
-    """Generate only under a pytest temp directory and remove all private state."""
+def _isolated_gpg_home(directory: Path) -> Iterator[Path]:
     home = directory / "synthetic-test-key-home"
     home.mkdir(mode=0o700)
     try:
+        yield home
+    finally:
+        try:
+            executable = shutil.which("gpgconf")
+            if executable is not None:
+                subprocess.run(
+                    [executable, "--homedir", str(home), "--kill", "gpg-agent"],
+                    check=True,
+                    timeout=10,
+                    env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GNUPGHOME": str(home)},
+                )
+        finally:
+            shutil.rmtree(home)
+
+
+@contextmanager
+def runtime_test_signer(directory: Path) -> Iterator[TestSignerV4b]:
+    """Generate only under a pytest temp directory and remove all private state."""
+    with _isolated_gpg_home(directory) as home:
         _gpg(home, "--quick-generate-key", "SYNTHETIC TEST ONLY V4b", "ed25519", "cert", "0")
         primary = _fingerprints(home)[0]
         _gpg(home, "--quick-add-key", primary, "ed25519", "sign", "0")
@@ -107,16 +147,6 @@ def runtime_test_signer(directory: Path) -> Iterator[TestSignerV4b]:
             fingerprints[2],
             _gpg(home, "--export", primary),
         )
-    finally:
-        executable = shutil.which("gpgconf")
-        if executable is not None:
-            subprocess.run(
-                [executable, "--homedir", str(home), "--kill", "gpg-agent"],
-                check=True,
-                timeout=10,
-                env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GNUPGHOME": str(home)},
-            )
-        shutil.rmtree(home)
 
 
 def local_gpgv_tool() -> GpgvToolV4b:
@@ -312,3 +342,85 @@ def test_runtime_test_signer_cleans_private_state(tmp_path: Path, tool: GpgvTool
         assert evidence.signing_fingerprint == signer.signing_fingerprint
         private_home = signer.home
     assert not private_home.exists()
+
+
+def test_delayed_real_key_generation_keeps_signature_clock_fixed(
+    tmp_path: Path, tool: GpgvToolV4b
+) -> None:
+    release = b"SYNTHETIC TEST ONLY delayed key generation\n"
+    with _isolated_gpg_home(tmp_path) as home:
+        with subprocess.Popen(
+            _gpg_command(home, "--generate-key"),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "GNUPGHOME": str(home)},
+        ) as process:
+            try:
+                assert process.stderr is not None
+                assert select.select([process.stderr], [], [], 10)[0], "GPG did not start"
+                startup = process.stderr.readline(1024)
+                assert b"running with faked system time" in startup
+                # Delay input after GPG has started its fake clock. An advancing
+                # clock creates a future key relative to the next invocation.
+                time.sleep(1.1)
+                _, stderr = process.communicate(
+                    b"Key-Type: eddsa\nKey-Curve: ed25519\nKey-Usage: sign\n"
+                    b"Name-Real: SYNTHETIC TEST ONLY V4b\nExpire-Date: 0\n"
+                    b"%no-protection\n%commit\n",
+                    timeout=30,
+                )
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=5)
+        assert process.returncode == 0, _gpg_diagnostic(home, stderr)
+        records = _gpg(home, "--with-colons", "--list-secret-keys").decode("ascii").splitlines()
+        secret = next(record.split(":") for record in records if record.startswith("sec:"))
+        assert int(secret[5]) == _TEST_TIME
+        assert secret[1] not in {"r", "e", "d", "i"}
+        fingerprint = _fingerprints(home)[0]
+        signature = _gpg(
+            home,
+            "--armor",
+            "--digest-algo",
+            "SHA256",
+            "--local-user",
+            fingerprint + "!",
+            "--detach-sign",
+            raw=release,
+        )
+        evidence = verify_detached_v4b(
+            release=release,
+            signature=signature,
+            keyring=_gpg(home, "--export", fingerprint),
+            tool=tool,
+        )
+        assert evidence.signature_timestamp == _TEST_TIME
+        assert evidence.signing_fingerprint == fingerprint
+    assert not home.exists()
+
+
+def test_disposable_gpg_diagnostic_is_bounded_and_redacts_test_identifiers(tmp_path: Path) -> None:
+    stderr = f"gpg: {tmp_path}: key {'A' * 40}\x1b[31m\n".encode() + b"x" * 4096
+    diagnostic = _gpg_diagnostic(tmp_path, stderr)
+    assert str(tmp_path) not in diagnostic
+    assert "A" * 40 not in diagnostic
+    assert "<TEST_GNUPGHOME>" in diagnostic and "<TEST_KEY_ID>" in diagnostic
+    assert "\x1b" not in diagnostic
+    assert len(diagnostic) == 2048
+
+
+def test_private_test_home_is_removed_when_agent_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: "/test-only/gpgconf")
+
+    def failed_cleanup(*args: object, **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(2, ["gpgconf", "--kill", "gpg-agent"])
+
+    monkeypatch.setattr(subprocess, "run", failed_cleanup)
+    with pytest.raises(subprocess.CalledProcessError):
+        with _isolated_gpg_home(tmp_path) as home:
+            (home / "private-keys-v1.d").mkdir()
+    assert not home.exists()

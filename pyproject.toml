@@ -133,6 +133,11 @@ files = [
   "deployment/stage9_observer_pyc_execution_v5c3.py",
   "deployment/stage9_observer_compile_worker_v5c3.py",
   "deployment/stage9_observer_runtime_identity_v5c3.py",
+  "deployment/stage9_observer_collector_identity_v5d1.py",
+  "deployment/stage9_observer_kvm_domain_v5d1.py",
+  "deployment/stage9_observer_kvm_image_v5d1.py",
+  "deployment/stage9_observer_kvm_preflight_v5d1.py",
+  "scripts/stage9_observer_kvm_preflight_v5d1.py",
   "scripts/verify_stage9_real_deb_v2.py",
   "scripts/verify_stage9_real_deb_v3.py",
   "deployment/stage9_trusted_installation_files.py",
@@ -359,6 +364,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  # Required by the configured V5d1 parser checks in wheelhouse-only mypy jobs.
+  "defusedxml==0.7.1",
+  "types-defusedxml==0.7.0.20240218",
   "pytest>=7.4",
   "pytest-asyncio>=0.23",
   "pytest-cov>=4.1",
@@ -392,6 +400,9 @@ test = [
   "pytest-asyncio>=0.23",
   "pytest-cov>=4.1",
   "pytest-xdist>=3.5",
+  # Hardened parser for untrusted libvirt domain metadata.
+  "defusedxml==0.7.1",
+  "types-defusedxml==0.7.0.20240218",
   # Test tool only; keep the inactive offline decoder's reviewed version explicit.
   "zstandard==0.25.0",
   "PyYAML>=6.0",
@@ -427,6 +438,7 @@ tools = [
   "pyarrow>=12.0",
 ]
 quality = [
+  "types-defusedxml==0.7.0.20240218",
   "ruff==0.14.11",
   "mypy==1.10.0",
   "pre-commit>=4,<5",
@@ -456,6 +468,10 @@ compression = [
   "brotli>=1.1; platform_python_implementation != 'PyPy'",
   "brotlicffi>=1.1.0; platform_python_implementation == 'PyPy'",
   "zstandard>=0.22",
+]
+observer-kvm-preflight = [
+  # Operator-host parser; libvirt-python is provided by the reviewed system binding.
+  "defusedxml==0.7.1",
 ]
 offline-verifier = [
   # Separate verification-tool dependency; never part of the minimal Observer.

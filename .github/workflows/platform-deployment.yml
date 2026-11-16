@@ -67,6 +67,7 @@ jobs:
           python -m pip install pytest PyYAML jsonschema "cryptography>=50.0.1,<51"
           "psycopg[binary]>=3.2,<4" "ruff==0.14.11" "mypy==1.10.0"
           "pre-commit>=4,<5" "coverage>=7.10,<8" "diff-cover>=9,<12"
+          "defusedxml==0.7.1" "types-defusedxml==0.7.0.20240218"
           types-PyYAML types-requests "grpcio>=1.62,<2" "protobuf>=4.24,<6" packaging
       - name: Install syscall observation tool on disposable hosted runner
         run: |
@@ -313,6 +314,75 @@ jobs:
           tests/deployment/test_platform_readiness.py
           tests/deployment/test_platform_evidence.py
           tests/scripts/test_platform_core_evidence_workflow.py
+
+  stage9-v5d1-static-contract:
+    name: Stage 9 V5d1 static contracts
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
+    runs-on: ubuntu-24.04
+    permissions: {contents: read}
+    timeout-minutes: 15
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.11"}
+      - name: Install isolated static validation tools
+        run: >-
+          python -m pip install pytest PyYAML "cryptography>=50.0.1,<51" jsonschema
+          "defusedxml==0.7.1" "types-defusedxml==0.7.0.20240218"
+          "ruff==0.14.11" "mypy==1.10.0" types-PyYAML types-requests
+      - name: Lint V5d1 source and tests
+        run: >-
+          python -m ruff check
+          deployment/stage9_observer_collector_identity_v5d1.py
+          deployment/stage9_observer_kvm_domain_v5d1.py
+          deployment/stage9_observer_kvm_image_v5d1.py
+          deployment/stage9_observer_kvm_preflight_v5d1.py
+          scripts/stage9_observer_kvm_preflight_v5d1.py
+          tests/deployment/test_stage9_observer_collector_identity_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_domain_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_image_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py
+      - name: Check V5d1 formatting
+        run: >-
+          python -m ruff format --check
+          deployment/stage9_observer_collector_identity_v5d1.py
+          deployment/stage9_observer_kvm_domain_v5d1.py
+          deployment/stage9_observer_kvm_image_v5d1.py
+          deployment/stage9_observer_kvm_preflight_v5d1.py
+          scripts/stage9_observer_kvm_preflight_v5d1.py
+          tests/deployment/test_stage9_observer_collector_identity_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_domain_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_image_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py
+      - name: Type check V5d1
+        run: >-
+          python -m mypy
+          deployment/stage9_observer_collector_identity_v5d1.py
+          deployment/stage9_observer_kvm_domain_v5d1.py
+          deployment/stage9_observer_kvm_image_v5d1.py
+          deployment/stage9_observer_kvm_preflight_v5d1.py
+          scripts/stage9_observer_kvm_preflight_v5d1.py
+      - name: Test synthetic V5d1 contracts and refusal boundaries
+        run: >-
+          python -m pytest -q --confcutdir=tests/deployment
+          tests/deployment/test_stage9_observer_collector_identity_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_domain_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_image_v5d1.py
+          tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py
+          --junitxml=stage9-v5d1-static.xml
+      - name: Preserve V5d1 synthetic test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stage9-v5d1-static-${{ github.sha }}-${{ github.run_attempt }}
+          path: stage9-v5d1-static.xml
+          if-no-files-found: error
+          retention-days: 14
 
   linux-physical-challenge:
     if: >-

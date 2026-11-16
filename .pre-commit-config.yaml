@@ -17,6 +17,7 @@ repos:
         args: ["--config-file=pyproject.toml"]
         additional_dependencies:
           - types-PyYAML
+          - types-defusedxml==0.7.0.20240218
           - types-requests
           - grpcio>=1.62
           - protobuf>=4.24

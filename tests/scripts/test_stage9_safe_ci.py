@@ -46,7 +46,48 @@ def test_dispatch_routes_only_explicit_safe_scope_and_keeps_old_jobs():
         assert "inputs.validation_scope != 'stage9-safe'" in selected["if"]
         if "if" in original:
             assert " ".join(original["if"].split()) in " ".join(selected["if"].split())
-    assert set(current["jobs"]) == set(old["jobs"]) | {"stage9-safe-validation"}
+    assert set(current["jobs"]) == set(old["jobs"]) | {
+        "stage9-safe-validation",
+        "stage9-v5d1-static-contract",
+    }
+
+
+def test_v5d1_static_job_preserves_safe_scope_and_has_no_native_entrypoint():
+    job = workflow()["jobs"]["stage9-v5d1-static-contract"]
+    assert job["if"] == (
+        "(github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')"
+    )
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"] == {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+    assert not {"environment", "services", "needs", "continue-on-error"} & set(job)
+    checkout = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": False}
+    source_paths = {
+        f"deployment/stage9_observer_{name}_v5d1.py"
+        for name in ("collector_identity", "kvm_domain", "kvm_image", "kvm_preflight")
+    } | {"scripts/stage9_observer_kvm_preflight_v5d1.py"}
+    test_paths = {
+        f"tests/deployment/test_stage9_observer_{name}_v5d1.py"
+        for name in ("collector_identity", "kvm_domain", "kvm_image", "kvm_preflight")
+    }
+    commands = [step["run"].split() for step in job["steps"] if "run" in step]
+    assert len(commands) == 5
+    assert commands[0][:4] == ["python", "-m", "pip", "install"]
+    assert commands[1][:4] == ["python", "-m", "ruff", "check"]
+    assert set(commands[1][4:]) == source_paths | test_paths
+    assert commands[2][:5] == ["python", "-m", "ruff", "format", "--check"]
+    assert set(commands[2][5:]) == source_paths | test_paths
+    assert commands[3][:3] == ["python", "-m", "mypy"]
+    assert set(commands[3][3:]) == source_paths
+    assert commands[4][:4] == ["python", "-m", "pytest", "-q"]
+    assert set(commands[4][4:]) == test_paths | {
+        "--confcutdir=tests/deployment",
+        "--junitxml=stage9-v5d1-static.xml",
+    }
+    assert "secrets." not in json.dumps(job)
 
 
 def test_safe_matrix_is_unprivileged_and_preserves_exact_commit_and_evidence():
