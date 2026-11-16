@@ -384,6 +384,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Test synthetic V5d2 inventory without host provisioning
+        run: |
+          bash -n scripts/stage9_operator_v5d2_inventory.sh
+          python -m ruff check tests/scripts/test_stage9_operator_v5d2_inventory.py
+          python -m ruff format --check tests/scripts/test_stage9_operator_v5d2_inventory.py
+          python -m pytest -q --confcutdir=tests/scripts \
+            tests/scripts/test_stage9_operator_v5d2_inventory.py \
+            --junitxml=stage9-v5d2-inventory.xml
+      - name: Preserve V5d2 synthetic inventory results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stage9-v5d2-inventory-${{ github.sha }}-${{ github.run_attempt }}
+          path: stage9-v5d2-inventory.xml
+          if-no-files-found: error
+          retention-days: 14
+
   linux-physical-challenge:
     if: >-
       (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian')

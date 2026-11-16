@@ -1,0 +1,169 @@
+# Stage 9 V5d2 preparation — validation record
+
+This record describes software validation in the managed Linux development
+workspace on 2026-11-16. It is not a receipt from the operator's Dell laptop,
+an installed-controller preflight, independent approval or physical qualification.
+
+## Revision and content bindings
+
+The clean starting checkout and observed remote `main` are both
+`213226f6222f8d1ece05987afe038c82ed61923d`, the merge of PR #3277. Work is on
+`codex/stage9-v5d2-operator-preparation`. The draft PR metadata and final report
+bind the resulting commit; the following SHA-256 values bind the exact tested
+implementation, finalized tests, operator plan and workflow without a
+self-referential commit hash in this document.
+
+| File | SHA-256 |
+| --- | --- |
+| `scripts/stage9_operator_v5d2_inventory.sh` | `bc70213c842e5339996f53f554457186bc040e570fff7abd28c12b71930de2ac` |
+| `tests/scripts/test_stage9_operator_v5d2_inventory.py` | `eebf0a9189de20c668cb1b6e429aa4e430d2b6c2c3cdd6d3289511b9cbda5804` |
+| `docs/architecture/stage9_operator_v5d2_deployment_plan.md` | `de23d04e0440ca595259d2eb90d302def3bb02b7fd769457ec32345e183c1e00` |
+| `.github/workflows/platform-deployment.yml` | `ed3721a47f3462c59080f1590abf637d56f8e286ebe55decb2ff78efd6f27bf2` |
+
+`git diff --exit-code 213226f6222f8d1ece05987afe038c82ed61923d -- deployment docs/architecture/stage9_closure_matrix_v5d1.json`
+returns 0: retained controller code and closure-gate statuses are unchanged.
+
+Codebase Memory was unavailable in this session. Contract conclusions were
+checked against actual source, documentation and regression tests; no graph
+coverage or exhaustive repository-index claim is made.
+
+## Final tests
+
+Working directory for each command is `/workspace/Dudzian`. The isolated
+development-tool venv `/workspace/work/stage9-v5d2/venv` is not the protected
+observer installation or investigated target interpreter. Tool versions:
+pytest 9.2.0, pre-commit 4.7.0, Ruff 0.14.11, mypy 1.10.0, Semgrep 1.179.0,
+Betterleaks 1.9.0, cryptography 50.0.2 and defusedxml 0.7.1.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /workspace/work/stage9-v5d2/venv/bin/python -m pytest -q --noconftest tests/scripts/test_stage9_operator_v5d2_inventory.py
+```
+
+Exit 0: **39 passed, 0 failed, 0 skipped**, 91.50 seconds. Tests model metadata
+and subprocess boundaries, including absent installation/policy/artifacts,
+denied access, unsafe ownership/modes, hardlinks, special files, symlinked
+ancestors/leaves/launcher, missing tools, unsupported platform, unavailable or
+timed-out libvirt, wrong returned URI, revision drift and missing independent
+approval. They snapshot retained synthetic state, audit permitted commands,
+and confirm candidate Python/QEMU are never invoked. No fake policy file or
+approval signature is provisioned on a host.
+
+Hostile inherited logging/authentication settings are checked through real
+`env -i`. A separate test uses real Git in a disposable temporary repository
+with inherited and repository-configured Trace2 destinations: none creates a
+trace file. Fake libvirt verifies only sanitized explicit settings. That test
+does not qualify native libvirt authentication backends or a physical socket.
+The POSIX shebang harness has an explicit unsupported-platform skip; it did
+not skip on this Linux run. Native Git was available and its test ran.
+
+```bash
+/workspace/work/stage9-v5d2/venv/bin/python -m pytest -q tests/deployment/test_stage9_observer_collector_identity_v5d1.py tests/deployment/test_stage9_observer_kvm_domain_v5d1.py tests/deployment/test_stage9_observer_kvm_image_v5d1.py tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py tests/deployment/test_stage9_observer_runtime_identity_v5c3.py tests/deployment/test_stage9_observer_pyc_execution_v5c3.py tests/deployment/test_stage9_observer_compile_worker_v5c3.py
+```
+
+Exit 0: **659 passed, 0 failed, 1 skipped**, 2.09 seconds. The skip is
+`test_native_non_linux_host_refuses_before_policy_or_posix_access`, intentionally
+skipped on Linux with reason `Native unsupported-host refusal`. It is not a
+pass. Retained test source is unchanged from the baseline.
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /workspace/work/stage9-v5d2/venv/bin/python -m pytest -q --confcutdir=tests/scripts tests/scripts/test_platform_core_evidence_workflow.py tests/scripts/test_linux_physical_evidence_workflow.py
+```
+
+Exit 0: **137 passed, 0 failed, 0 skipped**, 2.11 seconds. Existing platform
+evidence contracts and physical opt-in gates remain intact. The V5d1 static
+job now additionally runs V5d2 shell syntax/lint/format/synthetic regressions
+and retains its own JUnit artifact; it never runs the live inventory or native
+controller in CI. Existing steps, timeout and hardware gates are preserved.
+
+Distinct final test total: **835 passed, 0 failed, 1 skipped**. Earlier
+exploratory runs included transient shell-read failures during concurrent
+edits and a malformed-revision test expectation correction. Those results
+were not counted as passes; the final inventory run used frozen source bytes
+bound above. No test or gate was disabled to obtain these results.
+
+## Quality checks
+
+```bash
+bash -n scripts/stage9_operator_v5d2_inventory.sh
+/workspace/work/stage9-v5d2/venv/bin/python -m ruff check --no-cache bot_core core scripts tests deploy stage6_samples ui
+PATH=/workspace/work/stage9-v5d2/venv/bin:$PATH PRE_COMMIT_HOME=/workspace/work/stage9-v5d2/pre-commit python -m pre_commit run ruff-format --all-files
+/workspace/work/stage9-v5d2/venv/bin/python -m mypy --config-file=pyproject.toml
+git diff --check
+```
+
+All exit 0. Ruff: `All checks passed!`; the exact all-files formatter hook:
+`ruff format...Passed`, with no formatting changes. Configured mypy:
+`Success: no issues found in 417 source files` (seven existing annotation
+notes). This is the configured Python scope, not a shell type checker.
+
+```bash
+SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE=/workspace/work/stage9-v5d2/semgrep-settings.yml SEMGREP_LOG_FILE=/workspace/work/stage9-v5d2/semgrep-runtime.log /workspace/work/stage9-v5d2/venv/bin/semgrep scan --config .semgrep/cryptohunter.yml --metrics=off --disable-version-check --error bot_core core deployment scripts
+SEMGREP_SEND_METRICS=off SEMGREP_SETTINGS_FILE=/workspace/work/stage9-v5d2/semgrep-test-settings.yml SEMGREP_LOG_FILE=/workspace/work/stage9-v5d2/semgrep-test-runtime.log /workspace/work/stage9-v5d2/venv/bin/semgrep scan --test --config .semgrep/cryptohunter.yml .semgrep/cryptohunter.py --metrics=off --disable-version-check --jobs 1
+BETTERLEAKS_BIN=/workspace/work/stage9-v5d2/tools/betterleaks /workspace/work/stage9-v5d2/venv/bin/python scripts/quality/betterleaks_hook.py .github/workflows/platform-deployment.yml scripts/stage9_operator_v5d2_inventory.sh tests/scripts/test_stage9_operator_v5d2_inventory.py docs/architecture/stage9_operator_v5d2_deployment_plan.md docs/architecture/stage9_operator_v5d2_validation.md
+```
+
+All exit 0. Semgrep: five blocking rules, 1149 Python targets, zero findings;
+five of five rule fixtures pass. Its existing large-file and ignore-pattern
+exclusions remain (one large file, four matching ignored paths); the custom
+Python rules are not shell analysis. Betterleaks: zero leaks on the complete
+five-file change, with redaction and provider validation disabled by the
+existing wrapper. Its downloaded v1.9.0 binary archive matched the repository
+workflow SHA-256 `f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7`.
+
+Initial mypy execution found a missing development-tool `psycopg` dependency;
+installing the declared tooling dependency resolved it. Initial Semgrep
+startup could not write its default settings in the read-only home; explicit
+workspace settings/log destinations resolved it. Neither initial failure is
+reported as a pass. No protected installation or system package was changed.
+Community advisory Semgrep, full repository pytest, Windows checks, dependency
+audit and hosted CI completion are not claimed by this local record.
+
+## Read-only syscall observation and limits
+
+The finalized script was also run on the development cloud host:
+
+```bash
+strace -f -qq -e trace=%file,fchmod,fchown,ftruncate -o /workspace/work/stage9-v5d2/inventory-file-syscalls-final.log bash scripts/stage9_operator_v5d2_inventory.sh --repository /workspace/Dudzian > /workspace/work/stage9-v5d2/inventory-cloud-final.stdout 2> /workspace/work/stage9-v5d2/inventory-cloud-final.stderr
+```
+
+Exit 0, empty script stderr. Review of 12140 traced file-syscall lines found
+47 successful write-mode opens, all to `/dev/null`, zero unexpected successful
+write opens and zero successful filesystem mutation calls. Output/trace files
+were opened by the external test driver. Failed `/dev/tty` access was not a
+successful write. This supplements source review and the synthetic snapshots;
+it does not establish all possible native-library behavior on another host.
+
+This cloud host has no available KVM device, QEMU tools or virsh. Protected
+path inspection refuses the cloud filesystem's non-root-owned ancestor.
+Those results are diagnostics, not evidence of the operator laptop's state.
+Live libvirt authentication, installed Python imports, signed policy contents,
+domain/image measurements and physical isolation were **NOT_TESTED**. The
+operator must separately review the fixed local socket's authentication
+boundary before inventory; null auth-file settings do not qualify arbitrary
+SASL/GSSAPI backends or authorize production credential access.
+
+## Remaining qualification blockers
+
+The operator-reported laptop still lacks the protected installation, trusted
+Python environment and external approval artifacts. A separate independently
+reviewed installation/ownership handoff, dependency/native-binding closure,
+approved disposable domain, immutable complete image/runtime expectations,
+independent policy and trust custody, launch/loaded-code verification,
+effective isolation/lifecycle evidence and independent acceptance remain
+required. The six existing stopped domains are not selected or altered.
+There is no safe retained real-execution admission or self-approval path.
+
+No privileged installation, investigated CPython/bytecode execution, VM
+lifecycle operation, image modification, signing-key access, production trust
+change or production authorization occurred. The focused change is ready for
+independent code review as a draft; deployment and physical qualification
+remain blocked.
+
+```text
+Stage 9 = IN_PROGRESS
+Observer 3A = BLOCKED
+Stage 3B = NOT AUTHORIZED
+Production = NO-GO
+HOST_PREFLIGHT_VERIFIED = NOT_CLAIMED
+EXECUTION_AUTHORIZATION = NOT_AUTHORIZED
+```
