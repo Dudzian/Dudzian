@@ -6,6 +6,7 @@ import ast
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -58,6 +59,7 @@ def test_v5d1_static_job_preserves_safe_scope_and_has_no_native_entrypoint():
         "(github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')"
     )
     assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == 15
     assert job["permissions"] == {"contents": "read"}
     assert job["env"] == {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
     assert not {"environment", "services", "needs", "continue-on-error"} & set(job)
@@ -73,8 +75,9 @@ def test_v5d1_static_job_preserves_safe_scope_and_has_no_native_entrypoint():
         f"tests/deployment/test_stage9_observer_{name}_v5d1.py"
         for name in ("collector_identity", "kvm_domain", "kvm_image", "kvm_preflight")
     }
-    commands = [step["run"].split() for step in job["steps"] if "run" in step]
-    assert len(commands) == 5
+    run_steps = [step for step in job["steps"] if "run" in step]
+    commands = [step["run"].split() for step in run_steps]
+    assert len(commands) == 6
     assert commands[0][:4] == ["python", "-m", "pip", "install"]
     assert commands[1][:4] == ["python", "-m", "ruff", "check"]
     assert set(commands[1][4:]) == source_paths | test_paths
@@ -87,6 +90,49 @@ def test_v5d1_static_job_preserves_safe_scope_and_has_no_native_entrypoint():
         "--confcutdir=tests/deployment",
         "--junitxml=stage9-v5d1-static.xml",
     }
+    inventory = run_steps[5]
+    assert set(inventory) == {"name", "run"}
+    assert inventory["name"] == "Test synthetic V5d2 inventory without host provisioning"
+    inventory_script = "scripts/stage9_operator_v5d2_inventory.sh"
+    inventory_test = "tests/scripts/test_stage9_operator_v5d2_inventory.py"
+    inventory_commands = [
+        shlex.split(line)
+        for line in inventory["run"].replace("\\\n", "").splitlines()
+        if line.strip()
+    ]
+    # Only syntax checking may reference the shell entry point directly.
+    # Every executable test uses the hermetic fake-host regression harness.
+    assert inventory_commands == [
+        ["bash", "-n", inventory_script],
+        ["python", "-m", "ruff", "check", inventory_test],
+        ["python", "-m", "ruff", "format", "--check", inventory_test],
+        [
+            "python",
+            "-m",
+            "pytest",
+            "-q",
+            "--confcutdir=tests/scripts",
+            inventory_test,
+            "--junitxml=stage9-v5d2-inventory.xml",
+        ],
+    ]
+    uploads = [
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 2
+    for upload, profile in zip(uploads, ("stage9-v5d1-static", "stage9-v5d2-inventory")):
+        assert set(upload) == {"name", "if", "uses", "with"}
+        assert upload["if"] == "always()"
+        assert upload["with"] == {
+            "name": f"{profile}-${{{{ github.sha }}}}-${{{{ github.run_attempt }}}}",
+            "path": f"{profile}.xml",
+            "if-no-files-found": "error",
+            "retention-days": 14,
+        }
+    assert job["steps"].index(uploads[0]) < job["steps"].index(inventory)
+    assert job["steps"].index(inventory) < job["steps"].index(uploads[1])
+    assert "virsh" not in inventory["run"]
+    assert "--probe-libvirt-after-local-auth-review" not in inventory["run"]
     assert "secrets." not in json.dumps(job)
 
 

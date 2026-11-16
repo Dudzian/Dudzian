@@ -58,8 +58,11 @@ and venv/interpreter, and `/etc/cryptohunter/observer-v5d1` are absent. Conseque
 are unavailable. The native controller deployment is therefore blocked before
 any question of physical acceptance.
 
-The laptop can collect the unprivileged V5d2 inventory and retain absence,
-access and metadata diagnostics. KVM access and cgroup availability do not
+The laptop can collect the default unprivileged V5d2 inventory and retain
+absence, access and metadata diagnostics without contacting libvirt. The
+default inventory makes zero libvirt connections; an optional native probe
+requires a separate operator diagnostic decision after local authentication
+review, as described below. KVM access and cgroup availability do not
 establish isolation, trusted launch or independence. Formal use requires a
 separate Ubuntu observer host operated under an independently reviewed local
 security policy, independence of the expectation/approval source and launch
@@ -77,12 +80,31 @@ its UUID must be supplied by independent provisioning.
 ## Inventory use and interpretation
 
 Run `bash scripts/stage9_operator_v5d2_inventory.sh` from the reviewed checkout
-using an ordinary unprivileged operator account. The inventory observes host,
-repository, dependency and fixed deployment-path metadata. It does not launch
-the protected Python interpreter, import the controller, inspect image contents,
-validate signed policy contents, or access signing keys. Its read-only libvirt
-probe uses only the local `qemu:///system` URI. There is no policy, URI, trust
-path, image path or approval override.
+using an ordinary unprivileged operator account. This is the default diagnostic
+for the unqualified laptop: it observes host, repository, dependency and fixed
+deployment-path metadata without contacting libvirt. It emits
+`libvirt_readonly NOT_TESTED LOCAL_AUTH_REVIEW_AND_EXPLICIT_OPT_IN_REQUIRED`
+and makes zero libvirt connections. It does not launch the protected Python
+interpreter, import the controller, inspect image contents, validate signed
+policy contents, or access signing keys. There is no policy, URI, trust path,
+image path or approval override.
+
+Only after the operator has separately reviewed and approved the local
+authentication configuration for this diagnostic may the operator explicitly
+select the optional native probe:
+
+```bash
+bash scripts/stage9_operator_v5d2_inventory.sh --probe-libvirt-after-local-auth-review
+```
+
+This flag records the operator's diagnostic opt-in. It does not approve the
+host, operator policy, Stage 9 qualification or target execution, and it cannot
+establish that authentication review actually occurred. Without the flag the
+script must not open a connection, even when libvirt tools are installed and
+local read-only access was reported previously. The optional probe uses only
+read-only local `qemu:///system`, a sanitized subprocess environment, closed
+stdin and a bounded timeout. The script supplies no credentials or alternate
+authentication file and adds no alternate URI or privilege escalation.
 
 Use an independently reviewed Bash/runtime and trusted host tools. A hostile
 shell startup or substituted command cannot be authenticated by this script.
@@ -90,26 +112,40 @@ The Git, package-query and libvirt subprocesses receive cleared environments
 with only explicit settings: inherited Git trace destinations and libvirt
 logging/authentication overrides cannot select files. Git disables configured
 Trace2 outputs, global/system configuration, optional locks and filesystem
-monitoring. Libvirt directs error logging to stderr and authentication/history
-paths to `/dev/null`, with stdin closed to interactive input. No password is
+monitoring. When explicitly selected, the libvirt probe directs error logging
+to stderr and authentication/history paths to `/dev/null`, with stdin closed
+to interactive input. No password is
 supplied; failed access remains a refusal. These `/dev/null` sinks are
 output/authentication controls, not alternative trust authorities. They do not
-attest all native authentication backends: before inventory, separately review
-that the fixed local read-only socket uses local peer identity without
-production credentials. For example, a SASL/GSSAPI configuration may otherwise
+attest all native authentication backends: before opting into the native probe,
+the operator must separately review and approve that the fixed local read-only
+socket uses local peer identity without production credentials. For example,
+a SASL/GSSAPI configuration may otherwise
 consult a default Kerberos cache. If that local diagnostic boundary cannot be
-established, do not run the native probe or treat its availability as tested;
-retain the blocker for operator review. This narrow diagnostic review does not
-qualify the host or approve an observer security policy.
+established, run only the default inventory, leave the native probe
+`NOT_TESTED` and retain the blocker for operator review. This narrow diagnostic
+approval does not qualify the host, approve an observer security policy or
+authorize execution.
 
 An optional `--repository PATH` selects only the Git checkout to observe; it
-does not select installation, trust or libvirt paths. Output consists of
-tab-separated `ITEM`, `STATUS`, `DETAIL` records followed by the fixed safety
+does not select installation, trust or libvirt paths. It and
+`--probe-libvirt-after-local-auth-review` may occur in either order. Unknown,
+repeated or incomplete arguments are usage errors and exit 64. Output consists
+of tab-separated `ITEM`, `STATUS`, `DETAIL` records followed by the fixed safety
 status lines. Exit 0 means collection completed, including missing or blocked
-prerequisites; malformed arguments exit 64. Linux/x86_64 observations do not
-establish an approved Ubuntu distribution or release. The distro therefore
+prerequisites. Linux/x86_64 observations do not establish an approved Ubuntu
+distribution or release. The distro therefore
 remains `UNVERIFIED`. Tool discoverability and package-database records do not
 establish an approved dependency version or Python importability.
+
+The inventory has no hard-coded `EXPECTED_BASELINE`. Every successfully read,
+valid current commit SHA produces `repository_revision PRESENT` with detail
+`<sha> OBSERVED_REVISION_NOT_RELEASE_APPROVAL`, regardless of whether it matches
+the historical contract-review baseline. A separate
+`repository_release_approval UNVERIFIED INDEPENDENT_SOURCE_REVIEW_REQUIRED`
+record always preserves the need for independent source approval. Observing
+a different, newer or locally changed revision cannot supply that approval;
+neither a matching historical SHA nor a clean worktree supplies it.
 
 A symlink at the documented `venv/bin/python` location is reported `BLOCKED`
 pending independent launcher review. This conservative diagnostic does not
@@ -144,6 +180,12 @@ permits privilege elevation, installation, trust creation or VM mutation.
    declarations, launcher, code closure and test receipts in the review record.
 2. Inspect checkout cleanliness and differences against the approved release.
    The diagnostic may read Git metadata but never checks out, fetches or pulls.
+   Its `repository_revision PRESENT` reports the observed current SHA, without
+   comparing it to a hard-coded approved baseline. The separate
+   `repository_release_approval` remains `UNVERIFIED` with
+   `INDEPENDENT_SOURCE_REVIEW_REQUIRED` for every observed revision. The baseline
+   at the start of this document is historical contract-review context, not an
+   inventory release-approval rule.
    A writable checkout supplies review material; it is not a trusted controller
    installation and must never be executed as root to establish trust.
 3. Have a separate reviewer accept the proposed deployment contents. Local Git

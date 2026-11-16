@@ -1,5 +1,11 @@
 # Stage 9 V5d2 preparation — validation record
 
+> Zapis poniżej dotyczy pierwotnego commita
+> `dc1c973ecfb0ad35ba91a88081c831e021a3d576`. Wyniki poprawek przeglądu,
+> nowe powiązania treści i ograniczenia są w końcowej sekcji
+> „Poprawki przeglądu PR #3278”. Historycznych wyników nie należy przenosić
+> na późniejsze rewizje ani traktować jako kwalifikacji fizycznego hosta.
+
 This record describes software validation in the managed Linux development
 workspace on 2026-11-16. It is not a receipt from the operator's Dell laptop,
 an installed-controller preflight, independent approval or physical qualification.
@@ -158,6 +164,143 @@ lifecycle operation, image modification, signing-key access, production trust
 change or production authorization occurred. The focused change is ready for
 independent code review as a draft; deployment and physical qualification
 remain blocked.
+
+```text
+Stage 9 = IN_PROGRESS
+Observer 3A = BLOCKED
+Stage 3B = NOT AUTHORIZED
+Production = NO-GO
+HOST_PREFLIGHT_VERIFIED = NOT_CLAIMED
+EXECUTION_AUTHORIZATION = NOT_AUTHORIZED
+```
+
+## Poprawki przeglądu PR #3278
+
+Walidacja z 2026-11-16 dotyczy poprawki na istniejącej gałęzi
+`codex/stage9-v5d2-operator-preparation`, względem przejrzanego commita
+`dc1c973ecfb0ad35ba91a88081c831e021a3d576`. Końcowy SHA jest powiązany
+z opisem i metadanymi istniejącego PR. Poniższe SHA-256 identyfikują dokładne
+zweryfikowane treści; sam hash nie stanowi niezależnej aprobaty źródła.
+
+| Plik | SHA-256 po poprawce |
+| --- | --- |
+| `scripts/stage9_operator_v5d2_inventory.sh` | `f8916463c89c28f24de63533ba66d05e8d802ac220853bbdc7101d8595abb850` |
+| `tests/scripts/test_stage9_operator_v5d2_inventory.py` | `e965a4ccace9ed573c2e68f509ebe19dbdda6cb77bc6f2167a6d56159ad410db` |
+| `tests/scripts/test_stage9_safe_ci.py` | `0a8c35d5f8c97560436029f9db3df587ff6dc621665ef7ffb225781af794e922` |
+| `docs/architecture/stage9_operator_v5d2_deployment_plan.md` | `c3d3d4e161a72c8d1b7930fc4eea2ad69669020b376c2011eb08a449a3f88b03` |
+
+### Zachowanie i granice
+
+Usunięto zakodowany `EXPECTED_BASELINE`. Każdy poprawny, bieżący SHA odczytany
+przez Git daje `repository_revision=PRESENT` z opisem
+`OBSERVED_REVISION_NOT_RELEASE_APPROVAL`. Odrębny wynik
+`repository_release_approval=UNVERIFIED` z
+`INDEPENDENT_SOURCE_REVIEW_REQUIRED` zachowuje obowiązkową niezależną kontrolę
+źródła. Inna rewizja, czysty checkout ani historycznie zgodny SHA nie aprobują
+wydania, hosta ani wykonania.
+
+Domyślnie skrypt nie kontaktuje libvirt: `libvirt_readonly=NOT_TESTED` oraz
+`LOCAL_AUTH_REVIEW_AND_EXPLICIT_OPT_IN_REQUIRED`. Po odrębnym przeglądzie
+i zatwierdzeniu lokalnej konfiguracji uwierzytelniania operator może wybrać
+`--probe-libvirt-after-local-auth-review`. Flaga wybiera wyłącznie diagnostykę;
+nie dowodzi wykonania przeglądu i nie zastępuje żadnej aprobaty bezpieczeństwa.
+Natywne backendy mogą korzystać z poświadczeń spoza jawnego środowiska, np.
+domyślnego cache Kerberos. Bez wcześniejszej kontroli pozostaje tryb domyślny.
+Zachowano stałe odczytowe `qemu:///system`, limit czasu, czyszczenie środowiska,
+odmowy i brak eskalacji, alternatywnych URI oraz zmian VM.
+
+Odtworzono też błąd istniejącego testu integracji Actions: asercja pięciu
+poleceń nie uwzględniała szóstego kroku V5d2 dodanego w pierwotnym PR.
+Poprawiony test zachowuje dokładne asercje pięciu poleceń V5d1 i dodatkowo
+sprawdza cztery dozwolone polecenia syntetycznego kroku V5d2, oba artefakty,
+SHA/próbę workflow, retencję, uprawnienia i timeout. Workflow nie zmieniono
+w tej poprawce; test wymaga, aby CI nie uruchamiało inventory ani sondy natywnej.
+
+### Końcowe testy lokalne
+
+Wszystkie polecenia wykonano w `/workspace/Dudzian`, w tym samym odrębnym
+środowisku narzędziowym. Nie użyto chronionego ani badanego interpretera.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /workspace/work/stage9-v5d2/venv/bin/python -m pytest -q --noconftest tests/scripts/test_stage9_operator_v5d2_inventory.py
+/workspace/work/stage9-v5d2/venv/bin/python -m pytest -q -rs tests/deployment/test_stage9_observer_collector_identity_v5d1.py tests/deployment/test_stage9_observer_kvm_domain_v5d1.py tests/deployment/test_stage9_observer_kvm_image_v5d1.py tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py tests/deployment/test_stage9_observer_runtime_identity_v5c3.py tests/deployment/test_stage9_observer_pyc_execution_v5c3.py tests/deployment/test_stage9_observer_compile_worker_v5c3.py
+/workspace/work/stage9-v5d2/venv/bin/python -m pytest -q --confcutdir=tests/scripts tests/scripts/test_stage9_safe_ci.py tests/scripts/test_history_reproposal_quality_ci.py tests/scripts/test_platform_core_evidence_workflow.py tests/scripts/test_linux_physical_evidence_workflow.py --junitxml=/workspace/work/stage9-v5d2/review-fix-ci-tests.xml
+```
+
+| Zakres | Zaliczone | Nieudane | Pominięte | Czas |
+| --- | ---: | ---: | ---: | --- |
+| V5d2 | 62 | 0 | 0 | 128,78 s |
+| V5d1/V5c3 | 659 | 0 | 1 | 2,95 s |
+| Kontrakty Actions i dowodów platformy | 215 | 0 | 0 | 7,67 s |
+| Łącznie, bez podwójnego liczenia | **936** | **0** | **1** | — |
+
+Pominięto istniejący test
+`test_native_non_linux_host_refuses_before_policy_or_posix_access` na Linux,
+z powodem `Native unsupported-host refusal`. Nie jest zaliczony. Zachowano
+wcześniejsze testy odmów; dodano zmieniające się SHA, rozdzielenie aprobaty,
+brak połączeń domyślnie, jawny wybór sondy, kolejność/duplikaty argumentów,
+brak zależności przy opt-in i zachowanie niezmiennych statusów.
+
+Przed poprawką kontraktu CI odtworzono `1 failed` (`assert 6 == 5`).
+Pierwsza zbiorcza kolekcja testów CI zgłosiła brak narzędziowego `coverage`;
+do venv dodano deklarowane `coverage>=7.10,<8` (7.17.3). Po poprawce i
+uzupełnieniu narzędzia pełny zestaw dał wynik z tabeli. Wstępnego błędu ani
+niezebranych testów nie policzono jako zaliczonych. Nie wyłączono testów ani
+bramek.
+
+### Kontrole jakości i bezpieczeństwa
+
+```bash
+bash -n scripts/stage9_operator_v5d2_inventory.sh
+/workspace/work/stage9-v5d2/venv/bin/python -m ruff check --no-cache bot_core core scripts tests deploy stage6_samples ui
+/workspace/work/stage9-v5d2/venv/bin/python -m mypy --config-file=pyproject.toml
+/workspace/work/stage9-v5d2/venv/bin/python -m mypy --config-file=pyproject.toml --platform win32 --cache-dir=/workspace/work/stage9-v5d2/mypy-win32
+PATH=/workspace/work/stage9-v5d2/venv/bin:$PATH PRE_COMMIT_HOME=/workspace/work/stage9-v5d2/pre-commit BETTERLEAKS_BIN=/workspace/work/stage9-v5d2/tools/betterleaks python -m pre_commit run --all-files
+PATH=/workspace/work/stage9-v5d2/venv/bin:$PATH PRE_COMMIT_HOME=/workspace/work/stage9-v5d2/pre-commit python -m pre_commit run ruff-format --all-files
+git diff --check
+git diff --cached --check
+```
+
+Wyniki: PASS; mypy Linux i Win32: po 417 plików, zero błędów. Pełny pre-commit
+zaliczył Ruff, formatowanie, mypy i Betterleaks. Obowiązkowy osobny hook
+`ruff-format --all-files` również zaliczony bez zmian formatowania.
+Powtórzono dokładne polecenia blokujących reguł Semgrep i ich fixtures
+z wcześniejszej sekcji: pięć reguł, 1149 celów, zero znalezisk oraz 5/5
+fixtures PASS. Zachowano istniejące wyłączenia dużych/ignorowanych plików;
+reguły Python nie są analizą semantyki powłoki. Skan Betterleaks obejmuje
+całą bieżącą pięcioplikową poprawkę, bez nowych wyjątków.
+
+```bash
+/workspace/work/stage9-v5d2/venv/bin/python -m pip_audit --cache-dir /workspace/work/stage9-v5d2/pip-audit-cache --requirement deploy/packaging/requirements-desktop.lock --format json --output /workspace/work/stage9-v5d2/review-fix-pip-audit-report.json
+```
+
+Kod 0: 104 zależności, zero znanych podatności, zero pominiętych zależności;
+bez `--ignore-vuln` i bez `--fix`. Początkowa próba nie mogła utworzyć cache
+w katalogu domowym tylko do odczytu. Jawny katalog cache w workspace rozwiązał
+problem środowiska; nie zmieniano locka ani zakresu audytu.
+
+### Odczytowa obserwacja syscall i ograniczenia
+
+```bash
+strace -f -qq -e trace=%file,fchmod,fchown,ftruncate -o /workspace/work/stage9-v5d2/review-fix-inventory-file-syscalls.log bash scripts/stage9_operator_v5d2_inventory.sh --repository /workspace/Dudzian > /workspace/work/stage9-v5d2/review-fix-inventory-cloud.stdout 2> /workspace/work/stage9-v5d2/review-fix-inventory-cloud.stderr
+```
+
+Kod 0, stderr skryptu pusty. W 12124 wierszach zaobserwowano 46 udanych
+otwarć z flagami zapisu, wszystkie do `/dev/null`; zero innych udanych
+otwarć do zapisu, zero udanych mutacji systemu plików i zero uruchomień
+`virsh`. Bieżący `dc1c973ecfb0ad35ba91a88081c831e021a3d576` odczytano jako
+obserwację `PRESENT`, z odrębną aprobatą `UNVERIFIED`; sonda pozostała
+`NOT_TESTED`. To obserwacja środowiska deweloperskiego, nie laptopa operatora
+i nie kwalifikacja hosta. Testy jawnej sondy używały atrap, nie natywnego
+połączenia libvirt.
+
+Wyników GitHub Actions nie wyprowadza się z testów lokalnych ani starego SHA.
+Opis PR i raport końcowy podają odczytany status dla nowego SHA; workflow
+w toku, w kolejce lub pominięty nie jest zaliczonym workflow.
+Nie instalowano kontrolera, nie zmieniano VM/polityki operatora/macierzowych
+bramek i nie wykonywano badanego CPython. Pozostają niezależna kwalifikacja
+hosta, chroniona instalacja i zależności, aprobaty/trust custody, osobny
+disposable domain, obrazy i runtime, pomiary izolacji i niezależny launch.
 
 ```text
 Stage 9 = IN_PROGRESS

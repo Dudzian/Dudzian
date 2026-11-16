@@ -19,7 +19,7 @@ import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/stage9_operator_v5d2_inventory.sh"
-BASELINE = "213226f6222f8d1ece05987afe038c82ed61923d"
+LIBVIRT_OPT_IN = "--probe-libvirt-after-local-auth-review"
 INSTALLATION = "/opt/cryptohunter/observer-v5d1"
 POLICY = "/etc/cryptohunter/observer-v5d1"
 ANCHOR = f"{POLICY}/operator-anchors.json"
@@ -97,7 +97,7 @@ elif name == "stat":
           f'{fields["links"]} {fields["size"]}')
 elif name == "git":
     if "rev-parse" in args:
-        print(scenario.get("head", "213226f6222f8d1ece05987afe038c82ed61923d"))
+        print(scenario.get("head", "1111111111111111111111111111111111111111"))
     elif "status" in args:
         print(scenario.get("git_status", ""), end="")
     else:
@@ -165,7 +165,11 @@ class InventoryHost:
             executable.chmod(0o755)
 
     def run(
-        self, extra_environment: dict[str, str] | None = None, **scenario: Any
+        self,
+        extra_environment: dict[str, str] | None = None,
+        probe_libvirt: bool = False,
+        arguments: list[str] | None = None,
+        **scenario: Any,
     ) -> subprocess.CompletedProcess[str]:
         self.scenario.write_text(json.dumps(scenario))
         self.log.write_text("")
@@ -174,8 +178,12 @@ class InventoryHost:
             "LC_ALL": "C",
         }
         env.update(extra_environment or {})
+        if arguments is None:
+            arguments = ["--repository", str(self.repo)]
+            if probe_libvirt:
+                arguments.append(LIBVIRT_OPT_IN)
         return subprocess.run(
-            [str(BASH), str(SCRIPT), "--repository", str(self.repo)],
+            [str(BASH), str(SCRIPT), *arguments],
             cwd=self.root,
             env=env,
             text=True,
@@ -230,6 +238,10 @@ def _assert_blocked_authorization(result: subprocess.CompletedProcess[str]) -> N
     ):
         assert invariant in result.stdout
     assert "HOST_PREFLIGHT_VERIFIED = VERIFIED" not in result.stdout
+    assert _rows(result)["repository_release_approval"] == (
+        "UNVERIFIED",
+        "INDEPENDENT_SOURCE_REVIEW_REQUIRED",
+    )
 
 
 def test_all_present_is_only_inventory_and_retains_independent_approval_gap(
@@ -248,6 +260,57 @@ def test_all_present_is_only_inventory_and_retains_independent_approval_gap(
         "independent" in key.lower() and status in {"UNVERIFIED", "BLOCKED"}
         for key, (status, _) in _rows(result).items()
     ), result.stdout
+    assert _rows(result)["repository_release_approval"] == (
+        "UNVERIFIED",
+        "INDEPENDENT_SOURCE_REVIEW_REQUIRED",
+    )
+
+
+def test_default_inventory_never_connects_to_libvirt_even_when_dependencies_exist(
+    host: InventoryHost,
+) -> None:
+    result = host.run()
+    assert _rows(result)["dependency:virsh"][0] == "PRESENT"
+    assert _rows(result)["libvirt_readonly"] == (
+        "NOT_TESTED",
+        "LOCAL_AUTH_REVIEW_AND_EXPLICIT_OPT_IN_REQUIRED",
+    )
+    assert not any(name == "virsh" for name, _ in host.calls())
+    assert not any(name == "timeout" and "virsh" in args for name, args in host.calls())
+    assert not host.environments("virsh")
+    _assert_blocked_authorization(result)
+
+
+@pytest.mark.parametrize("arguments", [[], [LIBVIRT_OPT_IN]])
+def test_optional_repository_argument_preserves_default_and_opted_in_modes(
+    host: InventoryHost,
+    arguments: list[str],
+) -> None:
+    result = host.run(arguments=arguments)
+    expected = "PRESENT" if LIBVIRT_OPT_IN in arguments else "NOT_TESTED"
+    assert _rows(result)["libvirt_readonly"][0] == expected
+    assert any(name == "virsh" for name, _ in host.calls()) == (LIBVIRT_OPT_IN in arguments)
+    _assert_blocked_authorization(result)
+
+
+@pytest.mark.parametrize("flag_first", [False, True])
+def test_explicit_libvirt_opt_in_accepts_both_argument_orders_without_approval(
+    host: InventoryHost,
+    flag_first: bool,
+) -> None:
+    arguments = ["--repository", str(host.repo)]
+    if flag_first:
+        arguments.insert(0, LIBVIRT_OPT_IN)
+    else:
+        arguments.append(LIBVIRT_OPT_IN)
+    result = host.run(arguments=arguments)
+    assert _rows(result)["libvirt_readonly"][0] == "PRESENT"
+    assert [(name, args) for name, args in host.calls() if name == "virsh"] == [
+        ("virsh", ["--readonly", "--connect", "qemu:///system", "uri"])
+    ]
+    assert _rows(result)["independent_approval"][0] == "UNVERIFIED"
+    assert _rows(result)["repository_release_approval"][0] == "UNVERIFIED"
+    _assert_blocked_authorization(result)
 
 
 @pytest.mark.parametrize(
@@ -350,7 +413,7 @@ def test_unavailable_timed_out_or_alternate_libvirt_cannot_be_accepted(
     host: InventoryHost,
     scenario: dict[str, Any],
 ) -> None:
-    result = host.run(**scenario)
+    result = host.run(probe_libvirt=True, **scenario)
     rows = _rows(result)
     assert any(
         "libvirt" in key.lower() and status in {"BLOCKED", "INACCESSIBLE"}
@@ -362,37 +425,70 @@ def test_unavailable_timed_out_or_alternate_libvirt_cannot_be_accepted(
     _assert_blocked_authorization(result)
 
 
+@pytest.mark.parametrize("dependency", ["env", "virsh", "timeout"])
+def test_opted_in_probe_with_missing_dependency_does_not_connect_or_broaden_access(
+    host: InventoryHost,
+    dependency: str,
+) -> None:
+    (host.bin / dependency).unlink()
+    result = host.run(probe_libvirt=True)
+    assert _rows(result)[f"dependency:{dependency}"][0] == "MISSING"
+    assert _rows(result)["libvirt_readonly"][0] == "NOT_TESTED"
+    assert not any(name == "virsh" for name, _ in host.calls())
+    _assert_blocked_authorization(result)
+
+
+@pytest.mark.parametrize("probe_libvirt", [False, True])
 @pytest.mark.parametrize("scenario", [{"system": "Darwin"}, {"machine": "aarch64"}])
 def test_unsupported_host_stops_native_probes_without_relaxing_qualification(
     host: InventoryHost,
     scenario: dict[str, str],
+    probe_libvirt: bool,
 ) -> None:
-    result = host.run(**scenario)
+    result = host.run(probe_libvirt=probe_libvirt, **scenario)
     assert "BLOCKED" in result.stdout
     assert not any(name == "virsh" for name, _ in host.calls())
     _assert_blocked_authorization(result)
 
 
-@pytest.mark.parametrize("head", ["0" * 40, "malformed revision"])
-def test_changed_or_unreadable_release_binding_cannot_be_verified(
+@pytest.mark.parametrize(
+    "head", ["213226f6222f8d1ece05987afe038c82ed61923d", "a" * 40, "b" * 40, "0" * 40]
+)
+def test_each_observed_current_revision_is_present_without_approving_a_release(
     host: InventoryHost,
     head: str,
 ) -> None:
     result = host.run(head=head)
     rows = _rows(result)
-    assert any(
-        "revision" in key.lower() and status in {"UNVERIFIED", "BLOCKED", "INACCESSIBLE"}
-        for key, (status, _) in rows.items()
-    ), result.stdout
+    assert rows["repository_revision"] == (
+        "PRESENT",
+        f"{head} OBSERVED_REVISION_NOT_RELEASE_APPROVAL",
+    )
+    assert rows["repository_release_approval"] == (
+        "UNVERIFIED",
+        "INDEPENDENT_SOURCE_REVIEW_REQUIRED",
+    )
     _assert_blocked_authorization(result)
 
 
-def test_local_repository_changes_remain_unverified_at_matching_baseline(
+@pytest.mark.parametrize("head", ["malformed revision", ""])
+def test_unobservable_revision_keeps_independent_release_approval_unverified(
+    host: InventoryHost,
+    head: str,
+) -> None:
+    result = host.run(head=head)
+    assert _rows(result)["repository_revision"][0] == "INACCESSIBLE"
+    assert _rows(result)["repository_release_approval"][0] == "UNVERIFIED"
+    _assert_blocked_authorization(result)
+
+
+def test_local_repository_changes_remain_unverified_with_observed_revision(
     host: InventoryHost,
 ) -> None:
     result = host.run(git_status=" M existing-file\n")
     assert _rows(result)["repository_revision"][0] == "PRESENT"
     assert _rows(result)["repository_worktree"][0] == "UNVERIFIED"
+    assert _rows(result)["repository_release_approval"][0] == "UNVERIFIED"
     _assert_blocked_authorization(result)
 
 
@@ -418,14 +514,16 @@ def _snapshot(root: Path) -> dict[str, tuple[Any, ...]]:
     return snapshot
 
 
+@pytest.mark.parametrize("probe_libvirt", [False, True])
 def test_inventory_uses_only_read_queries_and_does_not_mutate_retained_state(
     host: InventoryHost,
+    probe_libvirt: bool,
 ) -> None:
     # Exclude only the scenario/log that the test harness writes. Access times
     # are intentionally omitted: inspecting existing bytes may update atime.
     (host.repo / "symlink").symlink_to(host.sentinel.name)
     before = _snapshot(host.root)
-    result = host.run()
+    result = host.run(probe_libvirt=probe_libvirt)
     assert _snapshot(host.root) == before
     calls = host.calls()
     assert calls
@@ -461,6 +559,7 @@ def test_inherited_logging_and_authentication_settings_are_removed_before_tools(
     auth.write_text("Synthetic sentinel: no tool may read this file.\n")
     before = auth.stat()
     result = host.run(
+        probe_libvirt=True,
         extra_environment={
             "GIT_TRACE": str(git_trace),
             "GIT_TRACE2_EVENT": str(git_events),
@@ -471,7 +570,7 @@ def test_inherited_logging_and_authentication_settings_are_removed_before_tools(
             "LIBVIRT_AUTH_FILE": str(auth),
             "VIRSH_HISTFILE": str(host.root / "unexpected-virsh-history"),
             "HOME": str(host.root / "unreviewed-home"),
-        }
+        },
     )
     assert not git_trace.exists()
     assert not git_events.exists()
@@ -540,13 +639,25 @@ def test_native_git_cannot_create_inherited_trace_files(host: InventoryHost) -> 
     _assert_blocked_authorization(result)
 
 
-def test_unknown_option_fails_without_running_host_commands(host: InventoryHost) -> None:
-    result = subprocess.run(
-        [str(BASH), str(SCRIPT), "--policy-directory", str(host.root)],
-        env={"PATH": str(host.bin)},
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--policy-directory", "/unapproved/path"],
+        ["--repository"],
+        ["--repository", ""],
+        ["--repository", LIBVIRT_OPT_IN],
+        ["--repository", ".", "--repository", "."],
+        [LIBVIRT_OPT_IN, LIBVIRT_OPT_IN],
+        [LIBVIRT_OPT_IN, "--unknown-option"],
+        [LIBVIRT_OPT_IN, "--repository"],
+        [LIBVIRT_OPT_IN, "true"],
+    ],
+)
+def test_invalid_or_duplicate_arguments_fail_before_any_host_query(
+    host: InventoryHost,
+    arguments: list[str],
+) -> None:
+    result = host.run(arguments=arguments)
     assert result.returncode == 64
+    assert not result.stdout
     assert not host.calls()

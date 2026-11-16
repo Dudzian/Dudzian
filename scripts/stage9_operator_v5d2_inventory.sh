@@ -6,22 +6,45 @@ export LC_ALL=C
 export GIT_OPTIONAL_LOCKS=0
 export GIT_TERMINAL_PROMPT=0
 
-EXPECTED_BASELINE=213226f6222f8d1ece05987afe038c82ed61923d
 script_directory=${BASH_SOURCE[0]%/*}
 if [[ $script_directory == "${BASH_SOURCE[0]}" ]]; then script_directory=.; fi
 repository=$script_directory/..
-if (( $# )); then
-    if [[ $# != 2 || $1 != --repository || -z $2 ]]; then
-        printf 'Usage: bash %s [--repository PATH]\n' "${BASH_SOURCE[0]}" >&2
-        exit 64
-    fi
-    repository=$2
-fi
+repository_selected=no
+probe_libvirt=no
+usage() {
+    printf 'Usage: bash %s [--repository PATH] [--probe-libvirt-after-local-auth-review]\n' "${BASH_SOURCE[0]}" >&2
+}
+while (( $# )); do
+    case $1 in
+        --repository)
+            if [[ $repository_selected == yes || $# -lt 2 || -z $2 || $2 == --* ]]; then
+                usage
+                exit 64
+            fi
+            repository=$2
+            repository_selected=yes
+            shift 2
+            ;;
+        --probe-libvirt-after-local-auth-review)
+            if [[ $probe_libvirt == yes ]]; then
+                usage
+                exit 64
+            fi
+            probe_libvirt=yes
+            shift
+            ;;
+        *)
+            usage
+            exit 64
+            ;;
+    esac
+done
 
 emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
 
 boundaries() {
     emit inventory_collection PRESENT COLLECTION_COMPLETE_NOT_DEPLOYMENT_READINESS
+    emit repository_release_approval UNVERIFIED INDEPENDENT_SOURCE_REVIEW_REQUIRED
     emit independent_approval UNVERIFIED EXTERNAL_APPROVAL_NOT_ESTABLISHED_BY_METADATA
     emit independent_launch UNVERIFIED LOADED_CODE_AND_STARTUP_NOT_ATTESTED
     emit policy_signature NOT_TESTED POLICY_CONTENT_AND_KEYS_NOT_READ
@@ -170,11 +193,7 @@ if has_command git && has_command env; then
         git --no-pager --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false -C "$repository")
     if revision=$("${git_read[@]}" rev-parse --verify HEAD 2>/dev/null) &&
         [[ $revision =~ ^[0-9a-f]{40}$ ]]; then
-        if [[ $revision == "$EXPECTED_BASELINE" ]]; then
-            emit repository_revision PRESENT "$revision EXPECTED_BASELINE_OBSERVED_NOT_RELEASE_APPROVAL"
-        else
-            emit repository_revision UNVERIFIED "$revision BASELINE_DIFFERS_REQUIRES_INDEPENDENT_REVIEW"
-        fi
+        emit repository_revision PRESENT "$revision OBSERVED_REVISION_NOT_RELEASE_APPROVAL"
     else
         emit repository_revision INACCESSIBLE REVISION_NOT_OBSERVED
     fi
@@ -211,9 +230,13 @@ else
     emit host_package_database NOT_TESTED DPKG_QUERY_TIMEOUT_OR_ENV_UNAVAILABLE
 fi
 
-# No default URI, user-provided URI, domain lookup or lifecycle command.
-# Noninteractive mode prevents authentication prompts; never broaden access.
-if has_command virsh && has_command timeout && has_command env; then
+# Native auth backends may use credentials outside the explicit environment.
+# The opt-in records the operator's prior local auth review for this diagnostic;
+# it is not verified approval of a policy, host, release or target execution.
+# No alternate URI, domain lookup or lifecycle command; never broaden access.
+if [[ $probe_libvirt != yes ]]; then
+    emit libvirt_readonly NOT_TESTED LOCAL_AUTH_REVIEW_AND_EXPLICIT_OPT_IN_REQUIRED
+elif has_command virsh && has_command timeout && has_command env; then
     # No inherited libvirt file logging, authentication file or virsh history.
     if observed_uri=$(env -i "PATH=$PATH" LC_ALL=C LIBVIRT_AUTH_FILE=/dev/null \
         LIBVIRT_LOG_OUTPUTS=4:stderr VIRSH_HISTFILE=/dev/null \
