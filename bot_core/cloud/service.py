@@ -92,7 +92,7 @@ class CloudRuntimeService:
 
     def start(self) -> None:
         # Check before starting the context or binding any RPC services.
-        validate_cloud_bind_host(self._config.host)
+        bind_host = validate_cloud_bind_host(self._config.host)
         with self._lock:
             if self._server is not None or self._starting:
                 return
@@ -120,7 +120,7 @@ class CloudRuntimeService:
                 interceptors.append(CloudAuthInterceptor(security_manager))
             server = LocalRuntimeServer(
                 context,
-                host=self._config.host,
+                host=bind_host,
                 port=self._config.port,
                 max_workers=self._config.max_workers,
                 interceptors=interceptors or None,

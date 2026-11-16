@@ -82,7 +82,7 @@ class CloudServerConfig:
     security: CloudSecurityConfig = field(default_factory=CloudSecurityConfig)
 
 
-def validate_cloud_bind_host(host: str) -> None:
+def validate_cloud_bind_host(host: str) -> str:
     """Deny network-facing gRPC until this server implements TLS.
 
     LocalRuntimeServer uses grpc.add_insecure_port; a YAML tls section does not
@@ -94,11 +94,9 @@ def validate_cloud_bind_host(host: str) -> None:
         raise CloudConfigError("Adres nasłuchu cloud musi być lokalnym adresem loopback.")
     normalized = host.strip().lower()
     if normalized == "localhost":
-        return
+        return normalized
     address_text = (
-        normalized[1:-1]
-        if normalized.startswith("[") and normalized.endswith("]")
-        else normalized
+        normalized[1:-1] if normalized.startswith("[") and normalized.endswith("]") else normalized
     )
     try:
         address = ipaddress.ip_address(address_text)
@@ -111,6 +109,7 @@ def validate_cloud_bind_host(host: str) -> None:
             "Odmowa nasłuchu cloud poza loopback: serwer gRPC nie obsługuje jeszcze TLS. "
             "Wymagane są TLS/mTLS oraz autoryzacja przed udostępnieniem sieciowym."
         )
+    return f"[{address.compressed}]" if address.version == 6 else str(address)
 
 
 def _resolve_path(base: Path, value: str | Path | None) -> Path:
@@ -242,7 +241,9 @@ def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
         auto_reload=bool(marketplace_section.get("auto_reload", True)),
     )
 
-    tls_section = payload.get("tls", {}) or {}
+    tls_section = payload.get("tls")
+    if tls_section is None:
+        tls_section = {}
     if not isinstance(tls_section, Mapping):
         raise CloudConfigError("Sekcja tls musi być mapą.")
     if tls_section.get("enabled", False) is not False:
@@ -278,8 +279,7 @@ def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
             "Pole security.require_handshake ustawiono na True, ale allowed_clients jest puste lub niepoprawne."
         )
 
-    host = str(payload.get("host") or "127.0.0.1")
-    validate_cloud_bind_host(host)
+    host = validate_cloud_bind_host(payload.get("host", "127.0.0.1"))
     return CloudServerConfig(
         host=host,
         port=int(payload.get("port", 50052) or 0),
