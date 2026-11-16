@@ -244,6 +244,8 @@ def scan_bytes(data: bytes) -> None:
         re.search(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----", data) is None,
         "Materiał klucza prywatnego w źródle; nie skopiowano danych.",
     )
+    # Niezależna kopia reguł treści jest w check_secrets weryfikatora;
+    # testy graniczne sprawdzają zgodność bez importowania kodu pakietu.
     require(
         re.search(
             rb"(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{60,}|AKIA[A-Z0-9]{16})", data

@@ -17,11 +17,61 @@ from typing import Any
 import pytest
 
 from scripts import stage9_v5d3_release as release
+from scripts import stage9_v5d3_verify_bundle as verifier
 
 ROOT = Path(__file__).resolve().parents[2]
 PREPARE = ROOT / "scripts/stage9_v5d3_prepare_release.sh"
 VERIFY = ROOT / "scripts/stage9_v5d3_verify_bundle.sh"
 BASE = "17e03a9cb42a84302401415f96ac90e756926915"
+CREDENTIAL_CASES = [
+    pytest.param(family, length, embedded, rejected, id=f"gh-{family}-{length}-{embedded}")
+    for family in ("p", "o", "u", "s", "r")
+    for length, embedded, rejected in (
+        (29, False, False),
+        (30, False, True),
+        (35, False, True),
+        (36, False, True),
+        (37, False, True),
+        (30, True, True),
+        (80, True, True),
+    )
+] + [
+    pytest.param(family, length, embedded, rejected, id=f"{family}-{length}-{embedded}")
+    for family, cases in (
+        (
+            "fine-grained",
+            (
+                (59, False, False),
+                (60, False, True),
+                (61, False, True),
+                (60, True, True),
+                (61, True, True),
+            ),
+        ),
+        (
+            "aws",
+            (
+                (15, False, False),
+                (16, False, True),
+                (17, False, True),
+                (16, True, True),
+                (17, True, True),
+            ),
+        ),
+    )
+    for length, embedded, rejected in cases
+]
+RESEALED_CREDENTIAL_CASES = [
+    pytest.param(family, 30, True, True, id=f"gh-{family}-30-embedded")
+    for family in ("p", "o", "u", "s", "r")
+] + [
+    pytest.param("p", 80, True, True, id="gh-p-80-embedded"),
+    pytest.param("fine-grained", 60, True, True, id="fine-grained-60-embedded"),
+    pytest.param("aws", 16, True, True, id="aws-16-embedded"),
+    pytest.param("p", 29, False, False, id="gh-p-29-no-match"),
+    pytest.param("fine-grained", 59, False, False, id="fine-grained-59-no-match"),
+    pytest.param("aws", 15, False, False, id="aws-15-no-match"),
+]
 pytestmark = [
     pytest.mark.security,
     pytest.mark.unit,
@@ -185,6 +235,66 @@ def _source(bundle: Path) -> Path:
     matches = list(bundle.rglob("stage9_observer_collector_identity_v5d1.py"))
     assert len(matches) == 1
     return matches[0]
+
+
+def _synthetic_credential(family: str, length: int, embedded: bool) -> str:
+    """Składa znaczniki dopiero w pamięci; nie używa danych żadnego konta."""
+    if family in {"p", "o", "u", "s", "r"}:
+        token = "gh" + family + "_" + "X" * length
+    elif family == "fine-grained":
+        token = "github" + "_pat_" + "X" * length
+    else:
+        assert family == "aws"
+        token = "AK" + "IA" + "X" * length
+    return "left_" + token + "_right" if embedded else token
+
+
+@pytest.mark.parametrize(("family", "length", "embedded", "rejected"), CREDENTIAL_CASES)
+def test_credential_scanners_agree_at_length_and_word_boundaries(
+    family: str, length: int, embedded: bool, rejected: bool
+) -> None:
+    data = _synthetic_credential(family, length, embedded).encode("ascii")
+    if rejected:
+        with pytest.raises(release.Refusal):
+            release.scan_bytes(data)
+        with pytest.raises(verifier.Refusal, match="^POTENTIAL_CREDENTIAL_REJECTED$"):
+            verifier.check_secrets("sources/deployment/fixture.py", data)
+    else:
+        release.scan_bytes(data)
+        verifier.check_secrets("sources/deployment/fixture.py", data)
+
+
+@pytest.mark.parametrize("location", ["source", "review", "log", "metadata"])
+@pytest.mark.parametrize(("family", "length", "embedded", "rejected"), RESEALED_CREDENTIAL_CASES)
+def test_resealed_bundle_credentials_are_scanned_in_every_allowed_file_class(
+    bundle: Path, location: str, family: str, length: int, embedded: bool, rejected: bool
+) -> None:
+    marker = _synthetic_credential(family, length, embedded)
+    if location == "metadata":
+        path = bundle / "RELEASE.json"
+        metadata = _json(path)
+        metadata["detail"] += " Syntetyczny znacznik testowy: " + marker
+        _write_json(path, metadata)
+    else:
+        path = {
+            "source": _source(bundle),
+            "review": bundle / "review/stage9_operator_v5d3_release_preparation.md",
+            "log": bundle / "logs/A.log",
+        }[location]
+        with path.open("a") as stream:
+            stream.write("\n# Syntetyczny znacznik testowy: " + marker + "\n")
+    _reseal(bundle)
+    result, report = _verify(bundle)
+    assert report["independent_approval"] == "UNVERIFIED"
+    assert report["safety"] == release.SAFETY
+    if rejected:
+        assert result.returncode == 2
+        assert report["local_consistency"] == "FAIL"
+        assert report["reason_code"] == "POTENTIAL_CREDENTIAL_REJECTED"
+    else:
+        assert result.returncode == 0, report
+        assert report["local_consistency"] == "PASS"
+        assert report["credential_scan"] == "UNVERIFIED"
 
 
 def test_prepare_complete_bundle_remains_unapproved(prepared_bundle: Path) -> None:

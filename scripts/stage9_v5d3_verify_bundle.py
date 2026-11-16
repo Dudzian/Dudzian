@@ -550,10 +550,12 @@ def check_secrets(path: str, data: bytes) -> None:
         and not name.endswith((".pem", ".key", ".p12", ".pfx", ".pyc", ".pyo")),
         "CREDENTIAL_OR_BYTECODE_FILE_REJECTED",
     )
+    # Zakres musi obejmować każdą odmowę scan_bytes generatora, także
+    # dopasowania wewnątrz słowa; reguły pochodzą z zaufanego narzędzia.
     require(
         re.search(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----", data) is None
         and re.search(
-            rb"\b(?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,}|AKIA[A-Z0-9]{16})\b", data
+            rb"(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{60,}|AKIA[A-Z0-9]{16})", data
         )
         is None,
         "POTENTIAL_CREDENTIAL_REJECTED",
