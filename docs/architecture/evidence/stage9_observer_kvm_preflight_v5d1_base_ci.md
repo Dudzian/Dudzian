@@ -1,5 +1,27 @@
 # V5d1 base CI preflight
 
+## P2 remediation baseline inspection — 2026-11-16
+
+Read-only inspection at 09:00–09:02 UTC confirmed PR #3277 remained Draft
+with HEAD `05a41820c6f245acc6c891ce0f4a65441f3412f5`, base
+`da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a`. The existing failures below
+predate both P2 fixes. Logs were also compared with PR #3276 HEAD
+`4344784739c0f9361ab54818cdda3ed41a945199`; the same missing qualification
+categories are present there.
+
+| Job | PR #3277 before remediation | PR #3276 | Retained failure |
+| --- | --- | --- | --- |
+| `linux-deployment-integration` | [132963574248](https://github.com/Dudzian/Dudzian/actions/runs/43763157400/job/132963574248) | [132870789863](https://github.com/Dudzian/Dudzian/actions/runs/43733152334/job/132870789863) | Current live evidence missing for `LINUX_SYSTEMD_INTEGRATION`, `LINUX_CLEAN_INSTALL`, `LINUX_REBOOT_LIFECYCLE_UPDATE`; `LINUX_PRODUCTION_READY=NOT_READY`. |
+| `windows-release-gate` | [132978778880](https://github.com/Dudzian/Dudzian/actions/runs/43763157400/job/132978778880) | [132890394699](https://github.com/Dudzian/Dudzian/actions/runs/43733152334/job/132890394699) | `WINDOWS_REBOOT_RECOVERY`, `WINDOWS_LONG_RUNNING_LIFECYCLE`, `WINDOWS_UPDATE_RESTART`, `WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR`; `WINDOWS_BETA_RELEASE_READY=NOT_READY`. |
+
+These are existing qualification blockers, not successful software tests or
+evidence about a future remediation HEAD. Neither job is disabled or changed
+to PASS. Post-push checks must be inspected at the exact new HEAD; their
+observation belongs to that revision's PR validation record. Physical VM,
+hardware, target-interpreter and bytecode execution remain unperformed.
+
+## Historical initial preflight
+
 Observed 2026-11-15, 16:44 UTC. Read-only GitHub inspection;
 no rerun, dispatch, hardware experiment or production mutation performed.
 

@@ -212,8 +212,9 @@ def _qemu_info(
     # caller-supplied options, --force-share, or backing-chain traversal.
     binary = _open_protected(_QEMU_IMG)
     process: subprocess.Popen[bytes] | None = None
-    selector = selectors.DefaultSelector()
+    selector: selectors.BaseSelector | None = None
     try:
+        selector = selectors.DefaultSelector()
         before = os.fstat(binary)
         _require(
             0 < before.st_size <= _MAX_TOOL_BYTES and before.st_nlink == 1,
@@ -268,14 +269,23 @@ def _qemu_info(
         _require(type(parsed) is dict, "QEMU_IMG_OBSERVATION_INCOMPLETE")
         return dict(parsed)
     finally:
-        selector.close()
-        if process is not None:
-            if process.poll() is None:
-                process.kill()
-            process.wait()
-            if process.stdout is not None:
-                process.stdout.close()
-        os.close(binary)
+        try:
+            if selector is not None:
+                selector.close()
+        finally:
+            try:
+                if process is not None:
+                    try:
+                        if process.poll() is None:
+                            process.kill()
+                    finally:
+                        try:
+                            process.wait()
+                        finally:
+                            if process.stdout is not None:
+                                process.stdout.close()
+            finally:
+                os.close(binary)
 
 
 def measure_image_v5d1(
@@ -291,9 +301,12 @@ def measure_image_v5d1(
     No private path argument can turn this result into host qualification.
     The native aggregate supplies the independently approved qemu-tool hash;
     omission is only an unqualified local mechanism, never tool acceptance.
+    Artifacts are provisional until the complete chain and final descriptor,
+    path and immutable-flag checks succeed; refusals publish diagnostics only.
     """
     descriptors: list[int] = []
     artifacts: list[ImageArtifactV5d1] = []
+    cleanup_reasons: list[str] = []
     try:
         _require(sys.platform == "linux", "IMAGE_HOST_UNSUPPORTED")
         _require(
@@ -384,17 +397,34 @@ def measure_image_v5d1(
                 )
             finally:
                 os.close(reopened)
-        return ImageMeasurementV5d1("IMAGE_MEASURED_LOCAL", (), tuple(artifacts))
+        result = ImageMeasurementV5d1("IMAGE_MEASURED_LOCAL", (), tuple(artifacts))
     except _ImageRefusal as error:
-        return ImageMeasurementV5d1(
-            "IMAGE_MEASUREMENT_BLOCKED", ("IMAGE_MEASUREMENT_BLOCKED", str(error)), tuple(artifacts)
+        result = ImageMeasurementV5d1(
+            "IMAGE_MEASUREMENT_BLOCKED", ("IMAGE_MEASUREMENT_BLOCKED", str(error))
+        )
+    except KeyboardInterrupt:
+        result = ImageMeasurementV5d1(
+            "IMAGE_MEASUREMENT_BLOCKED",
+            ("IMAGE_MEASUREMENT_BLOCKED", "IMAGE_MEASUREMENT_INTERRUPTED"),
         )
     except (OSError, ValueError, TypeError, OverflowError, subprocess.SubprocessError):
-        return ImageMeasurementV5d1(
+        result = ImageMeasurementV5d1(
             "IMAGE_MEASUREMENT_BLOCKED",
             ("IMAGE_MEASUREMENT_BLOCKED", "IMAGE_OBSERVATION_INCOMPLETE"),
-            tuple(artifacts),
         )
     finally:
         for descriptor in descriptors:
-            os.close(descriptor)
+            try:
+                os.close(descriptor)
+            except KeyboardInterrupt:
+                cleanup_reasons.append("IMAGE_MEASUREMENT_INTERRUPTED")
+            except OSError:
+                cleanup_reasons.append("IMAGE_DESCRIPTOR_CLOSE_FAILED")
+    if cleanup_reasons:
+        return ImageMeasurementV5d1(
+            "IMAGE_MEASUREMENT_BLOCKED",
+            tuple(
+                dict.fromkeys(("IMAGE_MEASUREMENT_BLOCKED", *result.reason_codes, *cleanup_reasons))
+            ),
+        )
+    return result

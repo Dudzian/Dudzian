@@ -267,9 +267,46 @@ The current profile intentionally accepts only a persistent, shut-off KVM
 `x86_64` HVM domain with no managed-save image or libvirt snapshots. Memory,
 current memory, vCPU count, CPU period and CPU quota must match the independent
 requirements. Defaults are 512 MiB, one vCPU and period/quota 100000/100000.
-Supported local disks use raw or restricted QCOW2. USB controllers and memory
-ballooning must be explicitly disabled where present. CPU configuration is
-restricted to the reviewed host-model/custom forms.
+Supported local disks use raw or restricted QCOW2. The P2 remediation narrows
+the accepted XML to the following explicit semantic profile, checked for both
+current and persistent configuration. A name on an XML allowlist does not
+authorize arbitrary values or omitted safety settings.
+
+| XML setting | Accepted semantics |
+| --- | --- |
+| `domain` | `type=kvm`; optional XML `id` must be `-1`, consistent with the stopped-domain observation. |
+| `name`, `uuid`, `title`, `description` | Name is a bounded simple identifier; UUID matches independent requirements; optional title/description are inert text without control characters. These fields cannot contain nested configuration. |
+| `memory`, `currentMemory` | Both match independent memory bytes; units are only `bytes`, `KiB`, `MiB`, `GiB` (`KiB` if omitted). |
+| `vcpu`, `cputune/period`, `cputune/quota` | Count/period/quota match independent requirements; placement is static (also its accepted omitted default), and optional `current` equals the count. |
+| `os/type`, `os/boot` | HVM, `arch=x86_64`, exactly `machine=pc-q35-8.2`; exactly one explicit boot device `hd`. No machine alias, firmware or alternate boot source is inferred safe. |
+| `features/acpi`, `features/apic` | Optional empty enable markers only; no attributes, nested settings or text. Their absence grants no enforcement evidence. |
+| `cpu`, `cpu/topology` | Exactly `mode=host-model`, `check=full`; `match` and `migratable` are unsupported in this mode and refused. One explicit topology has sockets/dies/clusters/threads `1` and cores equal to the independent vCPU count. Actual host CPU enforcement remains unverified. |
+| `clock` | Exactly one explicit empty element with `offset=utc`. |
+| `on_poweroff`, `on_reboot`, `on_crash` | All three must occur exactly once, contain exactly `destroy`, and have no attributes or child elements. Omission, `restart`, `preserve`, other known policies and unknown text are refused. There is no automatic restart in this disposable-domain profile. |
+| `devices/emulator` | Exactly `/usr/bin/qemu-system-x86_64`, subject to the separate controller/tool identity boundary. |
+| `disk`, `driver`, `source`, `target`, `readonly` | File-backed disk only, explicit `snapshot=no` and one empty `readonly`; `driver` has `name=qemu`, approved `raw`/`qcow2` type, and explicit `cache=none`, `io=native`, `discard=ignore`, `detect_zeroes=off`. Source matches the canonical independently expected path; target is virtio `vda`, `vdb`, etc. in independent disk order. No other driver option or omitted driver policy is accepted. |
+| `backingStore`, `format`, `source` | Declared file backing paths and raw/QCOW2 formats match the independently expected complete ordered chain. Optional index must equal chain depth; an empty terminal store has no attributes or children. Image metadata is checked separately. |
+| `controller`, `memballoon` | One explicit USB controller with `model=none` (optional index only `0`), and one explicit balloon with `model=none`. Other controller profiles are unverified and refused. |
+| Device `alias` | Optional unique bounded simple identifier; no child configuration. |
+| `address`, `seclabel`/labels, `resource`/partition | Refused even though their names are recognized: independently approved address, confinement or host partition semantics are unavailable. No label or resource value can self-establish host enforcement. |
+
+Other attributes, values, mixed text, nested extensions and duplicate singleton
+elements are refused. Only disk siblings may repeat. The current and persistent
+trees must agree on every reviewed setting, ignoring indentation and attribute
+ordering only. A semantic difference adds `DOMAIN_LIVE_PERSISTENT_MISMATCH`;
+it never yields `config_matches=True`.
+
+Lifecycle omissions use `DOMAIN_LIFECYCLE_POLICY_MISSING`; invalid or duplicate
+lifecycle uses `DOMAIN_LIFECYCLE_POLICY_REJECTED` (duplicates additionally use
+`DUPLICATE_DOMAIN_CONFIGURATION`). Driver policies use `DISK_DRIVER_REJECTED`.
+Other profile refusals include `DOMAIN_VALUE_UNREVIEWED`,
+`BOOT_POLICY_UNREVIEWED`, `CPU_PROFILE_UNREVIEWED`, `CPU_TOPOLOGY_UNREVIEWED`,
+`CLOCK_POLICY_UNREVIEWED`, `DISK_TARGET_UNREVIEWED`,
+`DISK_LIFECYCLE_UNVERIFIED`, `CONTROLLER_PROFILE_UNVERIFIED`,
+`DEVICE_ALIAS_UNREVIEWED`, `DEVICE_ADDRESS_PROFILE_UNVERIFIED`,
+`HOST_CONFINEMENT_PROFILE_UNVERIFIED` and `RESOURCE_PARTITION_UNVERIFIED`.
+Existing device, backing, resource-limit and unknown-extension diagnostics
+remain applicable. A refusal code is diagnostic, not an approved alternative.
 
 Network interfaces, passthrough, host devices, shared directories, channels,
 consoles/serial, graphics, RNG, TPM, shared memory, vsock, QEMU extensions,
@@ -345,6 +382,29 @@ checked before execution; a caller cannot substitute an unapproved tool.
 Where the implemented profile rejects a feature, prepare a separately
 reviewed supported image outside this procedure; do not flatten, convert or
 repair it during preflight.
+
+Image evidence is published atomically. Per-image records remain private until
+every member of the declared chain has passed its hash, backing metadata,
+immutable flag, held-descriptor and protected-path rechecks. Every refused
+chain returns `IMAGE_MEASUREMENT_BLOCKED` with an empty `artifacts` tuple,
+including a failure after an earlier member was measured successfully.
+`reason_codes` retain the diagnostic cause; earlier positive records are not
+retained as partial diagnostics.
+
+The preflight similarly stages all disk chains until every chain and the final
+domain, requirements and controller-identity bindings have passed, and the
+read-only libvirt connection has closed successfully. A failed chain, late
+drift, incomplete native observation, interruption or cleanup failure discards
+the complete `images` collection. Observation hashes and refusal codes remain
+diagnostics; they do not constitute complete image evidence. A fully measured
+local image collection still cannot authorize execution or qualify the host.
+`IMAGE_MEASUREMENT_INTERRUPTED`, `IMAGE_DESCRIPTOR_CLOSE_FAILED` and
+`NATIVE_PREFLIGHT_INTERRUPTED` distinguish interruption and descriptor cleanup
+failures. Existing digest, backing-chain, immutable-view, path-change, timeout
+and QEMU-tool refusal codes are preserved. No partial-success record type is
+introduced. Descriptors are closed even after a previous close fails, and
+metadata-helper errors and interruptions still kill/reap the helper and close
+its output and executable descriptors before image evidence can be published.
 
 The domain XML's `backingStore` can override image metadata on drivers
 supporting that input; an explicit empty `backingStore` means no backing.

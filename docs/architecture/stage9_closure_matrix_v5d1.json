@@ -1,8 +1,8 @@
 {
   "profile": "stage9-closure-matrix-v5d1",
-  "revision": 1,
+  "revision": 2,
   "base_commit": "da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a",
-  "updated_local_date": "2026-11-15",
+  "updated_local_date": "2026-11-16",
   "clock": "LOCAL_UNAUTHENTICATED",
   "scope": "Stage 9 Observer 3A V5d1 closure prerequisites and downstream qualification; retained Stage 9 sources of trust are unchanged.",
   "evidence_policy": "PASS requires evidence for the named scope. Synthetic tests and design documents never satisfy physical gates. Missing measurements remain BLOCKED or NOT_TESTED. Artifact checksums are local integrity references, not authority acceptance.",
@@ -25,9 +25,9 @@
       "status": "PASS",
       "evidence_artifact": {
         "path": "deployment/stage9_observer_kvm_preflight_v5d1.py",
-        "sha256": "2b2020ec3bf096a86f239f04f7fbb161bb623279e269bdec00d5b2a6f51db6cd",
+        "sha256": "d63c06c7b02480cbd3606408bb8d4681c62c86e8f2219f9c8937f5dcb3851d0c",
         "kind": "IMPLEMENTATION_SOURCE",
-        "proves": "Concrete fixed-policy read-only collection mechanism exists; source inspection alone does not establish physical qualification."
+        "proves": "Concrete fixed-policy read-only preflight with explicit fail-closed XML semantics and atomic complete-chain evidence publication; source inspection does not establish physical qualification."
       },
       "measurement_environment": "Managed Linux Cloud workspace; repository source inspection only",
       "verifier_identity": "Repository review analysis; independently approved physical verifier MISSING",
@@ -44,9 +44,9 @@
       "status": "PASS",
       "evidence_artifact": {
         "path": "docs/architecture/evidence/stage9_observer_kvm_preflight_v5d1_local_validation.json",
-        "sha256": "4126e0d77665957a8ba126e9a287fb63e5f664b29102e76f14d7348833bb355e",
+        "sha256": "079dbb3b972e0d1d8560f75772e3654ce82a917436d947a81f6f2fe2d9c1e112",
         "kind": "LOCAL_SOFTWARE_VALIDATION_SUMMARY",
-        "proves": "3167 Observer tests passed, 30 skipped; includes 241 synthetic V5d1 cases; 177 workflow contract tests passed. No physical-host qualification."
+        "proves": "3386 Observer tests passed, 32 skipped; 458 V5d1 passed, 1 skipped, including 208 passing new P2 regressions; 284 workflow/dependency contracts passed. No physical-host qualification."
       },
       "measurement_environment": "Managed Cloud Linux x86_64, host CPython 3.11.17; no operator-host KVM/libvirt measurement",
       "verifier_identity": "Recorded local pytest/Ruff/mypy/pre-commit/Betterleaks1.9.0/Semgrep1.179.0 processes; local unauthenticated evidence, independent physical verifier MISSING",
@@ -63,7 +63,7 @@
       "status": "PASS",
       "evidence_artifact": {
         "path": "docs/architecture/evidence/stage9_observer_kvm_preflight_v5d1_local_validation.json",
-        "sha256": "4126e0d77665957a8ba126e9a287fb63e5f664b29102e76f14d7348833bb355e",
+        "sha256": "079dbb3b972e0d1d8560f75772e3654ce82a917436d947a81f6f2fe2d9c1e112",
         "kind": "LOCAL_SOFTWARE_VALIDATION_SUMMARY",
         "proves": "Required local software quality gates passed: Ruff, formats, mypy Linux/Win32, pre-commit, Betterleaks and blocking Semgrep/rule fixtures. Advisory scan limitations remain explicit; no physical-host qualification."
       },
@@ -82,7 +82,7 @@
       "status": "NOT_TESTED",
       "evidence_artifact": {
         "path": "docs/architecture/evidence/stage9_observer_kvm_preflight_v5d1_base_ci.md",
-        "sha256": "9429676e11388c416369e271ea1f4f71d2f79b456a83f0a8cc0ae30cd577ecae",
+        "sha256": "1ec7ec16620627db8f632791cbb8f40a912aa99ff2696245b5835a1647dc5de5",
         "kind": "BASE_CI_READ_ONLY_INSPECTION",
         "proves": "Separates completed base-branch native jobs from pending exact merge/new-PR jobs and explains unchanged missing-physical-evidence failure. Does not establish final PR native CI success."
       },
@@ -102,7 +102,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -122,7 +122,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -142,7 +142,7 @@
       "status": "NOT_TESTED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -162,7 +162,7 @@
       "status": "NOT_TESTED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -182,7 +182,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -202,7 +202,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -222,7 +222,7 @@
       "status": "NOT_TESTED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -242,7 +242,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -262,7 +262,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -282,7 +282,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -302,7 +302,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -322,7 +322,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -342,7 +342,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -362,7 +362,7 @@
       "status": "NOT_TESTED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -382,7 +382,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -402,7 +402,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -422,7 +422,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -442,7 +442,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -462,7 +462,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },
@@ -482,7 +482,7 @@
       "status": "BLOCKED",
       "evidence_artifact": {
         "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
-        "sha256": "045f399f8a0b6f54e75badb05543677512945c3991b672b8a5cabbf6759c485b",
+        "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391",
         "kind": "IMPLEMENTATION_DESIGN_AND_REFUSAL_ANALYSIS",
         "proves": "Documents the required condition and why physical qualification is not established; it is not a physical measurement receipt."
       },

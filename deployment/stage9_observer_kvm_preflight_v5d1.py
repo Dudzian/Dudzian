@@ -293,7 +293,8 @@ def collect_preflight_v5d1() -> PreflightReportV5d1:
         reasons.append("IMAGE_TOOL_APPROVAL_MISSING")
         return PreflightReportV5d1(identity, tuple(dict.fromkeys(reasons)), requirements.sha256)
     inspection: DomainInspectionV5d1 | None = None
-    images: tuple[ImageMeasurementV5d1, ...] = ()
+    pending_images: list[ImageMeasurementV5d1] = []
+    image_evidence_complete = False
     observations: list[str] = []
     reader: LibvirtDomainReaderV5d1 | None = None
     try:
@@ -303,10 +304,15 @@ def collect_preflight_v5d1() -> PreflightReportV5d1:
         # Reject a running/mismatched guest before attempting disk inspection.
         inspection = inspect_domain_pair_v5d1(first, first, requirements.domain)
         if inspection.config_matches:
-            images = tuple(
-                measure_image_v5d1(chain, approved_qemu_sha256=tool_pins[0].expected_sha256)
-                for chain in requirements.disk_chains
+            for chain in requirements.disk_chains:
+                image = measure_image_v5d1(chain, approved_qemu_sha256=tool_pins[0].expected_sha256)
+                reasons.extend(image.reason_codes)
+                pending_images.append(image)
+            image_evidence_complete = all(
+                image.status == "IMAGE_MEASURED_LOCAL" for image in pending_images
             )
+            if not image_evidence_complete:
+                reasons.append("IMAGE_MEASUREMENT_BLOCKED")
         else:
             reasons.append("IMAGE_MEASUREMENT_BLOCKED")
         second = reader.read(requirements.domain.domain_uuid)
@@ -314,17 +320,24 @@ def collect_preflight_v5d1() -> PreflightReportV5d1:
         inspection = inspect_domain_pair_v5d1(first, second, requirements.domain)
         reasons.extend(inspection.reason_codes)
         reasons.extend(inspection.missing_evidence)
-        for image in images:
-            reasons.extend(image.reason_codes)
+        image_evidence_complete = image_evidence_complete and inspection.config_matches
         # Rebind approval and requirements after the native reads, too.
         if read_protected_file_v5d1(REQUIREMENTS_PATH) != raw:
             reasons.append("REQUIREMENTS_CHANGED_DURING_PREFLIGHT")
+            image_evidence_complete = False
         final_identity = verify_controller_identity_v5d1()
         reasons.extend(final_identity.reason_codes)
         if _identity_binding(final_identity) != _identity_binding(identity):
             reasons.append("CONTROLLER_IDENTITY_CHANGED_DURING_PREFLIGHT")
+            image_evidence_complete = False
+        if set(final_identity.reason_codes) - _DIAGNOSTIC_IDENTITY_GAPS:
+            image_evidence_complete = False
+    except KeyboardInterrupt:
+        image_evidence_complete = False
+        reasons.append("NATIVE_PREFLIGHT_INTERRUPTED")
     except Exception as exc:
         # Native errors are diagnostics, never a partial successful receipt.
+        image_evidence_complete = False
         reasons.append("NATIVE_PREFLIGHT_OBSERVATION_INCOMPLETE")
         reason = str(exc)
         if re.fullmatch(r"[A-Z][A-Z0-9_]{1,127}", reason):
@@ -333,8 +346,17 @@ def collect_preflight_v5d1() -> PreflightReportV5d1:
         if reader is not None:
             try:
                 reader.close()
+            except KeyboardInterrupt:
+                image_evidence_complete = False
+                reasons.append("NATIVE_PREFLIGHT_INTERRUPTED")
             except Exception:
+                image_evidence_complete = False
                 reasons.append("LIBVIRT_READONLY_CLOSE_FAILED")
+    # Publish every chain together only after native reads, approval rebinding
+    # and reader cleanup succeed. Blocked diagnostics remain in reason_codes.
+    images = tuple(pending_images) if image_evidence_complete else ()
+    if pending_images and not image_evidence_complete:
+        reasons.append("IMAGE_MEASUREMENT_BLOCKED")
     reasons.extend(("RUNTIME_EXTERNAL_TRACE_MISSING", "RUNTIME_TREE_CAPTURE_MISSING"))
     return PreflightReportV5d1(
         identity=identity,

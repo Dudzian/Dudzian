@@ -19,9 +19,12 @@ XML = f"""<domain type='kvm'>
 <memory unit='KiB'>524288</memory><currentMemory unit='KiB'>524288</currentMemory>
 <vcpu placement='static'>1</vcpu><cputune><period>100000</period><quota>100000</quota></cputune>
 <os><type arch='x86_64' machine='pc-q35-8.2'>hvm</type><boot dev='hd'/></os>
-<features><acpi/><apic/></features><cpu mode='host-model'/>
+<features><acpi/><apic/></features><cpu mode='host-model' check='full'>
+<topology sockets='1' dies='1' clusters='1' cores='1' threads='1'/></cpu><clock offset='utc'/>
+<on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash>
 <devices><emulator>/usr/bin/qemu-system-x86_64</emulator>
-<disk type='file' device='disk'><driver name='qemu' type='qcow2'/>
+<disk type='file' device='disk' snapshot='no'><driver name='qemu' type='qcow2'
+cache='none' io='native' discard='ignore' detect_zeroes='off'/><readonly/>
 <source file='{DISK}'/><target dev='vda' bus='virtio'/><backingStore/></disk>
 <controller type='usb' model='none'/><memballoon model='none'/></devices></domain>"""
 
@@ -576,3 +579,320 @@ def test_defused_xml_exceptions_become_stable_refusals(monkeypatch: pytest.Monke
     monkeypatch.setattr(domain.ElementTree, "fromstring", forbidden)
     with pytest.raises(domain.DomainReadErrorV5d1, match="DOMAIN_XML_REJECTED"):
         domain.inspect_domain_v5d1(_snapshot(), _requirements())
+
+
+@pytest.mark.parametrize("scope", ["live", "persistent", "both"])
+@pytest.mark.parametrize("tag", ["on_poweroff", "on_reboot", "on_crash"])
+@pytest.mark.parametrize(
+    "policy",
+    ["restart", "preserve", "rename-restart", "coredump-restart", "unknown", "", " destroy "],
+)
+def test_p2_lifecycle_values_fail_closed(scope: str, tag: str, policy: str) -> None:
+    changed = XML.replace(f"<{tag}>destroy</{tag}>", f"<{tag}>{policy}</{tag}>")
+    snapshot = _snapshot(
+        changed if scope in {"live", "both"} else XML,
+        inactive_xml=changed if scope in {"persistent", "both"} else XML,
+    )
+    result = domain.inspect_domain_v5d1(snapshot, _requirements())
+    assert result.config_matches is False
+    assert "DOMAIN_LIFECYCLE_POLICY_REJECTED" in result.reason_codes
+    if scope != "both":
+        assert "DOMAIN_LIVE_PERSISTENT_MISMATCH" in result.reason_codes
+
+
+@pytest.mark.parametrize("tag", ["on_poweroff", "on_reboot", "on_crash"])
+@pytest.mark.parametrize("scope", ["live", "persistent", "both"])
+def test_p2_missing_lifecycle_never_inherits_libvirt_defaults(tag: str, scope: str) -> None:
+    changed = XML.replace(f"<{tag}>destroy</{tag}>", "")
+    result = domain.inspect_domain_v5d1(
+        _snapshot(
+            changed if scope in {"live", "both"} else XML,
+            inactive_xml=changed if scope in {"persistent", "both"} else XML,
+        ),
+        _requirements(),
+    )
+    assert result.config_matches is False
+    assert "DOMAIN_LIFECYCLE_POLICY_MISSING" in result.reason_codes
+
+
+@pytest.mark.parametrize("tag", ["on_poweroff", "on_reboot", "on_crash"])
+@pytest.mark.parametrize("policy", ["destroy", "restart"])
+def test_p2_duplicate_lifecycle_is_refused(tag: str, policy: str) -> None:
+    changed = XML.replace(f"</{tag}>", f"</{tag}><{tag}>{policy}</{tag}>")
+    result = domain.inspect_domain_v5d1(_snapshot(changed), _requirements())
+    assert result.config_matches is False
+    assert "DUPLICATE_DOMAIN_CONFIGURATION" in result.reason_codes
+    assert "DOMAIN_LIFECYCLE_POLICY_REJECTED" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("attribute", "approved", "rejected"),
+    [
+        ("cache", "none", "unsafe"),
+        ("cache", "none", "writeback"),
+        ("cache", "none", "writethrough"),
+        ("cache", "none", "directsync"),
+        ("cache", "none", "unknown"),
+        ("io", "native", "threads"),
+        ("io", "native", "io_uring"),
+        ("io", "native", "unknown"),
+        ("discard", "ignore", "unmap"),
+        ("discard", "ignore", "unknown"),
+        ("detect_zeroes", "off", "on"),
+        ("detect_zeroes", "off", "unmap"),
+        ("detect_zeroes", "off", "unknown"),
+    ],
+)
+def test_p2_allowlisted_driver_attributes_have_explicit_semantics(
+    attribute: str, approved: str, rejected: str
+) -> None:
+    changed = XML.replace(f"{attribute}='{approved}'", f"{attribute}='{rejected}'")
+    result = domain.inspect_domain_v5d1(_snapshot(changed), _requirements())
+    assert result.config_matches is False
+    assert "DISK_DRIVER_REJECTED" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value"),
+    [("cache", "none"), ("io", "native"), ("discard", "ignore"), ("detect_zeroes", "off")],
+)
+def test_p2_driver_defaults_are_not_assumed_safe(attribute: str, value: str) -> None:
+    changed = XML.replace(f"{attribute}='{value}'", "")
+    result = domain.inspect_domain_v5d1(_snapshot(changed), _requirements())
+    assert result.config_matches is False
+    assert "DISK_DRIVER_REJECTED" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "reason"),
+    [
+        ("type='kvm'", "type='kvm' id='1'", "DOMAIN_VALUE_UNREVIEWED"),
+        ("<name>synthetic-only</name>", "<name>../unsafe</name>", "DOMAIN_VALUE_UNREVIEWED"),
+        ("machine='pc-q35-8.2'", "machine='unknown'", "GUEST_MACHINE_UNREVIEWED"),
+        (" machine='pc-q35-8.2'", "", "GUEST_MACHINE_UNREVIEWED"),
+        ("dev='hd'", "dev='network'", "BOOT_POLICY_UNREVIEWED"),
+        ("<boot dev='hd'/>", "", "BOOT_POLICY_UNREVIEWED"),
+        ("mode='host-model'", "mode='custom'", "CPU_MODE_UNREVIEWED"),
+        ("mode='host-model'", "mode='host-model' match='exact'", "CPU_PROFILE_UNREVIEWED"),
+        ("mode='host-model'", "mode='host-model' match='minimum'", "CPU_PROFILE_UNREVIEWED"),
+        ("mode='host-model'", "mode='host-model' migratable='off'", "CPU_PROFILE_UNREVIEWED"),
+        ("mode='host-model'", "mode='host-model' migratable='on'", "CPU_PROFILE_UNREVIEWED"),
+        ("check='full'", "check='none'", "CPU_PROFILE_UNREVIEWED"),
+        ("check='full'", "check='partial'", "CPU_PROFILE_UNREVIEWED"),
+        ("check='full'", "check='unknown'", "CPU_PROFILE_UNREVIEWED"),
+        (" check='full'", "", "CPU_PROFILE_UNREVIEWED"),
+        ("sockets='1'", "sockets='2'", "CPU_TOPOLOGY_UNREVIEWED"),
+        ("dies='1'", "dies='0'", "CPU_TOPOLOGY_UNREVIEWED"),
+        (" clusters='1'", "", "CPU_TOPOLOGY_UNREVIEWED"),
+        ("cores='1'", "cores='2'", "CPU_TOPOLOGY_UNREVIEWED"),
+        (" cores='1'", "", "CPU_TOPOLOGY_UNREVIEWED"),
+        ("threads='1'", "threads='2'", "CPU_TOPOLOGY_UNREVIEWED"),
+        ("offset='utc'", "offset='localtime'", "CLOCK_POLICY_UNREVIEWED"),
+        ("offset='utc'", "offset='unknown'", "CLOCK_POLICY_UNREVIEWED"),
+        ("<clock offset='utc'/>", "", "CLOCK_POLICY_UNREVIEWED"),
+        ("snapshot='no'", "snapshot='external'", "DISK_LIFECYCLE_UNVERIFIED"),
+        ("snapshot='no'", "snapshot='unknown'", "DISK_LIFECYCLE_UNVERIFIED"),
+        (" snapshot='no'", "", "DISK_LIFECYCLE_UNVERIFIED"),
+        ("<readonly/>", "", "DISK_LIFECYCLE_UNVERIFIED"),
+        ("dev='vda'", "dev='vdb'", "DISK_TARGET_UNREVIEWED"),
+        ("bus='virtio'", "bus='scsi'", "DISK_TARGET_UNREVIEWED"),
+        ("<target dev='vda' bus='virtio'/>", "", "DISK_TARGET_UNREVIEWED"),
+        ("<controller type='usb' model='none'/>", "", "CONTROLLER_PROFILE_UNVERIFIED"),
+        (
+            "type='usb' model='none'",
+            "type='pci' model='pcie-root'",
+            "CONTROLLER_PROFILE_UNVERIFIED",
+        ),
+        (
+            "type='usb' model='none'",
+            "type='scsi' model='virtio-scsi'",
+            "CONTROLLER_PROFILE_UNVERIFIED",
+        ),
+        ("type='usb' model='none'", "type='virtio-serial'", "CONTROLLER_PROFILE_UNVERIFIED"),
+        (
+            "type='usb' model='none'",
+            "type='usb' model='none' index='-1'",
+            "CONTROLLER_PROFILE_UNVERIFIED",
+        ),
+        (
+            "type='usb' model='none'",
+            "type='usb' model='none' index='1'",
+            "CONTROLLER_PROFILE_UNVERIFIED",
+        ),
+        ("<memballoon model='none'/>", "", "MEMORY_BALLOON_REJECTED"),
+        ("<readonly/>", "<readonly>enabled</readonly>", "DOMAIN_VALUE_UNREVIEWED"),
+        ("<features>", "<features>unknown", "DOMAIN_VALUE_UNREVIEWED"),
+        ("<acpi/>", "<acpi>off</acpi>", "DOMAIN_VALUE_UNREVIEWED"),
+        ("<apic/>", "<apic>enabled</apic>", "DOMAIN_VALUE_UNREVIEWED"),
+        ("</uuid>", "</uuid>unexpected-tail", "DOMAIN_VALUE_UNREVIEWED"),
+    ],
+)
+def test_p2_allowlisted_values_and_missing_controls_fail_closed(
+    old: str, new: str, reason: str
+) -> None:
+    assert old in XML
+    result = domain.inspect_domain_v5d1(_snapshot(XML.replace(old, new)), _requirements())
+    assert result.config_matches is False
+    assert reason in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("extra", "reason"),
+    [
+        (
+            "<seclabel type='dynamic' model='apparmor' relabel='yes'/>",
+            "HOST_CONFINEMENT_PROFILE_UNVERIFIED",
+        ),
+        (
+            "<seclabel type='static' model='selinux' relabel='no'><label>unsafe</label><imagelabel>unsafe</imagelabel></seclabel>",
+            "HOST_CONFINEMENT_PROFILE_UNVERIFIED",
+        ),
+        (
+            "<resource><partition>/unverified</partition></resource>",
+            "RESOURCE_PARTITION_UNVERIFIED",
+        ),
+        ("<title>bad&#10;title</title>", "DOMAIN_VALUE_UNREVIEWED"),
+        ("<description>bad&#127;text</description>", "DOMAIN_VALUE_UNREVIEWED"),
+    ],
+)
+def test_p2_unevaluable_host_profiles_and_invalid_metadata_refused(extra: str, reason: str) -> None:
+    result = domain.inspect_domain_v5d1(
+        _snapshot(XML.replace("</domain>", extra + "</domain>")), _requirements()
+    )
+    assert result.config_matches is False
+    assert reason in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        "type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x0' multifunction='off'",
+        "type='drive' controller='0' bus='0' target='0' unit='0'",
+        "type='unknown'",
+    ],
+)
+def test_p2_allowlisted_addresses_need_missing_host_profile_evidence(attributes: str) -> None:
+    xml = XML.replace("<readonly/>", f"<readonly/><address {attributes}/>")
+    result = domain.inspect_domain_v5d1(_snapshot(xml), _requirements())
+    assert result.config_matches is False
+    assert "DEVICE_ADDRESS_PROFILE_UNVERIFIED" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        "<name>synthetic-only</name>",
+        f"<uuid>{UUID}</uuid>",
+        "<period>100000</period>",
+        "<quota>100000</quota>",
+        "<type arch='x86_64' machine='pc-q35-8.2'>hvm</type>",
+        "<boot dev='hd'/>",
+        "<acpi/>",
+        "<apic/>",
+        "<topology sockets='1' dies='1' clusters='1' cores='1' threads='1'/>",
+        "<clock offset='utc'/>",
+        "<emulator>/usr/bin/qemu-system-x86_64</emulator>",
+        "<readonly/>",
+        f"<source file='{DISK}'/>",
+        "<target dev='vda' bus='virtio'/>",
+        "<controller type='usb' model='none'/>",
+        "<memballoon model='none'/>",
+    ],
+)
+def test_p2_nested_duplicate_configuration_is_refused(node: str) -> None:
+    assert node in XML
+    result = domain.inspect_domain_v5d1(_snapshot(XML.replace(node, node * 2)), _requirements())
+    assert result.config_matches is False
+    assert "DUPLICATE_DOMAIN_CONFIGURATION" in result.reason_codes
+
+
+def test_p2_duplicate_disk_driver_cannot_hide_an_unsafe_value() -> None:
+    changed = XML.replace(
+        "<readonly/>", "<driver name='qemu' type='qcow2' cache='unsafe'/><readonly/>"
+    )
+    result = domain.inspect_domain_v5d1(_snapshot(changed), _requirements())
+    assert result.config_matches is False
+    assert "DUPLICATE_DOMAIN_CONFIGURATION" in result.reason_codes
+    assert "DISK_DRIVER_REJECTED" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    "backing",
+    [
+        "<backingStore index='1'/>",
+        "<backingStore type='file'/>",
+        "<backingStore><format type='raw'/></backingStore>",
+        "<backingStore><backingStore/></backingStore>",
+        "<backingStore index='-1'><format type='raw'/><source file='/srv/base.raw'/></backingStore>",
+        "<backingStore index='2'><format type='raw'/><source file='/srv/base.raw'/></backingStore>",
+        "<backingStore><format type='unknown'/><source file='/srv/base.raw'/></backingStore>",
+        "<backingStore><source file='/srv/base.raw'/></backingStore>",
+    ],
+)
+def test_p2_backing_metadata_has_explicit_semantics(backing: str) -> None:
+    result = domain.inspect_domain_v5d1(
+        _snapshot(XML.replace("<backingStore/>", backing)), _requirements()
+    )
+    assert result.config_matches is False
+    assert "BACKING_CONFIGURATION_REJECTED" in result.reason_codes
+
+
+@pytest.mark.parametrize("alias", ["bad/name", "bad name", "", "a" * 64])
+def test_p2_alias_metadata_is_bounded_and_canonical(alias: str) -> None:
+    result = domain.inspect_domain_v5d1(
+        _snapshot(XML.replace("<readonly/>", f"<readonly/><alias name='{alias}'/>")),
+        _requirements(),
+    )
+    assert result.config_matches is False
+    assert "DEVICE_ALIAS_UNREVIEWED" in result.reason_codes
+
+
+def test_p2_duplicate_aliases_across_devices_are_refused() -> None:
+    xml = XML.replace("<readonly/>", "<readonly/><alias name='ua-test'/>").replace(
+        "<controller type='usb' model='none'/>",
+        "<controller type='usb' model='none'><alias name='ua-test'/></controller>",
+    )
+    result = domain.inspect_domain_v5d1(_snapshot(xml), _requirements())
+    assert result.config_matches is False
+    assert "DEVICE_ALIAS_UNREVIEWED" in result.reason_codes
+
+
+def test_p2_individually_approved_live_and_persistent_trees_must_agree() -> None:
+    alternate = XML.replace("<readonly/>", "<readonly/><alias name='ua-independent'/>")
+    assert domain.inspect_domain_v5d1(_snapshot(alternate), _requirements()).config_matches
+    result = domain.inspect_domain_v5d1(_snapshot(inactive_xml=alternate), _requirements())
+    assert result.config_matches is False
+    assert result.reason_codes == ("DOMAIN_LIVE_PERSISTENT_MISMATCH",)
+
+
+def test_p2_reviewed_profile_accepts_known_defaults_and_inert_metadata() -> None:
+    xml = (
+        XML.replace("type='kvm'", "type='kvm' id='-1'")
+        .replace("unit='KiB'", "unit='MiB'")
+        .replace(">524288</", ">512</")
+        .replace("placement='static'", "current='1'")
+        .replace(
+            "<controller type='usb' model='none'/>",
+            "<controller type='usb' model='none' index='0'/>",
+        )
+        .replace("<readonly/>", "<readonly/><alias name='ua-test'/>")
+        .replace(
+            "</domain>",
+            "<title>Test VM</title><description>Synthetic evidence only</description></domain>",
+        )
+    )
+    result = domain.inspect_domain_v5d1(_snapshot(xml), _requirements())
+    assert result.config_matches is True
+    assert result.reason_codes == ()
+    assert result.missing_evidence == domain.MISSING_ENFORCEMENT
+
+
+def test_p2_xml_indentation_and_attribute_order_are_not_semantic_drift() -> None:
+    alternate = (
+        XML.replace("type='kvm'", 'type="kvm"')
+        .replace("<target dev='vda' bus='virtio'/>", "<target bus='virtio' dev='vda'/>")
+        .replace("\n", "\n  ")
+    )
+    result = domain.inspect_domain_v5d1(_snapshot(inactive_xml=alternate), _requirements())
+    assert result.config_matches is True
+    assert result.reason_codes == ()

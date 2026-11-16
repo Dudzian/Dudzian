@@ -43,6 +43,9 @@ class _Element(Protocol):
     def text(self) -> str | None: ...
 
     @property
+    def tail(self) -> str | None: ...
+
+    @property
     def attrib(self) -> Mapping[str, str]: ...
 
     def __iter__(self) -> Iterator[_Element]: ...
@@ -442,10 +445,191 @@ _ATTRIBUTES: dict[str, frozenset[str]] = {
 }
 
 
+# Values, cardinality and text are checked separately from the name allowlists.
+# This is one deliberately narrow profile, not a libvirt schema validator. In
+# particular, host label/partition assignment and explicit device addresses need
+# independent host evidence that a static XML observation cannot supply.
+_LIFECYCLE = ("on_poweroff", "on_reboot", "on_crash")
+_DRIVER_PROFILE = {"cache": "none", "io": "native", "discard": "ignore", "detect_zeroes": "off"}
+_TEXT_PATHS = frozenset(
+    {
+        "domain/name",
+        "domain/uuid",
+        "domain/title",
+        "domain/description",
+        "domain/memory",
+        "domain/currentMemory",
+        "domain/vcpu",
+        "domain/cputune/period",
+        "domain/cputune/quota",
+        "domain/os/type",
+        "domain/devices/emulator",
+        *("domain/" + tag for tag in _LIFECYCLE),
+    }
+)
+_EMPTY_PATHS = frozenset(
+    {
+        "domain/os/boot",
+        "domain/features/acpi",
+        "domain/features/apic",
+        "domain/cpu/topology",
+        "domain/clock",
+        "domain/devices/disk/driver",
+        "domain/devices/disk/source",
+        "domain/devices/disk/target",
+        "domain/devices/disk/readonly",
+        "domain/devices/disk/alias",
+        "domain/devices/disk/backingStore/format",
+        "domain/devices/disk/backingStore/source",
+        "domain/devices/controller/alias",
+        "domain/devices/memballoon",
+    }
+)
+
+
+def _reviewed_path(path: str) -> str:
+    while "/backingStore/backingStore" in path:
+        path = path.replace("/backingStore/backingStore", "/backingStore")
+    return path
+
+
+def _semantic_profile(root: _Element, requirements: DomainRequirementsV5d1) -> list[str]:
+    reasons: list[str] = []
+    for tag in _LIFECYCLE:
+        elements = root.findall(tag)
+        if not elements:
+            reasons.append("DOMAIN_LIFECYCLE_POLICY_MISSING")
+        elif len(elements) != 1 or elements[0].text != "destroy":
+            reasons.append("DOMAIN_LIFECYCLE_POLICY_REJECTED")
+    for path, code in (
+        ("./os/boot", "BOOT_POLICY_UNREVIEWED"),
+        ("cpu", "CPU_PROFILE_UNREVIEWED"),
+        ("./cpu/topology", "CPU_TOPOLOGY_UNREVIEWED"),
+        ("clock", "CLOCK_POLICY_UNREVIEWED"),
+        ("./devices/controller", "CONTROLLER_PROFILE_UNVERIFIED"),
+        ("./devices/memballoon", "MEMORY_BALLOON_REJECTED"),
+    ):
+        if len(root.findall(path)) != 1:
+            reasons.append(code)
+    stack = [(root, "domain")]
+    aliases: set[str] = set()
+    while stack:
+        element, path = stack.pop()
+        path = _reviewed_path(path)
+        children = list(element)
+        tags = [child.tag for child in children]
+        if any(tags.count(tag) > 1 and (path, tag) != ("domain/devices", "disk") for tag in tags):
+            reasons.append("DUPLICATE_DOMAIN_CONFIGURATION")
+        if (
+            (path not in _TEXT_PATHS and element.text is not None and element.text.strip())
+            or (element.tail is not None and element.tail.strip())
+            or (path in _EMPTY_PATHS and children)
+        ):
+            reasons.append("DOMAIN_VALUE_UNREVIEWED")
+        if path.startswith("domain/seclabel"):
+            reasons.append("HOST_CONFINEMENT_PROFILE_UNVERIFIED")
+        if path.startswith("domain/resource"):
+            reasons.append("RESOURCE_PARTITION_UNVERIFIED")
+        if path.endswith("/address"):
+            reasons.append("DEVICE_ADDRESS_PROFILE_UNVERIFIED")
+        if path == "domain" and "id" in element.attrib and element.attrib["id"] != "-1":
+            reasons.append("DOMAIN_VALUE_UNREVIEWED")
+        if path == "domain/name" and (
+            element.text is None
+            or re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}", element.text) is None
+        ):
+            reasons.append("DOMAIN_VALUE_UNREVIEWED")
+        if path in {"domain/title", "domain/description"} and element.text is not None:
+            if any(ord(char) < 32 or ord(char) == 127 for char in element.text):
+                reasons.append("DOMAIN_VALUE_UNREVIEWED")
+        if path == "domain/os/type" and element.attrib.get("machine") != "pc-q35-8.2":
+            reasons.append("GUEST_MACHINE_UNREVIEWED")
+        if path == "domain/os/boot" and element.attrib != {"dev": "hd"}:
+            reasons.append("BOOT_POLICY_UNREVIEWED")
+        if path == "domain/cpu":
+            if element.attrib.get("mode") != "host-model":
+                reasons.append("CPU_MODE_UNREVIEWED")
+            # libvirt forbids match for host-model; migratable is defined for
+            # host-passthrough/maximum, which this profile does not support.
+            if (
+                element.attrib.get("check") != "full"
+                or "match" in element.attrib
+                or "migratable" in element.attrib
+            ):
+                reasons.append("CPU_PROFILE_UNREVIEWED")
+        if path == "domain/cpu/topology" and (
+            element.attrib.get("sockets") != "1"
+            or element.attrib.get("cores") != str(requirements.vcpu_count)
+            or element.attrib.get("threads") != "1"
+            or element.attrib.get("dies") != "1"
+            or element.attrib.get("clusters") != "1"
+        ):
+            reasons.append("CPU_TOPOLOGY_UNREVIEWED")
+        if path == "domain/clock" and element.attrib != {"offset": "utc"}:
+            reasons.append("CLOCK_POLICY_UNREVIEWED")
+        if path == "domain/devices/disk" and element.attrib.get("snapshot") != "no":
+            reasons.append("DISK_LIFECYCLE_UNVERIFIED")
+        if path == "domain/devices/disk/driver" and any(
+            element.attrib.get(key) != expected for key, expected in _DRIVER_PROFILE.items()
+        ):
+            reasons.append("DISK_DRIVER_REJECTED")
+        if path.endswith("/alias"):
+            alias = element.attrib.get("name", "")
+            if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}", alias) or alias in aliases:
+                reasons.append("DEVICE_ALIAS_UNREVIEWED")
+            aliases.add(alias)
+        if path == "domain/devices/controller" and (
+            element.attrib.get("type") != "usb"
+            or element.attrib.get("model") != "none"
+            or element.attrib.get("index", "0") != "0"
+        ):
+            reasons.append("CONTROLLER_PROFILE_UNVERIFIED")
+        stack.extend((child, path + "/" + child.tag) for child in children)
+    for disk in root.findall("./devices/disk"):
+        source = disk.find("source")
+        path = "" if source is None else source.attrib.get("file", "")
+        index = requirements.disk_paths.index(path) if path in requirements.disk_paths else None
+        target = disk.find("target")
+        if (
+            index is None
+            or target is None
+            or target.attrib != {"dev": "vd" + chr(ord("a") + index), "bus": "virtio"}
+        ):
+            reasons.append("DISK_TARGET_UNREVIEWED")
+        if len(disk.findall("driver")) != 1 or len(disk.findall("source")) != 1:
+            reasons.append("DISK_SOURCE_REJECTED")
+        if len(disk.findall("readonly")) != 1:
+            reasons.append("DISK_LIFECYCLE_UNVERIFIED")
+        for depth, store in enumerate(disk.findall(".//backingStore"), start=1):
+            source = store.find("source")
+            format_element = store.find("format")
+            if source is None:
+                if store.attrib or list(store):
+                    reasons.append("BACKING_CONFIGURATION_REJECTED")
+            elif (
+                store.attrib.get("index", str(depth)) != str(depth)
+                or len(store.findall("format")) != 1
+                or format_element is None
+                or format_element.attrib.get("type") not in {"raw", "qcow2"}
+            ):
+                reasons.append("BACKING_CONFIGURATION_REJECTED")
+    return reasons
+
+
+def _semantic_tree(element: _Element) -> tuple[Any, ...]:
+    """Compare every reviewed setting, ignoring only XML indentation whitespace."""
+    return (
+        element.tag,
+        tuple(sorted(element.attrib.items())),
+        element.text if element.text is not None and element.text.strip() else "",
+        tuple(_semantic_tree(child) for child in element),
+    )
+
+
 def _configuration(
     root: _Element, requirements: DomainRequirementsV5d1
 ) -> tuple[list[str], list[str], list[str], list[str], int | None, int | None]:
-    reasons: list[str] = []
+    reasons = _semantic_profile(root, requirements)
     disks: list[str] = []
     backing: list[str] = []
     channels: list[str] = []
@@ -456,9 +640,7 @@ def _configuration(
     stack = [(root, "domain")]
     while stack:
         element, path = stack.pop()
-        reviewed_path = path
-        while "/backingStore/backingStore" in reviewed_path:
-            reviewed_path = reviewed_path.replace("/backingStore/backingStore", "/backingStore")
+        reviewed_path = _reviewed_path(path)
         if reviewed_path not in _ALLOWED_PATHS:
             reasons.append("UNREVIEWED_DOMAIN_CONFIGURATION")
         permitted = _ATTRIBUTES.get(element.tag, frozenset())
@@ -667,7 +849,7 @@ def inspect_domain_v5d1(
             reasons.append("CPU_LIMIT_OBSERVATION_INCOMPLETE")
         elif scheduler[key] != expected:
             reasons.append("CPU_LIMIT_OBSERVATION_MISMATCH")
-    if live[1:] != saved[1:]:
+    if live[1:] != saved[1:] or _semantic_tree(root) != _semantic_tree(inactive):
         reasons.append("DOMAIN_LIVE_PERSISTENT_MISMATCH")
     return DomainInspectionV5d1(
         not reasons,

@@ -1,14 +1,26 @@
 {
   "profile": "stage9-observer-kvm-preflight-local-validation-v5d1",
-  "observed_local_utc": "2026-11-15T17:01:03.295905+00:00",
+  "remediation": "PR #3277 V5d1 P2-01/P2-02",
+  "observed_local_utc": "2026-11-16T09:10:03.614588+00:00",
   "clock": "LOCAL_UNAUTHENTICATED",
   "base_commit": "da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a",
+  "reviewed_head_before_remediation": "05a41820c6f245acc6c891ce0f4a65441f3412f5",
   "branch": "codex/stage9-observer-v5d1-kvm",
+  "revision_binding": "Exact tested code/config bytes are SHA-256-bound below. Final pushed HEAD and subsequent exact-HEAD GitHub Actions observation are recorded in PR #3277; this local record does not claim future CI success.",
+  "supersedes_local_validation_sha256": "4126e0d77665957a8ba126e9a287fb63e5f664b29102e76f14d7348833bb355e",
   "environment": {
     "kind": "MANAGED_CLOUD_LINUX",
     "python": "3.11.17",
-    "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
-    "native_libvirt_measurement": "NOT_TESTED"
+    "mypy": "1.10.0",
+    "semgrep": "1.179.0",
+    "betterleaks": "1.9.0",
+    "physical_qualification": "NOT_TESTED"
+  },
+  "validation_environment": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PRE_COMMIT_HOME": "/workspace/work/p2_validation/precommit",
+    "BETTERLEAKS_BIN": "/workspace/work/p2_validation/tools/betterleaks",
+    "PATH_prefix": "/workspace/Dudzian/.venv/bin"
   },
   "result_classifications": [
     "IMPLEMENTED",
@@ -19,36 +31,20 @@
   ],
   "source_artifacts": [
     {
-      "path": ".github/workflows/platform-deployment.yml",
-      "sha256": "dae1572728f45879812d21b7f731f603a9aeb5d0308d43a5de90818b75ec0a16"
-    },
-    {
-      "path": ".github/workflows/quality-security.yml",
-      "sha256": "b4081f1a3b7fa4076e85203fb3dab0b4aa5fdd09230a91599d24e35e2fa5a4c2"
-    },
-    {
-      "path": ".pre-commit-config.yaml",
-      "sha256": "9915e41ef261e43bfc55e759e16ba8dd83c738f5c2e662ae04ad31ca88dae9f4"
-    },
-    {
       "path": "deployment/stage9_observer_collector_identity_v5d1.py",
-      "sha256": "16baa482219061e1b0a4be99acc27d85979219ceedee750342ef4548064fdab5"
+      "sha256": "9eacd569c2b7c930eb5e30c06aa36c2473f5ae9a8ab247e20b7fcc8654f12379"
     },
     {
       "path": "deployment/stage9_observer_kvm_domain_v5d1.py",
-      "sha256": "b2f82f5b237e9c4fd724e5b1838a54a728fba82014f1fda73eadb7aff2ab08f2"
+      "sha256": "cb9c637f71b01f192208ae091ae6537fe2025530c7a40441009fb1df991f2c7b"
     },
     {
       "path": "deployment/stage9_observer_kvm_image_v5d1.py",
-      "sha256": "97a3a0931de8aae9bf557aefd8495e273c91558df4f480afbc8110fe081cbbf8"
+      "sha256": "586052d3d3059304d7d9b2448d9e8e089ec41304a2f909bda844222fb8476ff2"
     },
     {
       "path": "deployment/stage9_observer_kvm_preflight_v5d1.py",
-      "sha256": "2b2020ec3bf096a86f239f04f7fbb161bb623279e269bdec00d5b2a6f51db6cd"
-    },
-    {
-      "path": "pyproject.toml",
-      "sha256": "1469071aabd10a024f33b4b41ee7a0366f46f4856e74df722a0cb74b0670e9ff"
+      "sha256": "d63c06c7b02480cbd3606408bb8d4681c62c86e8f2219f9c8937f5dcb3851d0c"
     },
     {
       "path": "scripts/stage9_observer_kvm_preflight_v5d1.py",
@@ -56,103 +52,164 @@
     },
     {
       "path": "tests/deployment/test_stage9_observer_collector_identity_v5d1.py",
-      "sha256": "029e6cf2ffb4cc18abb2836675aa083f5c9604a45ab7af10ee9ae7cdf8910f8d"
+      "sha256": "37fe9be5c664ca479597ac1914a8d2d9d72a8855850a38bcfd2bce5a7ed36cc8"
     },
     {
       "path": "tests/deployment/test_stage9_observer_kvm_domain_v5d1.py",
-      "sha256": "48588a0833d7eec5e6cda9368edcc11c0fddf203232ec18cc6adc90c8d0932ea"
+      "sha256": "b04421f3443bdb204f614deb38eda80d26dfeacc372fa1f61aa3287a3b0913fc"
     },
     {
       "path": "tests/deployment/test_stage9_observer_kvm_image_v5d1.py",
-      "sha256": "28dd500f6f4518f6be9c78f4129fef0fe32e81efee52ab78b14ecfbe82346773"
+      "sha256": "6b203aeeb2fb5c323b1c9c66e2a762b522767076a2b94521697844474234aeef"
     },
     {
       "path": "tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py",
-      "sha256": "9400c604c1225f1b566f7a63261b7c5c1c7af940fbbcd28ff704623512dee735"
+      "sha256": "b0d209b9eeed5628aec82c21a53851a170c1b27919e3cc9dbdb1196a894b5939"
     },
     {
-      "path": "tests/scripts/test_history_reproposal_quality_ci.py",
-      "sha256": "cb631b6eb4129a0c91250164ce2fd3e00daa42db659c86dd94a643e1e18c1de4"
+      "path": "pyproject.toml",
+      "sha256": "61f1d56eefa58d3cf226f582fcf9587d20c4b30be377decaaa8317cfda6651c0"
+    },
+    {
+      "path": ".pre-commit-config.yaml",
+      "sha256": "9915e41ef261e43bfc55e759e16ba8dd83c738f5c2e662ae04ad31ca88dae9f4"
+    },
+    {
+      "path": ".semgrep/cryptohunter.yml",
+      "sha256": "6fa79965b175b0b8968593f047bc8b2c790c0dc1a5f1f462a6d5ef42213b1a3d"
+    },
+    {
+      "path": ".semgrep/cryptohunter.py",
+      "sha256": "d647bb150566a0ca613f80c85888ca177ec2f171cda93bf5edb8c43d6ef7b190"
+    },
+    {
+      "path": ".betterleaks-baseline.json",
+      "sha256": "801cf1eb5ae75470a7ea23ae281b7ad1e363247083649663732bfa4cd8218e7a"
+    },
+    {
+      "path": ".github/workflows/quality-security.yml",
+      "sha256": "b4081f1a3b7fa4076e85203fb3dab0b4aa5fdd09230a91599d24e35e2fa5a4c2"
+    },
+    {
+      "path": ".github/workflows/platform-deployment.yml",
+      "sha256": "8234740546faaf6ff58164d4ccfc41c204f672ebf129eaebf5481ccd84e3d208"
+    },
+    {
+      "path": "deploy/packaging/requirements-desktop.lock",
+      "sha256": "ccfe09a5d808f7311b6fb07a864b8844279ca059a403228384cdb0b84ddb567c"
+    },
+    {
+      "path": "docs/architecture/stage9_observer_kvm_preflight_v5d1.md",
+      "sha256": "387e77a72a1ee07adf6c6abb3dfe775a10760292415f90705457ec7b01184391"
+    },
+    {
+      "path": "docs/architecture/evidence/stage9_observer_kvm_preflight_v5d1_base_ci.md",
+      "sha256": "1ec7ec16620627db8f632791cbb8f40a912aa99ff2696245b5835a1647dc5de5"
     }
   ],
   "observer_regression": {
-    "tests": 3197,
-    "errors": 0,
+    "tests": 3418,
+    "passed": 3386,
     "failures": 0,
-    "skipped": 30,
-    "passed": 3167
+    "errors": 0,
+    "skipped": 32
   },
-  "v5d1_synthetic_test_count": 241,
+  "observer_regression_by_version": {
+    "V1-V5c2": {
+      "passed": 2727,
+      "skipped": 31
+    },
+    "V5d1": {
+      "passed": 458,
+      "skipped": 1
+    },
+    "V5c3": {
+      "passed": 201
+    }
+  },
+  "skip_reasons": {
+    "A preprovisioned local gpgv is required; tests never download a tool": 31,
+    "Native unsupported-host refusal": 1
+  },
+  "v5d1_synthetic_test_count": 459,
+  "v5d1_synthetic_results": {
+    "passed": 458,
+    "failed": 0,
+    "skipped": 1
+  },
+  "new_p2_regressions": {
+    "P2-01": 179,
+    "P2-02": 29,
+    "passed": 208,
+    "failed": 0,
+    "skipped": 0
+  },
+  "workflow_dependency_contracts": {
+    "passed": 284,
+    "failed": 0,
+    "skipped": 0
+  },
+  "combined_distinct_pytest_results": {
+    "passed": 3670,
+    "failed": 0,
+    "skipped": 32
+  },
   "coverage": {
-    "line_rate": 0.9475,
-    "branch_rate": 0.8623
+    "combined_branch_aware_percent": 94,
+    "line_rate": 0.9537,
+    "branch_rate": 0.8944,
+    "p2_changed_lines_percent": 100,
+    "whole_pr_changed_lines_percent": 94,
+    "unchanged_diff_threshold_percent": 70
   },
   "checks": [
     {
-      "check": "observer-regression",
-      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q tests/deployment/test_stage9_observer_*.py tests/test_stage9_observer_contract.py --confcutdir=tests/deployment --cov=deployment.stage9_observer_collector_identity_v5d1 --cov=deployment.stage9_observer_kvm_domain_v5d1 --cov=deployment.stage9_observer_kvm_image_v5d1 --cov=deployment.stage9_observer_kvm_preflight_v5d1 --cov=scripts.stage9_observer_kvm_preflight_v5d1 --cov-branch --cov-report=term-missing --cov-report=xml:work/v5d1-coverage.xml --junitxml=work/v5d1-observer-regression.xml",
+      "check": "workflow-dependency-contracts",
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q tests/scripts/test_history_reproposal_quality_ci.py tests/scripts/test_linux_physical_evidence_workflow.py tests/scripts/test_platform_core_evidence_workflow.py tests/scripts/test_ci_mypy_dependency_contract.py tests/scripts/test_ci_workflow_security_scan_contract.py tests/scripts/test_ci_workflow_marketing_permissions_contract.py tests/scripts/test_ci_workflow_autonomy_matrix_contract.py tests/scripts/test_cleanup_artifacts_workflow_contract.py --confcutdir=tests/scripts --junitxml=/workspace/work/p2_validation/workflow-dependency.xml",
       "status": "PASS",
       "exit_code": 0,
-      "log_sha256": "b888ee57592aa836a3819f9f12d4f990aa91064071512bf7776b3a89329c6ee4",
+      "log_path": "/workspace/work/p2_validation/workflow-dependency.log",
+      "log_sha256": "8ac6587ba99ff8f55dbc2cb33c8621ed3b0901a1c062fab0fadcf385bf8c581a",
       "output_tail": [
-        "........................................................................ [ 94%]",
-        "........................................................................ [ 96%]",
-        "........................................................................ [ 99%]",
-        ".............................                                            [100%]",
-        "================================ tests coverage ================================",
-        "_______________ coverage: platform linux, python 3.11.17-final-0 _______________",
-        "",
-        "Name                                                    Stmts   Miss Branch BrPart  Cover   Missing",
-        "---------------------------------------------------------------------------------------------------",
-        "deployment/stage9_observer_collector_identity_v5d1.py     236     32     38      6    82%   128->exit, 176-178, 227, 341, 380-404, 428, 429->431, 431->433, 437, 457-460, 487-488",
-        "deployment/stage9_observer_kvm_domain_v5d1.py             330      6    174     14    96%   40->exit, 43->exit, 46->exit, 48->exit, 50->exit, 52->exit, 55->exit, 58->exit, 60->exit, 195, 211, 224, 261-262, 564, 610->609",
-        "deployment/stage9_observer_kvm_image_v5d1.py              208     12     34      4    93%   117-119, 127-132, 151, 176->184, 187, 198-199, 276->278",
-        "deployment/stage9_observer_kvm_preflight_v5d1.py          187      1     30      2    99%   172, 330->333, 333->338",
-        "scripts/stage9_observer_kvm_preflight_v5d1.py              11      0      0      0   100%",
-        "---------------------------------------------------------------------------------------------------",
-        "TOTAL                                                     972     51    276     26    93%",
-        "Coverage XML written to file work/v5d1-coverage.xml",
-        "3167 passed, 30 skipped in 48.31s"
-      ]
+        "........................................................................ [ 37%]",
+        "........................................................................ [ 74%]",
+        ".................................................                        [100%]",
+        "193 passed in 21.43s"
+      ],
+      "counts": {
+        "tests": 193,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 193
+      }
     },
     {
-      "check": "workflow-contracts",
-      "command": ".venv/bin/python -m pytest -q tests/scripts/test_history_reproposal_quality_ci.py tests/scripts/test_linux_physical_evidence_workflow.py tests/scripts/test_platform_core_evidence_workflow.py --confcutdir=tests/scripts",
+      "check": "dependency-authority-contracts",
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q tests/architecture/test_desktop_dependency_authority.py tests/architecture/test_windows_packaging_dependency_authority.py tests/test_pyproject_desktop_dependencies.py tests/test_qt_dependency_requirements.py tests/scripts/test_bootstrap_locked_pip.py --confcutdir=tests/architecture --junitxml=/workspace/work/p2_validation/dependency-authority.xml",
       "status": "PASS",
       "exit_code": 0,
-      "log_sha256": "7e8e3e7d17ac2fcbe7a99ff92d3f768010f00738c34493526194f7ff71b0bee3",
+      "log_path": "/workspace/work/p2_validation/dependency-authority.log",
+      "log_sha256": "6d322e8dfa9d4ff7781c23bba724283feddd09a9e5bfc796c6a7aecb8d8f2fac",
       "output_tail": [
-        "........................................................................ [ 40%]",
-        "........................................................................ [ 81%]",
-        ".................................                                        [100%]",
-        "177 passed in 15.68s"
-      ]
-    },
-    {
-      "check": "ruff",
-      "command": ".venv/bin/python -m ruff check bot_core core scripts tests deploy stage6_samples ui deployment/stage9_observer_{collector_identity,kvm_domain,kvm_image,kvm_preflight}_v5d1.py",
-      "status": "PASS",
-      "exit_code": 0,
-      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
-      "output_tail": [
-        "All checks passed!"
-      ]
-    },
-    {
-      "check": "explicit-format",
-      "command": "Exact python -m ruff format --check command from quality-security.yml step Format Stage 9 signing and credential substrate",
-      "status": "PASS",
-      "exit_code": 0,
-      "log_sha256": "a604952119833842dee785962a8300fc911d7a180ce45a41c910a6ef9dde2273",
-      "output_tail": [
-        "362 files already formatted"
-      ]
+        "........................................................................ [ 79%]",
+        "...................                                                      [100%]",
+        "91 passed in 5.39s"
+      ],
+      "counts": {
+        "tests": 91,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "passed": 91
+      }
     },
     {
       "check": "mypy-linux",
       "command": ".venv/bin/python -m mypy --config-file=pyproject.toml",
       "status": "PASS",
       "exit_code": 0,
+      "log_path": "/workspace/work/p2_validation/mypy-linux.log",
       "log_sha256": "2d9803b711ce93fc1bff4b996f40c58e54099b7fde0403f4011a2955e05f99aa",
       "output_tail": [
         "bot_core/risk/simulation.py:535: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
@@ -163,13 +220,15 @@
         "ui/tests/test_app_import_paths.py:132: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
         "ui/tests/test_app_import_paths.py:133: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
         "Success: no issues found in 417 source files"
-      ]
+      ],
+      "source_files": 417
     },
     {
       "check": "mypy-win32",
-      "command": ".venv/bin/python -m mypy --platform win32 --config-file=pyproject.toml",
+      "command": ".venv/bin/python -m mypy --platform win32 --config-file=pyproject.toml --cache-dir=/workspace/work/p2_validation/mypy-win32-cache",
       "status": "PASS",
       "exit_code": 0,
+      "log_path": "/workspace/work/p2_validation/mypy-win32.log",
       "log_sha256": "2d9803b711ce93fc1bff4b996f40c58e54099b7fde0403f4011a2955e05f99aa",
       "output_tail": [
         "bot_core/risk/simulation.py:535: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
@@ -180,29 +239,257 @@
         "ui/tests/test_app_import_paths.py:132: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
         "ui/tests/test_app_import_paths.py:133: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]",
         "Success: no issues found in 417 source files"
+      ],
+      "source_files": 417
+    },
+    {
+      "check": "semgrep-blocking",
+      "command": "SEMGREP_SETTINGS_FILE=/workspace/work/p2_validation/semgrep-settings.yml SEMGREP_LOG_FILE=/workspace/work/p2_validation/semgrep.log SEMGREP_SEND_METRICS=off /workspace/work/p2_validation/semgrep-env/bin/semgrep scan --config .semgrep/cryptohunter.yml --metrics=off --disable-version-check --error bot_core core deployment scripts",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_path": "/workspace/work/p2_validation/semgrep-blocking.log",
+      "log_sha256": "eef4534657b4714990bf59ed5375e1dccaf92d60c4c9dd7511083feb14ef163f",
+      "output_tail": [
+        "└──────────────┘",
+        "✅ Scan completed successfully.",
+        " • Findings: 0 (0 blocking)",
+        " • Rules run: 5",
+        " • Targets scanned: 1149",
+        " • Parsed lines: ~100.0%",
+        " • Scan skipped: ",
+        "   ◦ Files larger than  files 1.0 MB: 1",
+        "   ◦ Files matching .semgrepignore patterns: 4",
+        " • Scan was limited to files tracked by git",
+        " • For a detailed list of skipped files and lines, run semgrep with the --verbose flag",
+        "Ran 5 rules on 1149 files: 0 findings."
+      ],
+      "rules": 5,
+      "targets": 1149,
+      "findings": 0
+    },
+    {
+      "check": "semgrep-rule-fixtures",
+      "command": "SEMGREP_SETTINGS_FILE=/workspace/work/p2_validation/semgrep-settings-fixtures.yml SEMGREP_LOG_FILE=/workspace/work/p2_validation/semgrep-fixtures-internal.log SEMGREP_SEND_METRICS=off /workspace/work/p2_validation/semgrep-env/bin/semgrep scan --test --config .semgrep/cryptohunter.yml .semgrep/cryptohunter.py --metrics=off --disable-version-check --jobs 1",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_path": "/workspace/work/p2_validation/semgrep-fixtures.log",
+      "log_sha256": "b328d4ccd47def55a554514e6fb600d2b8e54f93bd0f11f3e98f8935a55a605f",
+      "output_tail": [
+        "               ",
+        "               ",
+        "┌─────────────┐",
+        "│ Scan Status │",
+        "└─────────────┘",
+        "  Scanning 1 file with 5 Code rules:",
+        "  Scanning 1 file with 5 python rules.",
+        "5/5: ✓ All tests passed",
+        "No tests for fixes found."
+      ],
+      "passed_rules": 5
+    },
+    {
+      "check": "betterleaks-working-tree",
+      "command": "/workspace/work/p2_validation/tools/betterleaks dir --baseline-path .betterleaks-baseline.json --redact=100 --no-banner --no-color --exit-code=1 --report-format json --report-path /workspace/work/p2_validation/betterleaks-report.json .",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_path": "/workspace/work/p2_validation/betterleaks.log",
+      "log_sha256": "591600eaccd56fac18e161b86c3bc94247262f5760612e1243b4769a0115ba87",
+      "output_tail": [
+        "9:06AM INF scanned ~139756021 bytes (139.76 MB) in 3.84s",
+        "9:06AM INF no leaks found"
+      ],
+      "findings": 0
+    },
+    {
+      "check": "pip-audit-desktop-lock",
+      "command": "PIP_CACHE_DIR=/workspace/work/p2_validation/pip-cache .venv/bin/python -m pip_audit --requirement deploy/packaging/requirements-desktop.lock --format json --output /workspace/work/p2_validation/pip-audit-report.json --cache-dir /workspace/work/p2_validation/pip-audit-cache",
+      "status": "PASS",
+      "exit_code": 0,
+      "log_path": "/workspace/work/p2_validation/pip-audit.log",
+      "log_sha256": "15950a68a7ed99c59779717acefdceb3f69cfd31bde67d2c954f2a3cea4d7955",
+      "output_tail": [
+        "No known vulnerabilities found"
+      ],
+      "dependency_count": 104,
+      "vulnerability_count": 0,
+      "ignore_ids": []
+    },
+    {
+      "check": "explicit-format-workflow-scope",
+      "command": "python -m ruff format --check deployment/windows_runner_acl.py deployment/windows_stage9_handoff.py deployment/windows_stage9_host_inspection.py deployment/windows_service_recovery.py deployment/windows_stage9_postgresql_passive.py deployment/windows_stage9_evidence_pipe.py deployment/windows_stage9_service_sql.py deployment/windows_stage9_service_evidence.py deployment/windows_installer/service_base.py deployment/windows_installer/postgresql_service.py deployment/windows_installer/provision.py deployment/windows_installer/backend_service.py deployment/windows_installer/verifier_service.py deployment/windows_postgresql_auth_contract.py tests/deployment/test_windows_stage9_evidence_pipe.py tests/deployment/test_windows_stage9_service_sql.py tests/deployment/test_windows_stage9_service_evidence.py tests/deployment/test_windows_stage9_service_inspector.py tests/deployment/test_windows_stage9_service_lifecycle.py tests/deployment/test_windows_scm_control_handlers.py tests/deployment/test_windows_postgresql_readiness_cancellation.py tests/deployment/test_windows_stage9_installer.py tests/deployment/test_windows_backend_recovery_provision.py tests/deployment/test_windows_service_recovery.py tests/deployment/test_windows_postgresql_bootstrap.py tests/deployment/test_windows_postgresql_diagnostics.py tests/deployment/test_windows_postgresql_native_harness.py tests/deployment/test_windows_bootstrap_credentials.py tests/deployment/test_windows_postgresql_role_denial.py tests/deployment/test_windows_msi_dependency_closure.py deployment/windows_stage9_install_preparation.py deployment/windows_stage9_install_executor.py deployment/windows_stage9_install_native.py deployment/windows_stage9_install_qualification.py deployment/windows_stage9_operator_approval.py deployment/windows_stage10_preflight.py deployment/windows_stage10_artifact_preflight.py deployment/windows_stage10_runner_preflight.py deployment/platform_evidence.py deployment/platform_readiness.py deployment/linux_physical_evidence.py deployment/linux_release_identity.py deployment/freshness_runtime.py deployment/freshness_application.py deployment/freshness_runtime_bootstrap.py deployment/build_freshness_runtime.py deployment/stage9_vm_trial.py deployment/stage9_vm_environment.py deployment/stage9_vm_native.py deployment/stage9_vm_performance.py scripts/prepare_stage9_vm_bundle.py scripts/prepare_stage9_protected_tree.py scripts/stage9_runtime_provenance.py deployment/production_local_installer.py deployment/production_local_installer_host.py deployment/freshness_verifier_entrypoint.py deployment/linux_physical_ipc.py deployment/linux_physical_postgresql.py bot_core/linux_service_ipc.py bot_core/freshness_service_identity.py bot_core/freshness_deployment_qualification.py bot_core/linux_service_postgresql.py bot_core/freshness_semantic_verifier.py bot_core/freshness_verifier_service.py deployment/linux_physical_observations.py deployment/linux_physical_native.py deployment/linux_physical_collector.py deployment/linux_evidence_handoff.py tests/deployment/test_linux_physical_evidence.py tests/deployment/test_linux_physical_remediation.py tests/deployment/test_linux_physical_ipc.py tests/deployment/test_linux_physical_postgresql.py tests/security/test_linux_service_ipc.py tests/security/test_reviewed_source_checkout.py tests/security/test_freshness_reviewed_source_pins.py tests/security/test_freshness_qualification_profiles.py tests/security/test_linux_service_postgresql.py tests/security/test_freshness_semantic_verifier.py tests/security/test_stage9_af_unix_readiness.py tests/security/test_freshness_production_local_deployment.py tests/security/test_freshness_service_identity.py tests/deployment/test_linux_functional_pipeline.py tests/deployment/test_linux_verifier_observation.py tests/security/test_linux_service_postgresql_integration.py tests/deployment/test_linux_release_identity.py tests/deployment/test_freshness_runtime.py tests/deployment/test_freshness_runtime_record.py tests/deployment/test_freshness_runtime_bytecode.py tests/deployment/test_freshness_application.py tests/deployment/test_build_freshness_runtime.py tests/deployment/test_stage9_vm_trial.py tests/deployment/test_freshness_runtime_bootstrap_security.py tests/deployment/test_stage9_harness_import_security.py tests/deployment/test_stage9_harness_runtime_guard.py tests/deployment/test_stage9_protected_tree.py tests/deployment/test_stage9_runtime_provenance.py tests/deployment/test_stage9_vm_environment.py tests/deployment/test_stage9_vm_native.py tests/deployment/test_prepare_stage9_vm_bundle.py tests/deployment/test_production_local_installer.py tests/deployment/test_linux_physical_collector.py tests/deployment/test_linux_physical_native.py tests/scripts/test_linux_physical_evidence_workflow.py bot_core/postgresql_preaccount_credentials.py bot_core/postgresql_root_proof_issuance_authority.py bot_core/postgresql_root_proof_issuance_authority_v2.py bot_core/postgresql_root_proof_preparation_qualification.py bot_core/postgresql_root_proof_preparation_readonly.py bot_core/postgresql_custody_lifecycle_contract_constants.py tests/security/_local_lifecycle_reader_test_seam.py bot_core/postgresql_root_proof_preparation_v2.py bot_core/postgresql_root_proof_retention.py bot_core/postgresql_root_proof_retention_schema.py bot_core/postgresql_root_proof_signing_intent.py bot_core/postgresql_root_proof_signing_intent_schema.py bot_core/postgresql_atomic_root_proof_schema.py bot_core/postgresql_atomic_root_proof_preaccount_sql.py bot_core/postgresql_atomic_root_proof_qualification.py bot_core/postgresql_atomic_root_proof_migration.py bot_core/postgresql_atomic_root_proof_commit.py bot_core/postgresql_atomic_root_proof_transaction.py bot_core/postgresql_production_root_lifecycle_schema.py bot_core/postgresql_production_root_lifecycle_qualification.py bot_core/production_root_lifecycle.py deployment/production_root_proof_issuer.py bot_core/production_signer_ipc.py bot_core/production_signer_custody.py bot_core/security/custody_hwid.py bot_core/security/keyring_storage.py deployment/production_signer_service.py deployment/stage41b_role_worker.py scripts/qualify_stage41b_signer_isolation.py scripts/prepare_stage41b_environment.py bot_core/postgresql_history_successor_reproposal.py bot_core/postgresql_history_successor_reproposal_schema.py bot_core/postgresql_history_successor_reproposal_qualification.py bot_core/postgresql_history_successor_reproposal_evidence.py bot_core/local_signing_custody.py bot_core/local_signing_lifecycle_evidence.py bot_core/independent_custody_completion_qualification.py bot_core/authenticated_custody_mutation_source.py bot_core/independent_cca_decision.py bot_core/test_only_cca_decision_log.py bot_core/test_only_independent_cca_close_lease.py bot_core/test_only_cca_catalog_ddl_gate.py bot_core/test_only_retained_source_original.py tests/security/_authenticated_custody_source_fixtures.py tests/security/_cca_decision_fixtures.py tests/security/_cca_log_process.py tests/security/_custody_source_demo.py bot_core/postgresql_custody_lifecycle.py bot_core/postgresql_custody_lifecycle_schema.py bot_core/postgresql_custody_lifecycle_qualification.py bot_core/postgresql_authenticated_issuer_history.py bot_core/postgresql_issuer_history_schema.py bot_core/postgresql_issuer_history_canonical_sql.py bot_core/postgresql_checkpoint_authority.py bot_core/postgresql_checkpoint_schema.py bot_core/root_proof_issuer_runtime.py bot_core/root_proof_issuance_reconciliation.py bot_core/root_proof_issuer_orchestration.py bot_core/root_proof_issuer_recovery.py bot_core/root_proof_atomic_composition.py bot_core/root_proof_atomic_attempt_consistency.py bot_core/cha_attempt_store.py bot_core/cha_attempt_signatures.py bot_core/cha_issuance_request.py bot_core/cha_root_proof_signing_custody.py bot_core/licensing/cha_root_proof_signed_attempt.py tests/architecture/test_stage9_root_proof_preaccount_credentials_contract.py tests/architecture/test_stage9_root_proof_signed_immutable_attempt_contract.py tests/architecture/test_stage9_issuance_diagnostic_separation.py tests/licensing/test_cha_root_proof_signed_attempt.py tests/security/test_native_custody_locking.py tests/security/test_local_signing_custody.py tests/security/test_postgresql_preaccount_credential_contract.py tests/security/test_postgresql_preaccount_credentials_integration.py tests/security/test_postgresql_root_proof_issuance_authority.py tests/security/test_postgresql_root_proof_retention.py tests/security/test_postgresql_root_proof_signing_intent.py tests/security/test_postgresql_root_proof_signing_intent_schema.py tests/security/test_postgresql_authenticated_issuer_history.py tests/security/test_postgresql_authenticated_issuer_history_integration.py tests/security/test_postgresql_issuer_history_security.py tests/security/test_postgresql_checkpoint_authority.py tests/security/test_cha_signed_attempt_postgresql.py tests/security/test_root_proof_issuer_runtime.py tests/security/test_cha_attempt_store_readonly.py tests/security/test_root_proof_issuance_reconciliation.py tests/security/test_root_proof_issuance_reconciliation_integration.py tests/security/test_root_proof_issuer_orchestration.py tests/security/test_root_proof_issuer_orchestration_integration.py tests/security/test_root_proof_atomic_composition.py tests/security/test_root_proof_atomic_composition_integration.py tests/security/test_root_proof_atomic_attempt_consistency.py tests/security/test_postgresql_atomic_root_proof_commit.py tests/security/test_postgresql_atomic_root_proof_transaction.py tests/security/test_production_root_lifecycle_schema.py tests/security/test_postgresql_production_root_lifecycle_qualification.py tests/security/test_postgresql_independent_cca_reader_smoke.py tests/security/test_postgresql_independent_cca_reader_inspection.py tests/security/test_postgresql_independent_cca_close_lease.py tests/security/test_postgresql_cca_catalog_ddl_gate.py tests/security/test_production_root_lifecycle_identity.py tests/security/test_production_root_lifecycle_races.py tests/security/test_stage41b_signer_isolation.py tests/security/test_stage41b_harness_lifecycle.py tests/security/test_stage41b_environment_preparation.py tests/security/test_production_signer_ipc.py tests/security/test_production_signer_custody.py tests/security/test_custody_hwid.py tests/security/test_custody_keyring_hwid.py tests/security/test_custody_hwid_processes.py tests/security/_custody_hwid_process.py tests/security/test_production_signer_deployment.py tests/security/test_production_signer_lifecycle.py tests/security/test_production_signer_linux_processes.py tests/security/test_production_signer_boundary.py tests/security/test_postgresql_history_successor_reproposal.py tests/security/test_history_successor_reproposal_evidence.py tests/security/test_history_successor_reproposal_legacy.py tests/security/_history_reproposal_negative_cases.py tests/architecture/test_stage9_history_successor_reproposal.py tests/security/test_postgresql_root_proof_preparation_v2.py tests/security/test_postgresql_root_proof_issuance_authority_v2.py tests/architecture/test_stage9_postgresql_v2_root_proof_preparation.py tests/security/atomic_root_proof_fixture.py tests/security/test_atomic_root_proof_commit_contract.py tests/architecture/test_stage9_atomic_root_proof_commit_boundary.py tests/architecture/test_stage9_root_proof_transaction_scope_addendum_v1.py tests/architecture/test_stage9_independent_committed_close_reader_contract.py tests/security/test_local_signing_lifecycle_evidence.py tests/security/test_independent_custody_completion_qualification.py tests/security/test_authenticated_custody_mutation_source.py tests/security/test_retained_source_original_lookup.py tests/security/test_authenticated_custody_source_processes.py tests/security/test_retained_source_real_linux_disk_bridge.py tests/security/test_retained_source_test_floor_witness.py tests/security/test_source_custody_shared_lease_linux.py tests/security/test_source_lease_cca_retained_decision_order.py tests/security/test_source_cca_cryptographic_chain_linux.py tests/security/test_cca_credential_lifecycle_chain_linux.py deployment/stage9_native_linux_source_cca_preflight.py deployment/stage9_native_linux_process_identity_observation.py deployment/stage9_native_linux_cgroup_membership_observation.py deployment/stage9_native_linux_unit_fragment_observation.py deployment/stage9_native_linux_process_executable_observation.py deployment/stage9_native_linux_pidfd_lifetime_observation.py deployment/stage9_native_linux_cross_observer_consistency.py deployment/stage9_native_linux_two_pass_drift_observation.py deployment/stage9_native_linux_diagnostic_handoff.py deployment/stage9_native_linux_host_capability_triage.py deployment/stage9_native_linux_test_denial_matrix_contract.py deployment/stage9_native_linux_test_syscall_outcome_classifier.py deployment/stage9_native_linux_test_fixture_readiness.py deployment/stage9_native_linux_test_isolation_reconciliation.py deployment/stage9_native_linux_test_execution_plan.py deployment/stage9_trusted_installation_contract.py deployment/stage9_observer_contract.py deployment/stage9_observer_offline.py deployment/stage9_observer_ubuntu.py deployment/stage9_observer_tar_v3.py deployment/stage9_observer_package_v3.py deployment/stage9_observer_apt_v4a.py deployment/stage9_observer_apt_v4b.py deployment/stage9_observer_gpgv_v4b.py deployment/stage9_observer_trust_v4c.py deployment/stage9_observer_checkpoint_v4c.py deployment/stage9_observer_apt_v4c.py deployment/stage9_observer_image_v5a.py deployment/stage9_observer_member_source_v5b.py deployment/stage9_observer_materialization_v5b.py deployment/stage9_observer_pyc_v5c1.py deployment/stage9_observer_pyc_source_hash_v5c2.py deployment/stage9_observer_source_hash_algorithm_v5c2.py deployment/stage9_observer_pyc_reconstruction_v5c2.py deployment/stage9_observer_pyc_execution_v5c3.py deployment/stage9_observer_compile_worker_v5c3.py deployment/stage9_observer_runtime_identity_v5c3.py deployment/stage9_observer_collector_identity_v5d1.py deployment/stage9_observer_kvm_domain_v5d1.py deployment/stage9_observer_kvm_image_v5d1.py deployment/stage9_observer_kvm_preflight_v5d1.py scripts/stage9_observer_kvm_preflight_v5d1.py scripts/verify_stage9_real_deb_v2.py scripts/verify_stage9_real_deb_v3.py deployment/stage9_trusted_installation_files.py deployment/stage9_trusted_installation_runtime.py deployment/stage9_trusted_installation_identity_gate.py deployment/stage9_source_cca_test_package.py deployment/stage9_source_cca_test_runtime.py deployment/stage9_stage41b_coexistence.py scripts/diagnose_stage9_stage41b_coexistence.py deployment/stage9_source_cca_test_controls.py scripts/qualify_stage9_source_cca_installation.py tests/deployment/test_stage9_native_linux_source_cca_preflight.py tests/deployment/test_stage9_native_linux_process_identity_observation.py tests/deployment/test_stage9_native_linux_cgroup_membership_observation.py tests/deployment/test_stage9_native_linux_unit_fragment_observation.py tests/deployment/test_stage9_native_linux_process_executable_observation.py tests/deployment/test_stage9_native_linux_pidfd_lifetime_observation.py tests/deployment/test_stage9_native_linux_cross_observer_consistency.py tests/deployment/test_stage9_native_linux_two_pass_drift_observation.py tests/deployment/test_stage9_native_linux_diagnostic_handoff.py tests/deployment/test_stage9_native_linux_host_capability_triage.py tests/deployment/test_stage9_native_linux_test_denial_matrix_contract.py tests/deployment/test_stage9_native_linux_test_syscall_outcome_classifier.py tests/deployment/test_stage9_native_linux_test_fixture_readiness.py tests/deployment/test_stage9_native_linux_test_isolation_reconciliation.py tests/deployment/test_stage9_native_linux_test_execution_plan.py tests/deployment/test_stage9_trusted_installation_contract.py tests/test_stage9_observer_contract.py tests/deployment/test_stage9_observer_offline.py tests/deployment/test_stage9_observer_zstd.py tests/deployment/test_stage9_real_deb_v2.py tests/deployment/test_stage9_observer_tar_v3.py tests/deployment/test_stage9_observer_package_v3.py tests/deployment/test_stage9_observer_apt_v4a.py tests/deployment/test_stage9_observer_apt_v4b.py tests/deployment/test_stage9_observer_apt_v4b_crypto.py tests/deployment/test_stage9_observer_gpgv_v4b.py tests/deployment/test_stage9_observer_trust_v4c.py tests/deployment/test_stage9_observer_checkpoint_v4c.py tests/deployment/test_stage9_observer_apt_v4c.py tests/deployment/test_stage9_observer_image_v5a.py tests/deployment/test_stage9_observer_member_source_v5b.py tests/deployment/test_stage9_observer_materialization_v5b.py tests/deployment/test_stage9_observer_pyc_v5c1.py tests/deployment/test_stage9_observer_pyc_source_hash_v5c2.py tests/deployment/test_stage9_observer_source_hash_algorithm_v5c2.py tests/deployment/test_stage9_observer_pyc_reconstruction_v5c2.py tests/deployment/test_stage9_observer_pyc_execution_v5c3.py tests/deployment/test_stage9_observer_compile_worker_v5c3.py tests/deployment/test_stage9_observer_runtime_identity_v5c3.py tests/deployment/test_stage9_observer_collector_identity_v5d1.py tests/deployment/test_stage9_observer_kvm_domain_v5d1.py tests/deployment/test_stage9_observer_kvm_image_v5d1.py tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py tests/deployment/test_stage9_real_deb_v3.py tests/deployment/test_stage9_trusted_installation_files.py tests/deployment/test_stage9_trusted_installation_runtime.py tests/deployment/test_stage9_trusted_installation_identity_gate.py tests/deployment/test_stage9_source_cca_test_package.py tests/security/test_stage9_source_cca_test_lifecycle.py tests/security/test_stage9_source_cca_test_probes.py tests/security/test_stage9_source_cca_test_rootless.py tests/security/test_stage9_stage41b_coexistence.py tests/security/test_stage9_stage41b_process_observation.py tests/security/test_stage9_stage41b_process_streaming.py tests/scripts/test_stage9_source_cca_operator_code.py tests/deployment/test_stage9_source_cca_test_controls.py tests/scripts/test_stage9_source_cca_installation_operator.py tests/security/test_independent_cca_decision.py tests/security/test_cca_durable_decision_log.py tests/architecture/test_stage9_independent_cca_boundary.py tests/security/test_postgresql_custody_lifecycle.py tests/security/test_postgresql_custody_signer_enrollment.py tests/security/test_custody_lifecycle_admin_contract.py tests/security/test_local_custody_admission_contract.py tests/security/test_legacy_local_custody_isolation.py tests/architecture/test_stage9_custody_lifecycle_v2.py tests/architecture/test_stage9_custody_lifecycle_import_isolation.py",
+      "status": "PASS",
+      "exit_code": 0,
+      "target_count": 362,
+      "workflow_step": "Format Stage 9 signing and credential substrate",
+      "workflow_sha256": "b4081f1a3b7fa4076e85203fb3dab0b4aa5fdd09230a91599d24e35e2fa5a4c2",
+      "log_path": "/workspace/work/p2_validation/explicit-format.log",
+      "log_sha256": "a604952119833842dee785962a8300fc911d7a180ce45a41c910a6ef9dde2273",
+      "output_tail": [
+        "362 files already formatted"
       ]
     },
     {
-      "check": "format-preflight",
-      "command": ".venv/bin/python -m pre_commit run ruff-format --all-files",
-      "status": "PASS",
+      "check": "observer_regression",
+      "command_argv": [
+        ".venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests/deployment/test_stage9_observer_apt_v4a.py",
+        "tests/deployment/test_stage9_observer_apt_v4b.py",
+        "tests/deployment/test_stage9_observer_apt_v4b_crypto.py",
+        "tests/deployment/test_stage9_observer_apt_v4c.py",
+        "tests/deployment/test_stage9_observer_checkpoint_v4c.py",
+        "tests/deployment/test_stage9_observer_collector_identity_v5d1.py",
+        "tests/deployment/test_stage9_observer_compile_worker_v5c3.py",
+        "tests/deployment/test_stage9_observer_gpgv_v4b.py",
+        "tests/deployment/test_stage9_observer_image_v5a.py",
+        "tests/deployment/test_stage9_observer_kvm_domain_v5d1.py",
+        "tests/deployment/test_stage9_observer_kvm_image_v5d1.py",
+        "tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py",
+        "tests/deployment/test_stage9_observer_materialization_v5b.py",
+        "tests/deployment/test_stage9_observer_member_source_v5b.py",
+        "tests/deployment/test_stage9_observer_offline.py",
+        "tests/deployment/test_stage9_observer_package_v3.py",
+        "tests/deployment/test_stage9_observer_pyc_execution_v5c3.py",
+        "tests/deployment/test_stage9_observer_pyc_reconstruction_v5c2.py",
+        "tests/deployment/test_stage9_observer_pyc_source_hash_v5c2.py",
+        "tests/deployment/test_stage9_observer_pyc_v5c1.py",
+        "tests/deployment/test_stage9_observer_runtime_identity_v5c3.py",
+        "tests/deployment/test_stage9_observer_source_hash_algorithm_v5c2.py",
+        "tests/deployment/test_stage9_observer_tar_v3.py",
+        "tests/deployment/test_stage9_observer_trust_v4c.py",
+        "tests/deployment/test_stage9_observer_zstd.py",
+        "tests/test_stage9_observer_contract.py",
+        "--confcutdir=tests/deployment",
+        "--cov=deployment.stage9_observer_collector_identity_v5d1",
+        "--cov=deployment.stage9_observer_kvm_domain_v5d1",
+        "--cov=deployment.stage9_observer_kvm_image_v5d1",
+        "--cov=deployment.stage9_observer_kvm_preflight_v5d1",
+        "--cov=scripts.stage9_observer_kvm_preflight_v5d1",
+        "--cov-branch",
+        "--cov-report=term-missing",
+        "--cov-report=xml:/workspace/work/p2_validation/coverage.xml",
+        "--junitxml=/workspace/work/p2_validation/observer-regression.xml"
+      ],
       "exit_code": 0,
-      "log_sha256": "370442f018ade47bf8c4df3e9a82d9ee38eb53948d2e813c3609b4b23daa2752",
+      "status": "PASS",
+      "started_utc": "2026-11-16T09:05:43Z",
+      "elapsed_seconds": 72.899,
+      "log_sha256": "79319644c26f2ff551b20b527031fafdd4781129db0d60676f4aa14a5a227034",
       "output_tail": [
+        "........................................................................ [ 94%]",
+        "........................................................................ [ 96%]",
+        "........................................................................ [ 99%]",
+        "..................................                                       [100%]",
+        "================================ tests coverage ================================",
+        "_______________ coverage: platform linux, python 3.11.17-final-0 _______________",
+        "",
+        "Name                                                    Stmts   Miss Branch BrPart  Cover   Missing",
+        "---------------------------------------------------------------------------------------------------",
+        "deployment/stage9_observer_collector_identity_v5d1.py     237     32     38      6    83%   130->exit, 178-180, 229, 343, 382-406, 430, 431->433, 433->435, 439, 459-462, 489-490",
+        "deployment/stage9_observer_kvm_domain_v5d1.py             420      6    246     14    97%   40->exit, 43->exit, 46->exit, 49->exit, 51->exit, 53->exit, 55->exit, 58->exit, 61->exit, 63->exit, 198, 214, 227, 264-265, 746",
+        "deployment/stage9_observer_kvm_image_v5d1.py              225     12     40      4    93%   117-119, 127-132, 151, 176->184, 187, 198-199, 285->288",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py          208      1     36      2    99%   172, 343->346, 346->357",
+        "scripts/stage9_observer_kvm_preflight_v5d1.py              11      0      0      0   100%",
+        "---------------------------------------------------------------------------------------------------",
+        "TOTAL                                                    1101     51    360     26    94%",
+        "Coverage XML written to file /workspace/work/p2_validation/coverage.xml",
+        "3386 passed, 32 skipped in 70.81s (0:01:10)"
+      ]
+    },
+    {
+      "check": "ruff",
+      "command_argv": [
+        ".venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "bot_core",
+        "core",
+        "scripts",
+        "tests",
+        "deploy",
+        "stage6_samples",
+        "ui",
+        "deployment/stage9_observer_collector_identity_v5d1.py",
+        "deployment/stage9_observer_kvm_domain_v5d1.py",
+        "deployment/stage9_observer_kvm_image_v5d1.py",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "started_utc": "2026-11-16T09:05:43Z",
+      "elapsed_seconds": 1.206,
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "output_tail": [
+        "All checks passed!"
+      ]
+    },
+    {
+      "check": "format_deployment",
+      "command_argv": [
+        ".venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "deployment/stage9_observer_collector_identity_v5d1.py",
+        "deployment/stage9_observer_kvm_domain_v5d1.py",
+        "deployment/stage9_observer_kvm_image_v5d1.py",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "started_utc": "2026-11-16T09:05:44Z",
+      "elapsed_seconds": 0.201,
+      "log_sha256": "177f260a5645724013185e4b140c7045cc39e56c0c97b120f5cb23599f85f0de",
+      "output_tail": [
+        "4 files already formatted"
+      ]
+    },
+    {
+      "check": "format_preflight",
+      "command_argv": [
+        "python",
+        "-m",
+        "pre_commit",
+        "run",
+        "ruff-format",
+        "--all-files"
+      ],
+      "exit_code": 0,
+      "status": "PASS",
+      "started_utc": "2026-11-16T09:05:43Z",
+      "elapsed_seconds": 14.17,
+      "log_sha256": "746c74a7366c63e523c116763c99b70bdf0ed0861d93d7e18dd355c588adadb3",
+      "output_tail": [
+        "[INFO] Initializing environment for https://github.com/astral-sh/ruff-pre-commit.",
+        "[INFO] Initializing environment for https://github.com/pre-commit/mirrors-mypy.",
+        "[INFO] Initializing environment for https://github.com/pre-commit/mirrors-mypy:types-PyYAML,types-defusedxml==0.7.0.20240218,types-requests,grpcio>=1.62,protobuf>=4.24,packaging,cryptography>=50.0.1,<51,psycopg[binary]>=3.2,<4.",
+        "[INFO] Installing environment for https://github.com/astral-sh/ruff-pre-commit.",
+        "[INFO] Once installed this environment will be reused.",
+        "[INFO] This may take a few minutes...",
         "ruff format..............................................................Passed"
       ]
     },
     {
-      "check": "pre-commit",
-      "command": ".venv/bin/python -m pre_commit run --all-files",
-      "status": "PASS",
+      "check": "pre_commit_final",
+      "command_argv": [
+        "python",
+        "-m",
+        "pre_commit",
+        "run",
+        "--all-files"
+      ],
       "exit_code": 0,
-      "log_sha256": "dc0aea4530ebb2144a6fe1802ce2a3e0ad21e63d7a22e1c71d52af6d60702061",
+      "status": "PASS",
+      "started_utc": "2026-11-16T09:07:51Z",
+      "elapsed_seconds": 9.048,
+      "log_sha256": "528f8b1ffaaf0c717161939322d5171c292875d0b44223d8135bc3bde18e3385",
       "output_tail": [
-        "[INFO] Initializing environment for https://github.com/pre-commit/mirrors-mypy:types-PyYAML,types-defusedxml==0.7.0.20240218,types-requests,grpcio>=1.62,protobuf>=4.24,packaging,cryptography>=50.0.1,<51,psycopg[binary]>=3.2,<4.",
-        "[INFO] Installing environment for https://github.com/pre-commit/mirrors-mypy.",
-        "[INFO] Once installed this environment will be reused.",
-        "[INFO] This may take a few minutes...",
         "ruff (legacy alias)......................................................Passed",
         "ruff format..............................................................Passed",
         "mypy.....................................................................Passed",
@@ -210,241 +497,216 @@
       ]
     },
     {
-      "check": "betterleaks-final",
-      "command": "work/tools/betterleaks dir --baseline-path .betterleaks-baseline.json --redact=100 --no-banner --no-color --exit-code=1 --report-format json --report-path work/v5d1-betterleaks-report.json .",
-      "status": "PASS",
+      "check": "diff_coverage_p2",
+      "command_argv": [
+        ".venv/bin/python",
+        "-m",
+        "diff_cover.diff_cover_tool",
+        "/workspace/work/p2_validation/coverage.xml",
+        "--compare-branch=05a41820c6f245acc6c891ce0f4a65441f3412f5",
+        "--fail-under=70"
+      ],
       "exit_code": 0,
-      "log_sha256": "b4bb560d422ebea472e86f239da081ec84cc4ffb043e5021b8fef8ab0438e2fc",
-      "output_tail": [
-        "5:00PM INF scanned ~142276731 bytes (142.28 MB) in 1.94s",
-        "5:00PM INF no leaks found"
-      ]
-    },
-    {
-      "check": "semgrep-final",
-      "command": "semgrep scan --config .semgrep/cryptohunter.yml --metrics=off --disable-version-check --error bot_core core deployment scripts",
       "status": "PASS",
-      "exit_code": 0,
-      "log_sha256": "eef4534657b4714990bf59ed5375e1dccaf92d60c4c9dd7511083feb14ef163f",
+      "started_utc": "2026-11-16T09:07:41Z",
+      "elapsed_seconds": 0.347,
+      "log_sha256": "d49cb84e7e3202b576bee44ded2ec4fa7400ceaa0cd9e482b5e50ddd32ed5cc1",
       "output_tail": [
-        "  Scanning 1238 files tracked by git with 5 Code rules:",
-        "  Scanning 1149 files with 5 python rules.",
-        "                ",
-        "                ",
-        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
-        "\u2502 Scan Summary \u2502",
-        "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
-        "\u2705 Scan completed successfully.",
-        " \u2022 Findings: 0 (0 blocking)",
-        " \u2022 Rules run: 5",
-        " \u2022 Targets scanned: 1149",
-        " \u2022 Parsed lines: ~100.0%",
-        " \u2022 Scan skipped: ",
-        "   \u25e6 Files larger than  files 1.0 MB: 1",
-        "   \u25e6 Files matching .semgrepignore patterns: 4",
-        " \u2022 Scan was limited to files tracked by git",
-        " \u2022 For a detailed list of skipped files and lines, run semgrep with the --verbose flag",
-        "Ran 5 rules on 1149 files: 0 findings."
-      ]
-    },
-    {
-      "check": "semgrep-test",
-      "command": "semgrep scan --test --config .semgrep/cryptohunter.yml .semgrep/cryptohunter.py --metrics=off --disable-version-check --jobs 1",
-      "status": "PASS",
-      "exit_code": 0,
-      "log_sha256": "b328d4ccd47def55a554514e6fb600d2b8e54f93bd0f11f3e98f8935a55a605f",
-      "output_tail": [
-        "               ",
-        "               ",
-        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
-        "\u2502 Scan Status \u2502",
-        "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
-        "  Scanning 1 file with 5 Code rules:",
-        "  Scanning 1 file with 5 python rules.",
-        "5/5: \u2713 All tests passed",
-        "No tests for fixes found."
-      ]
-    },
-    {
-      "check": "semgrep-advisory-focused",
-      "command": "semgrep scan --config p/python --config p/security-audit --metrics=off --disable-version-check deployment/stage9_observer_{collector_identity,kvm_domain,kvm_image,kvm_preflight}_v5d1.py scripts/stage9_observer_kvm_preflight_v5d1.py",
-      "status": "PASS",
-      "exit_code": 0,
-      "log_sha256": "974c6004da4fba05e14708358b5b46b9289a516e9657bf6f82ed0260a50066d1",
-      "output_tail": [
-        " \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500                                                               ",
-        "  python          198       5          Community     346                                                                ",
-        "  <multilang>       2       5                                                                                           ",
-        "                                                                                                                        ",
-        "                ",
-        "                ",
-        "\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
-        "\u2502 Scan Summary \u2502",
-        "\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518",
-        "\u2705 Scan completed successfully.",
-        " \u2022 Findings: 0 (0 blocking)",
-        " \u2022 Rules run: 200",
-        " \u2022 Targets scanned: 5",
-        " \u2022 Parsed lines: ~100.0%",
-        " \u2022 No ignore information available",
-        "Ran 200 rules on 5 files: 0 findings.",
-        "(need more rules? `semgrep login` for additional free Semgrep Registry rules)",
+        "-------------",
+        "Diff Coverage",
+        "Diff: 05a41820c6f245acc6c891ce0f4a65441f3412f5...HEAD, staged and unstaged changes",
+        "-------------",
+        "deployment/stage9_observer_kvm_domain_v5d1.py (100%)",
+        "deployment/stage9_observer_kvm_image_v5d1.py (100%)",
+        "deployment/stage9_observer_kvm_preflight_v5d1.py (100%)",
+        "-------------",
+        "Total:   150 lines",
+        "Missing: 0 lines",
+        "Coverage: 100%",
+        "-------------",
         ""
       ]
     },
     {
-      "check": "diff-cover",
-      "command": ".venv/bin/diff-cover work/v5d1-coverage.xml --compare-branch=origin/main --fail-under=70",
-      "status": "PASS",
+      "check": "diff_coverage_pr",
+      "command_argv": [
+        ".venv/bin/python",
+        "-m",
+        "diff_cover.diff_cover_tool",
+        "/workspace/work/p2_validation/coverage.xml",
+        "--compare-branch=da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a",
+        "--fail-under=70"
+      ],
       "exit_code": 0,
-      "log_sha256": "7b083978540fad8604f7fa5d1f9ef9bb3e84b2aaeec1ebba79dbc0cf41474ba7",
+      "status": "PASS",
+      "started_utc": "2026-11-16T09:07:41Z",
+      "elapsed_seconds": 0.302,
+      "log_sha256": "e56da25ecbdb97b7f8a3a74d19c50773f011d6242f8f76cf981c185c8f2144ce",
       "output_tail": [
         "-------------",
         "Diff Coverage",
-        "Diff: origin/main...HEAD, staged and unstaged changes",
+        "Diff: da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a...HEAD, staged and unstaged changes",
         "-------------",
-        "deployment/stage9_observer_collector_identity_v5d1.py (86.4%): Missing lines 176-178,227,341,380-382,384-391,393,395-399,403-404,428,437,457-460,487-488",
-        "deployment/stage9_observer_kvm_domain_v5d1.py (98.2%): Missing lines 195,211,224,261-262,564",
-        "deployment/stage9_observer_kvm_image_v5d1.py (94.2%): Missing lines 117-119,127-128,130-132,151,187,198-199",
+        "deployment/stage9_observer_collector_identity_v5d1.py (86.5%): Missing lines 178-180,229,343,382-384,386-393,395,397-401,405-406,430,439,459-462,489-490",
+        "deployment/stage9_observer_kvm_domain_v5d1.py (98.4%): Missing lines 198,214,227,264-265",
+        "deployment/stage9_observer_kvm_image_v5d1.py (94.6%): Missing lines 117-119,127-128,130-132,151,187,198-199",
         "deployment/stage9_observer_kvm_preflight_v5d1.py (99.5%): Missing lines 172",
         "scripts/stage9_observer_kvm_preflight_v5d1.py (100%)",
         "-------------",
-        "Total:   972 lines",
-        "Missing: 51 lines",
+        "Total:   977 lines",
+        "Missing: 50 lines",
         "Coverage: 94%",
         "-------------",
         ""
       ]
     }
   ],
-  "security": {
-    "betterleaks": {
-      "exit_code": 0,
-      "log": "work/v5d1-betterleaks.log",
-      "log_sha256": "2d7871bc975f81429b650f28607af877c9a03616c84d110f9238878fb1055e6e",
-      "findings": 0,
-      "version": "1.9.0",
-      "scope": "exact full working-tree CI command, baseline unchanged",
-      "cleanup": "removed only generated test_runtime_bootstrap pytest pyc and .pytest_cache/v/cache/nodeids containing fixture strings before final successful full scan"
+  "retained_test_artifacts": [
+    {
+      "name": "observer-regression.xml",
+      "sha256": "6b21676b1a962516ba745d702d81f76f4e2c0d080cee1ac54f1ffe1775357673"
     },
-    "semgrep": {
-      "exit_code": 0,
-      "log": "work/v5d1-semgrep.log",
-      "log_sha256": "eef4534657b4714990bf59ed5375e1dccaf92d60c4c9dd7511083feb14ef163f",
-      "findings": 0,
-      "rules": 5,
-      "targets": 1149,
-      "version": "1.179.0",
-      "scope": "bot_core core deployment scripts"
+    {
+      "name": "workflow-dependency.xml",
+      "sha256": "8630511304b04b3d0bd19511b8fccc9756910d768e6c80907767f019a61d118a"
     },
-    "semgrep-test": {
-      "exit_code": 0,
-      "log": "work/v5d1-semgrep-test.log",
-      "log_sha256": "b328d4ccd47def55a554514e6fb600d2b8e54f93bd0f11f3e98f8935a55a605f",
-      "tests": "5/5 passed"
+    {
+      "name": "dependency-authority.xml",
+      "sha256": "600f0b9e201fb85eff3b929dcf32a09e01b1c72f0297b4997b733940893d7b77"
     },
-    "semgrep-advisory": {
-      "exit_code": 0,
-      "log": "work/v5d1-semgrep-advisory.log",
-      "log_sha256": "05329982dbd2fedec48699dc2c281795861fa7eefb8bdd2f46ab75a4c1e47839",
-      "findings": 26,
-      "warnings": 9,
-      "timeouts": 8,
-      "v5d1_scanned": [
-        "deployment/stage9_observer_collector_identity_v5d1.py",
-        "deployment/stage9_observer_kvm_domain_v5d1.py",
-        "deployment/stage9_observer_kvm_image_v5d1.py",
-        "deployment/stage9_observer_kvm_preflight_v5d1.py",
-        "scripts/stage9_observer_kvm_preflight_v5d1.py"
-      ],
-      "v5d1_findings": [
+    {
+      "name": "coverage.xml",
+      "sha256": "fb9b73a2ea1a28ed5216cfc830faab4dd81db56d66438760bad0a687a602d279"
+    }
+  ],
+  "baseline_github_actions": {
+    "profile": "stage9-observer-v5d1-p2-baseline-ci",
+    "head_sha": "05a41820c6f245acc6c891ce0f4a65441f3412f5",
+    "base_sha": "da6605a24c6cb29c2b2638ad6f2c2bb5eb5b361a",
+    "observed_utc": "2026-11-16 09:00:17 UTC",
+    "workflow_run": {
+      "id": 43763157400,
+      "name": "Platform deployment tracks",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/Dudzian/Dudzian/actions/runs/43763157400"
+    },
+    "jobs": [
+      {
+        "id": 132978778880,
+        "name": "windows-release-gate",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/Dudzian/Dudzian/actions/runs/43763157400/job/132978778880",
+        "diagnostics": [
+          "2026-11-15T22:17:52.7282832Z WINDOWS:WINDOWS_REBOOT_RECOVERY",
+          "2026-11-15T22:17:52.7283240Z WINDOWS:WINDOWS_LONG_RUNNING_LIFECYCLE",
+          "2026-11-15T22:17:52.7283513Z WINDOWS:WINDOWS_UPDATE_RESTART",
+          "2026-11-15T22:17:52.7283770Z WINDOWS:WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR",
+          "2026-11-15T22:17:52.7284051Z WINDOWS_BETA_RELEASE_READY=NOT_READY",
+          "2026-11-15T22:17:52.8118030Z ##[error]Process completed with exit code 1."
+        ]
+      },
+      {
+        "id": 132963574248,
+        "name": "linux-deployment-integration",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/Dudzian/Dudzian/actions/runs/43763157400/job/132963574248",
+        "diagnostics": [
+          "2026-11-15T21:26:32.5059046Z LINUX_SYSTEMD_INTEGRATION=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+          "2026-11-15T21:26:32.5059796Z LINUX_CLEAN_INSTALL=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+          "2026-11-15T21:26:32.5060517Z LINUX_REBOOT_LIFECYCLE_UPDATE=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+          "2026-11-15T21:26:32.5061105Z LINUX_PRODUCTION_READY=NOT_READY",
+          "2026-11-15T21:26:32.5131804Z ##[error]Process completed with exit code 1."
+        ]
+      }
+    ],
+    "classification": "EXISTING_QUALIFICATION_BLOCKERS",
+    "limitations": [
+      "Observed on old PR head before P2 changes; does not establish results for a future head.",
+      "No physical qualification was performed."
+    ],
+    "previous_pr3276": {
+      "profile": "stage9-observer-v5c3-pr3276-baseline",
+      "pr": 3276,
+      "head_sha": "4344784739c0f9361ab54818cdda3ed41a945199",
+      "observed_utc": "2026-11-16 09:02:41 UTC",
+      "workflow_run": {
+        "id": 43733152334,
+        "name": "Platform deployment tracks",
+        "conclusion": "failure",
+        "url": "https://github.com/Dudzian/Dudzian/actions/runs/43733152334"
+      },
+      "jobs": [
         {
-          "rule": "python.lang.security.use-defused-xml.use-defused-xml",
-          "path": "deployment/stage9_observer_kvm_domain_v5d1.py",
-          "line": 16
+          "id": 132890394699,
+          "name": "windows-release-gate",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/Dudzian/Dudzian/actions/runs/43733152334/job/132890394699",
+          "diagnostics": [
+            "2026-11-15T17:14:17.6350171Z WINDOWS:WINDOWS_REBOOT_RECOVERY",
+            "2026-11-15T17:14:17.6350592Z WINDOWS:WINDOWS_LONG_RUNNING_LIFECYCLE",
+            "2026-11-15T17:14:17.6350904Z WINDOWS:WINDOWS_UPDATE_RESTART",
+            "2026-11-15T17:14:17.6351130Z WINDOWS:WINDOWS_FAILED_UPDATE_SAFE_BEHAVIOR",
+            "2026-11-15T17:14:17.6351378Z WINDOWS_BETA_RELEASE_READY=NOT_READY",
+            "2026-11-15T17:14:17.7224920Z ##[error]Process completed with exit code 1."
+          ]
+        },
+        {
+          "id": 132870789863,
+          "name": "linux-deployment-integration",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/Dudzian/Dudzian/actions/runs/43733152334/job/132870789863",
+          "diagnostics": [
+            "2026-11-15T16:05:29.6892329Z LINUX_SYSTEMD_INTEGRATION=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+            "2026-11-15T16:05:29.6892813Z LINUX_CLEAN_INSTALL=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+            "2026-11-15T16:05:29.6893246Z LINUX_REBOOT_LIFECYCLE_UPDATE=MISSING_CURRENT_EVIDENCE [LIVE_LINUX_INTEGRATION]",
+            "2026-11-15T16:05:29.6893597Z LINUX_PRODUCTION_READY=NOT_READY",
+            "2026-11-15T16:05:29.6999274Z ##[error]Process completed with exit code 1."
+          ]
         }
       ],
-      "v5d1_findings_status": "RESOLVED_BY_DEFUSEDXML_AND_FINAL_FOCUSED_SCAN"
-    },
-    "semgrep-advisory-focused": {
-      "exit_code": 0,
-      "log": "work/v5d1-semgrep-advisory-focused.log",
-      "log_sha256": "974c6004da4fba05e14708358b5b46b9289a516e9657bf6f82ed0260a50066d1",
-      "findings": 0,
-      "warnings": [],
-      "scanned": [
-        "deployment/stage9_observer_collector_identity_v5d1.py",
-        "deployment/stage9_observer_kvm_domain_v5d1.py",
-        "deployment/stage9_observer_kvm_image_v5d1.py",
-        "deployment/stage9_observer_kvm_preflight_v5d1.py",
-        "scripts/stage9_observer_kvm_preflight_v5d1.py"
-      ],
-      "supersedes_v5d1_findings_only": "Initial full community scan remains preserved with legacy findings/timeouts; final focused scan verifies remediation on all five new files without exclusions or suppressions."
-    },
-    "semgrep-final": {
-      "exit_code": 0,
-      "log": "work/v5d1-semgrep-final.log",
-      "log_sha256": "eef4534657b4714990bf59ed5375e1dccaf92d60c4c9dd7511083feb14ef163f",
-      "findings": 0,
-      "rules": 5,
-      "targets": 1149,
-      "scope": "exact final custom blocking CI scope: bot_core core deployment scripts"
+      "classification": "SAME_QUALIFICATION_BLOCKERS_AS_PR3277_OLD_HEAD"
     }
   },
-  "cloud_readonly_refusal": {
-    "domain": null,
-    "execution": "EXECUTION_BLOCKED",
-    "execution_authorization": "EXECUTION_NOT_AUTHORIZED",
-    "host_preflight": "NOT_TESTED",
-    "identity": {
-      "authority_id": null,
-      "environment_sha256": "dcf7a8ddbfe4d063d663fd390b09fbc4ca11829bf87919b72cc35b95c70da029",
-      "execution": "EXECUTION_NOT_AUTHORIZED",
-      "identity": "COLLECTOR_IDENTITY_UNVERIFIED",
-      "measurements": [],
-      "policy_revision": null,
-      "policy_sha256": null,
-      "policy_signature_verified": false,
-      "profile": "stage9-observer-controller-identity-v5d1",
-      "reason_codes": [
-        "INDEPENDENT_LAUNCH_ATTESTATION_MISSING",
-        "LOADED_EXECUTION_CLOSURE_UNVERIFIED",
-        "IDENTITY_PATH_NOT_PROTECTED"
-      ]
+  "post_push_github_actions": "NOT_YET_OBSERVED_AT_LOCAL_RECORD_CREATION; inspect exact pushed HEAD in PR #3277. Existing qualification blockers are not passes.",
+  "resolved_validation_attempts": [
+    {
+      "tool": "mypy",
+      "cause": "Initial configured checks read an in-progress atomicity edit before pending_images declaration was fixed. Both final checks pass."
     },
-    "images": [],
-    "implementation": "IMPLEMENTED",
-    "observation_sha256": [],
-    "observer3a": "BLOCKED",
-    "production": "NO-GO",
-    "profile": "stage9-observer-kvm-preflight-v5d1",
-    "pyc_reconstruction": "UNVERIFIED",
-    "qualification": "BLOCKED",
-    "reason_codes": [
-      "INDEPENDENT_LAUNCH_ATTESTATION_MISSING",
-      "LOADED_EXECUTION_CLOSURE_UNVERIFIED",
-      "IDENTITY_PATH_NOT_PROTECTED",
-      "LOCAL_EXECUTION_OBSERVATION_DISABLED_V5D1",
-      "EXPERIMENT_AUTHORIZATION_MISSING"
-    ],
-    "requirements_sha256": null,
-    "runtime_observation": "NOT_TESTED",
-    "stage3b": "NOT AUTHORIZED",
-    "stage9": "IN_PROGRESS"
-  },
-  "qualification_admissible": false,
-  "limitations": [
-    "Synthetic libvirt and image tests do not qualify physical gates.",
-    "No operator-host KVM/libvirt measurement or exact target CPython experiment was performed.",
-    "Hosted native Windows/Ubuntu checks on the Draft PR remain pending independently of local Linux and Win32 typing.",
-    "Full advisory Semgrep legacy findings, timeouts and parser warning are retained separately; final focused new-source scan is required.",
-    "No VM mutation, privilege elevation, target bytecode, maintainer script, trust-root change, durable anti-rollback mutation or merge was performed."
+    {
+      "tool": "semgrep",
+      "cause": "Initial CLI startup attempted read-only user home; directed tool settings/logs to work, without rule changes."
+    },
+    {
+      "tool": "betterleaks",
+      "cause": "Initial full scans flagged ignored generated .pytest_cache node IDs and tests/__pycache__ bytecode containing synthetic fixtures; both preserved outside repository in cache-quarantine. A later scan flagged ignored work/libvirt-formatdomain.html (public downloaded reference); preserved outside repository. Final full scan passes with unchanged baseline/rules."
+    },
+    {
+      "tool": "pytest",
+      "cause": "An early attempt to exclude V5d1 with --ignore still included explicitly named files while their fixtures were being updated; six transient fixture failures. Superseded by the complete settled-source run: 3386 passed, 32 skipped, zero failures."
+    },
+    {
+      "tool": "pre-commit",
+      "cause": "The first all-files run saw concurrent documentation edits and reported files modified during the mypy hook, although mypy found no errors. The unchanged-source rerun passed every hook."
+    }
   ],
-  "state": {
-    "stage9": "IN_PROGRESS",
-    "observer3a": "BLOCKED",
-    "stage3b": "NOT AUTHORIZED",
-    "production": "NO-GO",
-    "pyc_reconstruction": "UNVERIFIED"
-  }
+  "not_executed": [
+    "Physical operator-host libvirt/KVM qualification",
+    "Native immutable-image qualification",
+    "Target CPython or investigated bytecode",
+    "VM lifecycle mutation, installation or host configuration changes",
+    "Full community advisory Semgrep rerun (only blocking rules and fixtures required here)"
+  ],
+  "limitations": [
+    "Local workflow/dependency contracts do not execute GitHub-hosted workflows.",
+    "No VM/native libvirt observation, target interpreter/bytecode, host configuration or physical qualification was executed.",
+    "Final exact-HEAD GitHub CI must be checked after push separately.",
+    "Codebase Memory MCP and CLI unavailable; source and workflow inspected directly.",
+    "Synthetic XML conformance never proves effective host isolation or authorizes execution."
+  ]
 }

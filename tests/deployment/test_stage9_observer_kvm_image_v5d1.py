@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import signal
 import stat
 import struct
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -83,8 +85,164 @@ def test_synthetic_qcow2_chain_is_measured_including_base(
     top.write_bytes(_qcow(backing=str(base)))
     result = image.measure_image_v5d1((_expected(top, "qcow2"), _expected(base)))
     assert result.reason_codes == ()
+    assert result.status == "IMAGE_MEASURED_LOCAL"
     assert len(result.artifacts) == 2
     assert result.artifacts[0].backing_path == str(base)
+    assert [artifact.path for artifact in result.artifacts] == [str(top), str(base)]
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        ("header", "QCOW2_HEADER_INVALID"),
+        ("digest", "IMAGE_DIGEST_MISMATCH"),
+        ("backing", "IMAGE_BACKING_CHAIN_MISMATCH"),
+        ("immutable", "IMAGE_CHANGED_DURING_MEASUREMENT"),
+        ("path", "IMAGE_CHANGED_DURING_MEASUREMENT"),
+        ("timeout", "IMAGE_MEASUREMENT_TIMEOUT"),
+        ("qemu", "QEMU_IMG_FAILED"),
+        ("qemu-os-error", "IMAGE_OBSERVATION_INCOMPLETE"),
+        ("qemu-json-error", "IMAGE_OBSERVATION_INCOMPLETE"),
+        ("interrupt", "IMAGE_MEASUREMENT_INTERRUPTED"),
+    ],
+)
+def test_late_chain_failure_discards_every_artifact_and_closes_descriptors(
+    failure: str,
+    reason: str,
+    tmp_path: Path,
+    synthetic_host: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = tmp_path / "base.raw"
+    middle = tmp_path / "middle.qcow2"
+    top = tmp_path / "top.qcow2"
+    base.write_bytes(b"base bytes")
+    middle.write_bytes(_qcow(backing=str(base)))
+    top.write_bytes(_qcow(backing=str(middle)))
+    expected = (_expected(top, "qcow2"), _expected(middle, "qcow2"), _expected(base))
+    if failure == "digest":
+        expected = (
+            expected[0],
+            image.ExpectedImageV5d1(str(middle), "0" * 64, "qcow2"),
+            expected[2],
+        )
+    if failure == "backing":
+        middle.write_bytes(_qcow(backing="/srv/unapproved.raw"))
+        expected = (expected[0], _expected(middle, "qcow2"), expected[2])
+    if failure == "header":
+        middle.write_bytes(b"invalid second image")
+        expected = (expected[0], _expected(middle, "qcow2"), expected[2])
+    opened: list[int] = []
+    observations: list[int] = []
+    immutable = True
+    original_open = image._open_protected
+    original_digest = image._digest
+
+    def open_image(path: str) -> int:
+        fd = original_open(path)
+        opened.append(fd)
+        return fd
+
+    def digest(fd: int, size: int, deadline: float) -> str:
+        if failure == "timeout" and fd == opened[1]:
+            raise image._ImageRefusal("IMAGE_MEASUREMENT_TIMEOUT")
+        return original_digest(fd, size, deadline)
+
+    def info(fd: int, format: str, deadline: float) -> dict[str, object]:
+        nonlocal immutable
+        observations.append(fd)
+        if fd == opened[1]:
+            if failure == "immutable":
+                immutable = False
+            if failure == "path":
+                replacement = tmp_path / "replacement"
+                replacement.write_bytes(middle.read_bytes())
+                replacement.replace(middle)
+            if failure == "qemu":
+                raise image._ImageRefusal("QEMU_IMG_FAILED")
+            if failure == "qemu-os-error":
+                raise OSError("synthetic parser failure")
+            if failure == "qemu-json-error":
+                raise ValueError("synthetic invalid JSON")
+            if failure == "interrupt":
+                raise KeyboardInterrupt
+        backing, _ = (
+            image._qcow_header(fd, os.fstat(fd).st_size) if format == "qcow2" else (None, 0)
+        )
+        return {"format": format, "backing-filename": backing}
+
+    monkeypatch.setattr(image, "_open_protected", open_image)
+    monkeypatch.setattr(image, "_immutable", lambda fd: immutable)
+    monkeypatch.setattr(image, "_digest", digest)
+    monkeypatch.setattr(image, "_qemu_info", info)
+    descriptor_count = len(os.listdir("/proc/self/fd"))
+    result = image.measure_image_v5d1(expected)
+    assert observations[0] == opened[0]  # The top image completed before the later failure.
+    assert result.status == "IMAGE_MEASUREMENT_BLOCKED"
+    assert "IMAGE_MEASUREMENT_BLOCKED" in result.reason_codes
+    assert reason in result.reason_codes
+    assert result.artifacts == ()
+    assert len(os.listdir("/proc/self/fd")) == descriptor_count
+    for fd in opened:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+@pytest.mark.parametrize("digest_mismatch", [False, True])
+def test_cleanup_error_blocks_publication_and_attempts_every_descriptor(
+    interrupt: bool,
+    digest_mismatch: bool,
+    tmp_path: Path,
+    synthetic_host: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = tmp_path / "base.raw"
+    top = tmp_path / "top.qcow2"
+    base.write_bytes(b"base bytes")
+    top.write_bytes(_qcow(backing=str(base)))
+    expected = (_expected(top, "qcow2"), _expected(base))
+    if digest_mismatch:
+        expected = (expected[0], image.ExpectedImageV5d1(str(base), "0" * 64, "raw"))
+    held: list[int] = []
+    closed: list[int] = []
+    original_open = image._open_protected
+    original_close = os.close
+
+    def open_image(path: str) -> int:
+        descriptor = original_open(path)
+        if len(held) < 2:
+            held.append(descriptor)
+        return descriptor
+
+    def close_image(descriptor: int) -> None:
+        original_close(descriptor)
+        if descriptor in held:
+            closed.append(descriptor)
+            if len(closed) == 1:
+                # Model the documented close-after-syscall ambiguity. Never
+                # retry the same descriptor, which could have been reused.
+                if interrupt:
+                    raise KeyboardInterrupt
+                raise OSError("synthetic close failure")
+
+    monkeypatch.setattr(image, "_open_protected", open_image)
+    monkeypatch.setattr(image.os, "close", close_image)
+    descriptor_count = len(os.listdir("/proc/self/fd"))
+    result = image.measure_image_v5d1(expected)
+    assert result.status == "IMAGE_MEASUREMENT_BLOCKED"
+    assert result.artifacts == ()
+    assert "IMAGE_MEASUREMENT_BLOCKED" in result.reason_codes
+    assert (
+        "IMAGE_MEASUREMENT_INTERRUPTED" if interrupt else "IMAGE_DESCRIPTOR_CLOSE_FAILED"
+    ) in result.reason_codes
+    if digest_mismatch:
+        assert "IMAGE_DIGEST_MISMATCH" in result.reason_codes
+    assert closed == held
+    assert len(os.listdir("/proc/self/fd")) == descriptor_count
+    for descriptor in held:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
 
 
 def test_stable_writable_image_is_insufficient(
@@ -385,6 +543,79 @@ def test_qemu_timeout_kills_and_reaps_child(
             image._qemu_info(fd, "raw", -1)
         assert killed == [True]
         assert waited == [True]
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_qemu_error_cleans_up_real_inert_helper_and_descriptors(
+    interrupt: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "inert.raw"
+    path.write_bytes(b"inert image and tool stand-in")
+    fd = os.open(path, os.O_RDONLY)
+    real_popen = subprocess.Popen
+    processes: list[subprocess.Popen[bytes]] = []
+
+    def start_helper(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        # This inert helper tests host process cleanup, never the inspected
+        # interpreter, qemu-img, VM or investigated bytecode.
+        process = real_popen(
+            ["/bin/sleep", "30"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(image, "_open_protected", lambda name: os.dup(fd))
+    monkeypatch.setattr(image.subprocess, "Popen", start_helper)
+    if interrupt:
+
+        def interrupted(*args: Any, **kwargs: Any) -> Any:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(image.selectors.DefaultSelector, "select", interrupted)
+    descriptor_count = len(os.listdir("/proc/self/fd"))
+    try:
+        if interrupt:
+            with pytest.raises(KeyboardInterrupt):
+                image._qemu_info(fd, "raw", time.monotonic() + 10)
+        else:
+            with pytest.raises(image._ImageRefusal, match="TIMEOUT"):
+                image._qemu_info(fd, "raw", time.monotonic() + 0.05)
+        assert len(processes) == 1
+        assert processes[0].poll() == -signal.SIGKILL
+        assert processes[0].stdout is not None and processes[0].stdout.closed
+        assert len(os.listdir("/proc/self/fd")) == descriptor_count
+    finally:
+        # Keep a regression failure from leaving even this inert helper alive.
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+        os.close(fd)
+
+
+def test_selector_creation_failure_closes_tool_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "inert.raw"
+    path.write_bytes(b"inert image and tool stand-in")
+    fd = os.open(path, os.O_RDONLY)
+    monkeypatch.setattr(image, "_open_protected", lambda name: os.dup(fd))
+
+    def unavailable_selector() -> Any:
+        raise OSError("synthetic selector resource exhaustion")
+
+    monkeypatch.setattr(image.selectors, "DefaultSelector", unavailable_selector)
+    descriptor_count = len(os.listdir("/proc/self/fd"))
+    try:
+        with pytest.raises(OSError):
+            image._qemu_info(fd, "raw", time.monotonic() + 1)
+        assert len(os.listdir("/proc/self/fd")) == descriptor_count
     finally:
         os.close(fd)
 
