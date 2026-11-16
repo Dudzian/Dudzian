@@ -22,7 +22,9 @@ def test_cloud_bind_rejects_exposed_or_unresolved_hosts(host: str) -> None:
         validate_cloud_bind_host(host)
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.2", "::1", "[::1]", "localhost"])
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1", "127.0.0.2", "::1", "[::1]", "localhost"]
+)
 def test_cloud_bind_accepts_explicit_loopback_hosts(host: str) -> None:
     validate_cloud_bind_host(host)
 
@@ -52,9 +54,7 @@ def test_cloud_config_defaults_to_loopback(tmp_path: Path) -> None:
 
 def test_cloud_config_rejects_unimplemented_tls_flag(tmp_path: Path) -> None:
     config_file = tmp_path / "cloud.yaml"
-    config_file.write_text(
-        "host: 127.0.0.1\ntls:\n  enabled: true\n", encoding="utf-8"
-    )
+    config_file.write_text("host: 127.0.0.1\ntls:\n  enabled: true\n", encoding="utf-8")
     with pytest.raises(CloudConfigError, match="tls.enabled"):
         load_cloud_server_config(config_file)
 
