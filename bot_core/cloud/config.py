@@ -95,7 +95,11 @@ def validate_cloud_bind_host(host: str) -> None:
     normalized = host.strip().lower()
     if normalized == "localhost":
         return
-    address_text = normalized[1:-1] if normalized.startswith("[") and normalized.endswith("]") else normalized
+    address_text = (
+        normalized[1:-1]
+        if normalized.startswith("[") and normalized.endswith("]")
+        else normalized
+    )
     try:
         address = ipaddress.ip_address(address_text)
     except ValueError as exc:
