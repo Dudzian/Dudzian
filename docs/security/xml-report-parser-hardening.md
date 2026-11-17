@@ -39,8 +39,22 @@ python -m ruff format --check scripts/enforce_coverage.py \
 git diff --check
 ```
 
-Trzy ostatnie kontrole zakończyły się kodem 0. Pełny hook formatowania,
-skonfigurowany mypy Linux/Win32 i wymagane CI muszą mieć odrębny aktualny dowód;
+Trzy ostatnie kontrole zakończyły się kodem 0. Ponowne uruchomienie 101 testów
+z branch coverage na commicie poprawki zakończyło się kodem 0; `coverage xml`
+oraz `diff-cover --compare-branch=origin/main --fail-under=70` również zwróciły
+0. Pokrycie zmienionego kodu wyniosło **100% (17 linii)**. Nie zmieniono progu.
+Odrębna regresja sąsiednich ścieżek zakończyła się wynikiem **393 passed**, exit 0:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --noconftest \
+  tests/scripts/test_s9_fv_01_junit.py \
+  tests/deployment/test_stage9_observer_kvm_domain_v5d1.py \
+  tests/scripts/test_platform_core_evidence_workflow.py -q
+```
+
+Dokładny hook `python -m pre_commit run ruff-format --all-files` zakończył się
+kodem 0, bez zmian plików, z odrębnym cache narzędzi w bieżącym środowisku.
+Skonfigurowany mypy Linux/Win32 i wymagane CI muszą mieć odrębny aktualny dowód;
 lokalna regresja nie zastępuje ich wyniku.
 
 Przypadki obejmują DTD bez encji, encje wewnętrzne i zewnętrzne, odwołania
