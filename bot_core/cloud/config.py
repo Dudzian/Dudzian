@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,7 +72,7 @@ class CloudSecurityConfig:
 class CloudServerConfig:
     """Zbiorcza konfiguracja usługi cloudowej."""
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 50052
     max_workers: int = 32
     log_level: str = "INFO"
@@ -79,6 +80,36 @@ class CloudServerConfig:
     license: CloudLicenseConfig = field(default_factory=CloudLicenseConfig)
     marketplace: CloudMarketplaceConfig = field(default_factory=CloudMarketplaceConfig)
     security: CloudSecurityConfig = field(default_factory=CloudSecurityConfig)
+
+
+def validate_cloud_bind_host(host: str) -> str:
+    """Deny network-facing gRPC until this server implements TLS.
+
+    LocalRuntimeServer uses grpc.add_insecure_port; a YAML tls section does not
+    configure transport credentials. The cloud server must therefore remain
+    loopback-only even when its optional session handshake is enabled.
+    """
+
+    if not isinstance(host, str) or not host.strip():
+        raise CloudConfigError("Adres nasłuchu cloud musi być lokalnym adresem loopback.")
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return normalized
+    address_text = (
+        normalized[1:-1] if normalized.startswith("[") and normalized.endswith("]") else normalized
+    )
+    try:
+        address = ipaddress.ip_address(address_text)
+    except ValueError as exc:
+        raise CloudConfigError(
+            "Cloud gRPC zezwala obecnie tylko na jawny adres IP loopback lub localhost."
+        ) from exc
+    if not address.is_loopback:
+        raise CloudConfigError(
+            "Odmowa nasłuchu cloud poza loopback: serwer gRPC nie obsługuje jeszcze TLS. "
+            "Wymagane są TLS/mTLS oraz autoryzacja przed udostępnieniem sieciowym."
+        )
+    return f"[{address.compressed}]" if address.version == 6 else str(address)
 
 
 def _resolve_path(base: Path, value: str | Path | None) -> Path:
@@ -210,6 +241,17 @@ def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
         auto_reload=bool(marketplace_section.get("auto_reload", True)),
     )
 
+    tls_section = payload.get("tls")
+    if tls_section is None:
+        tls_section = {}
+    if not isinstance(tls_section, Mapping):
+        raise CloudConfigError("Sekcja tls musi być mapą.")
+    if tls_section.get("enabled", False) is not False:
+        raise CloudConfigError(
+            "tls.enabled nie jest obsługiwane przez serwer cloud gRPC; "
+            "nie wolno deklarować aktywnego TLS bez transportu szyfrowanego."
+        )
+
     security_section = payload.get("security", {}) or {}
     if not isinstance(security_section, Mapping):
         security_section = {}
@@ -237,8 +279,9 @@ def load_cloud_server_config(path: str | Path) -> CloudServerConfig:
             "Pole security.require_handshake ustawiono na True, ale allowed_clients jest puste lub niepoprawne."
         )
 
+    host = validate_cloud_bind_host(payload.get("host", "127.0.0.1"))
     return CloudServerConfig(
-        host=str(payload.get("host") or "0.0.0.0"),
+        host=host,
         port=int(payload.get("port", 50052) or 0),
         max_workers=int(payload.get("max_workers", 32) or 32),
         log_level=str(payload.get("log_level") or "INFO"),
@@ -258,4 +301,5 @@ __all__ = [
     "CloudSecurityConfig",
     "CloudServerConfig",
     "load_cloud_server_config",
+    "validate_cloud_bind_host",
 ]

@@ -1,5 +1,6 @@
 # Minimalna konfiguracja serwera cloud Stage6.
-host: 0.0.0.0
+# Cloud transport uses insecure gRPC; do not expose it beyond this host.
+host: 127.0.0.1
 port: 50052
 max_workers: 32
 log_level: INFO
