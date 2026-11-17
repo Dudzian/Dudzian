@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/workspace/work/v5d4-quality/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--confcutdir=tests/deployment",
+    "tests/deployment/test_stage9_v5d4_abi.py",
+    "tests/deployment/test_stage9_v5d4_closure.py",
+    "tests/deployment/test_stage9_v5d4_dependencies.py",
+    "tests/deployment/test_stage9_v5d4_environment.py",
+    "tests/deployment/test_stage9_v5d3_release.py",
+    "tests/deployment/test_stage9_observer_collector_identity_v5d1.py",
+    "tests/deployment/test_stage9_observer_kvm_domain_v5d1.py",
+    "tests/deployment/test_stage9_observer_kvm_image_v5d1.py",
+    "tests/deployment/test_stage9_observer_kvm_preflight_v5d1.py",
+    "-p",
+    "pytest_cov.plugin",
+    "--cov=scripts.stage9_v5d4_abi",
+    "--cov=scripts.stage9_v5d4_closure",
+    "--cov=scripts.stage9_v5d4_dependencies",
+    "--cov=scripts.stage9_v5d4_environment",
+    "--cov=scripts.stage9_v5d4_launch",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-report=xml:/workspace/work/v5d4/docs/architecture/evidence/stage9_v5d4_validation/coverage.xml",
+    "--junitxml=/workspace/work/v5d4/docs/architecture/evidence/stage9_v5d4_validation/regression.xml"
+  ],
+  "cwd": "/workspace/work/v5d4",
+  "exit": 0,
+  "seconds": 52.429
+}

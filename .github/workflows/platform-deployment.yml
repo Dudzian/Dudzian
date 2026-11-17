@@ -401,6 +401,55 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  stage9-v5d4-static-environment:
+    name: Stage 9 V5d4 — statyczne przygotowanie środowiska
+    if: (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')
+    runs-on: ubuntu-24.04
+    permissions: {contents: read}
+    timeout-minutes: 15
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with: {ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - name: Przygotuj izolowane narzędzia walidacji statycznej
+        run: >-
+          python -m pip install pytest pytest-cov "ruff==0.14.11" "mypy==1.10.0"
+      - name: Sprawdź Ruff, format i typy narzędzi przygotowania
+        run: |
+          python -m ruff check scripts/stage9_v5d4_*.py tests/deployment/test_stage9_v5d4_*.py
+          python -m ruff format --check scripts/stage9_v5d4_*.py tests/deployment/test_stage9_v5d4_*.py
+          python -m mypy scripts/stage9_v5d4_*.py
+          bash -n scripts/stage9_v5d3_prepare_release.sh scripts/stage9_v5d3_verify_bundle.sh
+      - name: Sprawdź przygotowanie offline i regresje V5d2–V5d3
+        run: |
+          git cat-file -e '17e03a9cb42a84302401415f96ac90e756926915^{commit}'
+          python -m pytest -q --confcutdir=tests/deployment \
+            tests/deployment/test_stage9_v5d4_*.py \
+            tests/deployment/test_stage9_v5d3_release.py \
+            -p pytest_cov.plugin --cov=scripts.stage9_v5d4_abi \
+            --cov=scripts.stage9_v5d4_closure --cov=scripts.stage9_v5d4_dependencies \
+            --cov=scripts.stage9_v5d4_environment --cov=scripts.stage9_v5d4_launch \
+            --cov-branch --cov-report=xml:stage9-v5d4-coverage.xml \
+            --junitxml=stage9-v5d4-static.xml
+          python -m pytest -q --confcutdir=tests/scripts \
+            tests/scripts/test_stage9_operator_v5d2_inventory.py \
+            tests/scripts/test_stage9_v5d4_ci_history.py \
+            --junitxml=stage9-v5d4-v5d2-regression.xml
+      - name: Zachowaj wyniki statycznych testów przygotowania
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stage9-v5d4-static-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            stage9-v5d4-static.xml
+            stage9-v5d4-v5d2-regression.xml
+            stage9-v5d4-coverage.xml
+          if-no-files-found: error
+          retention-days: 14
+
   linux-physical-challenge:
     if: >-
       (github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe') && (github.event_name == 'workflow_dispatch' && inputs.run_linux_physical == true && github.ref == 'refs/heads/main' && github.repository == 'Dudzian/Dudzian')

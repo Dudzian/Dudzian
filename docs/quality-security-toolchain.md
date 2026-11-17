@@ -1,5 +1,15 @@
 # Quality, security, and code-intelligence toolchain
 
+V5d4 dodaje pięć samodzielnych narzędzi przygotowania offline do configured
+mypy Linux/Win32. Osobny job `stage9-v5d4-static-environment` na Ubuntu24.04
+z Python3.12 sprawdza Ruff/format, typy, testy V5d4 i regresje V5d2–V5d3,
+zachowując JUnit. V5d1 pozostaje w swoim istniejącym jobie. Testy nie instalują
+kontrolera, nie ładują libvirt i nie wykonują operacji VM. Dotychczasowe progi,
+zakresy i bramki sprzętowe pozostają bez zmian. Pełny hook formatowania,
+skonfigurowany mypy i skany bezpieczeństwa nadal obowiązują przed PR.
+[Procedura V5d4](architecture/stage9_v5d4_environment.md) oddziela propozycję,
+niezależne oczekiwania, staging, statyczny ABI i jawne bramki native/preflight.
+
 V5d1 dodaje odczytowy kontroler lokalnego libvirt, oddzielną granicę tożsamości
 kolektora i pomiar niezmiennych obrazów. Cztery moduły oraz CLI rozszerzają
 skonfigurowany mypy Linux/Win32, jawny Ruff/format i branch coverage

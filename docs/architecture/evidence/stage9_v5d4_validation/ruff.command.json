@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/workspace/work/v5d4-quality/bin/python",
+    "-m",
+    "ruff",
+    "check",
+    "bot_core",
+    "core",
+    "scripts",
+    "tests",
+    "deploy",
+    "stage6_samples",
+    "ui"
+  ],
+  "cwd": "/workspace/work/v5d4",
+  "exit": 0,
+  "seconds": 0.099
+}

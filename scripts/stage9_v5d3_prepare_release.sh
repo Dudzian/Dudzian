@@ -80,10 +80,17 @@ fi
 run_helper seal "$attempt"
 verification_result=0
 if [[ ! -f "$verifier" || -L "$verifier" ]]; then
-    echo 'Brak niezależnego weryfikatora.' >&2
+    echo 'Brak niezależnego weryfikatora.' > "$attempt/verification.stderr"
+    : > "$attempt/verification.json"
     verification_result=2
-elif ! bash "$verifier" "$bundle" > "$attempt/verification.json"; then
-    verification_result=2
+elif bash "$verifier" "$bundle" > "$attempt/verification.json" 2> "$attempt/verification.stderr"; then
+    verification_result=0
+else
+    verification_result=$?
+fi
+printf '%s\n' "$verification_result" > "$attempt/verification.exit"
+if ((verification_result == 0)); then
+    run_helper handoff "$attempt"
 fi
 if ((verification_result != 0)); then
     run_helper reject "$attempt"
@@ -92,5 +99,6 @@ finished=1
 cat -- "$bundle/SUMMARY.tsv"
 echo "BUNDLE=$bundle"
 echo "Wynik weryfikacji: $attempt/verification.json"
+echo "Materiał przekazania: $attempt/HANDOFF.json oraz oryginalne verification.json/.stderr/.exit i bundle/"
 echo 'Przygotowanie pakietu nie stanowi autoryzacji wykonania.'
 exit "$verification_result"

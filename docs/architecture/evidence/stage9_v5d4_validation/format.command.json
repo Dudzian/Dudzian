@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/workspace/work/v5d4-quality/bin/python",
+    "-m",
+    "pre_commit",
+    "run",
+    "ruff-format",
+    "--all-files"
+  ],
+  "cwd": "/workspace/work/v5d4",
+  "exit": 0,
+  "seconds": 0.265
+}

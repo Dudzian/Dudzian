@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/workspace/work/v5d4-security/bin/semgrep",
+    "scan",
+    "--config",
+    ".semgrep/cryptohunter.yml",
+    "--metrics=off",
+    "--disable-version-check",
+    "--error",
+    "--json",
+    "--output",
+    "/workspace/work/v5d4/docs/architecture/evidence/stage9_v5d4_validation/semgrep.json",
+    "bot_core",
+    "core",
+    "deployment",
+    "scripts"
+  ],
+  "cwd": "/workspace/work/v5d4",
+  "exit": 0,
+  "seconds": 27.08
+}
