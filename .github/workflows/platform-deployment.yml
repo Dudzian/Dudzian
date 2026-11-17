@@ -411,7 +411,7 @@ jobs:
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
     steps:
       - uses: actions/checkout@v7
-        with: {ref: "${{ github.sha }}", persist-credentials: false}
+        with: {ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false}
       - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - name: Przygotuj izolowane narzędzia walidacji statycznej
@@ -425,6 +425,7 @@ jobs:
           bash -n scripts/stage9_v5d3_prepare_release.sh scripts/stage9_v5d3_verify_bundle.sh
       - name: Sprawdź przygotowanie offline i regresje V5d2–V5d3
         run: |
+          git cat-file -e '17e03a9cb42a84302401415f96ac90e756926915^{commit}'
           python -m pytest -q --confcutdir=tests/deployment \
             tests/deployment/test_stage9_v5d4_*.py \
             tests/deployment/test_stage9_v5d3_release.py \
@@ -435,6 +436,7 @@ jobs:
             --junitxml=stage9-v5d4-static.xml
           python -m pytest -q --confcutdir=tests/scripts \
             tests/scripts/test_stage9_operator_v5d2_inventory.py \
+            tests/scripts/test_stage9_v5d4_ci_history.py \
             --junitxml=stage9-v5d4-v5d2-regression.xml
       - name: Zachowaj wyniki statycznych testów przygotowania
         if: always()

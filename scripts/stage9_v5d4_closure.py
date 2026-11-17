@@ -234,13 +234,27 @@ def initializers(repository: Path, relative: str) -> list[str]:
 
 def expression_name(node: ast.AST, aliases: dict[str, str]) -> str:
     if isinstance(node, ast.Name):
-        return aliases.get(node.id, node.id)
+        if node.id in aliases:
+            return aliases[node.id]
+        if node.id in {"exec", "eval", "compile", "__import__", "getattr", "__builtins__"}:
+            return node.id
+        return "<unresolved>." + node.id
     if isinstance(node, ast.Attribute):
-        return expression_name(node.value, aliases) + "." + node.attr
-    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
-        if isinstance(node.slice.value, str):
-            return expression_name(node.value, aliases) + "." + node.slice.value
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+        qualified = expression_name(node.value, aliases) + "." + node.attr
+        return aliases.get("@" + qualified, qualified)
+    if isinstance(node, ast.Subscript):
+        base = expression_name(node.value, aliases)
+        if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            return base + "." + node.slice.value
+        if base.split(".")[0] in {"builtins", "__builtins__", "importlib", "ctypes", "runpy"}:
+            return base + ".<dynamic>"
+    if isinstance(node, ast.NamedExpr):
+        return expression_name(node.value, aliases)
+    if isinstance(node, ast.Call) and expression_name(node.func, aliases) in {
+        "getattr",
+        "builtins.getattr",
+        "__builtins__.getattr",
+    }:
         if len(node.args) >= 2:
             base = expression_name(node.args[0], aliases)
             attr = node.args[1]
@@ -259,8 +273,65 @@ class SourceVisitor(ast.NodeVisitor):
         )
         self.deferred = 0
         self.aliases: dict[str, str] = {}
+        self.class_outer_aliases: dict[str, str] | None = None
+        self.scope_rebound_names: set[str] = set()
         self.imports: list[dict[str, Any]] = []
         self.dynamic: list[dict[str, Any]] = []
+
+    @staticmethod
+    def rebound_names(node: ast.AST) -> set[str]:
+        class Bindings(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.counts: dict[str, int] = {}
+
+            def add(self, name: str) -> None:
+                self.counts[name] = self.counts.get(name, 0) + 1
+
+            def visit_Name(self, item: ast.Name) -> None:
+                if isinstance(item.ctx, (ast.Store, ast.Del)):
+                    self.add(item.id)
+
+            def visit_Import(self, item: ast.Import) -> None:
+                for alias in item.names:
+                    self.add(alias.asname or alias.name.split(".")[0])
+
+            def visit_ImportFrom(self, item: ast.ImportFrom) -> None:
+                for alias in item.names:
+                    self.add(alias.asname or alias.name)
+
+            def visit_FunctionDef(self, item: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+                self.add(item.name)
+
+            def visit_AsyncFunctionDef(self, item: ast.AsyncFunctionDef) -> None:
+                self.visit_FunctionDef(item)
+
+            def visit_ClassDef(self, item: ast.ClassDef) -> None:
+                self.add(item.name)
+
+            def visit_Attribute(self, item: ast.Attribute) -> None:
+                if isinstance(item.ctx, (ast.Store, ast.Del)):
+                    value: ast.AST = item.value
+                    while isinstance(value, ast.Attribute):
+                        value = value.value
+                    if isinstance(value, ast.Name):
+                        self.add(value.id)
+
+        bindings = Bindings()
+        bindings.visit(node)
+        return {name for name, count in bindings.counts.items() if count > 1}
+
+    def visit_Module(self, node: ast.Module) -> None:
+        self.scope_rebound_names = self.rebound_names(node)
+        self.generic_visit(node)
+
+    def deferred_aliases(self) -> dict[str, str]:
+        outer = self.class_outer_aliases if self.class_outer_aliases is not None else self.aliases
+        result = dict(outer)
+        for name in self.scope_rebound_names:
+            previous = result.get(name, name)
+            if previous == "re" or previous.rsplit(".", 1)[-1] in MECHANISMS:
+                result[name] = "<unresolved>." + name + "." + previous.rsplit(".", 1)[-1]
+        return result
 
     def edge(self, node: ast.AST, module: str, members: list[str]) -> None:
         self.imports.append(
@@ -294,28 +365,259 @@ class SourceVisitor(ast.NodeVisitor):
         self.edge(node, module, [alias.name for alias in node.names])
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        # RHS jest obliczane przed zastąpieniem poprzedniej wartości symbolu.
+        self.visit(node.value)
         name = expression_name(node.value, self.aliases)
         for target in node.targets:
-            if isinstance(target, ast.Name) and name != "<expression>":
-                self.aliases[target.id] = name
-        self.generic_visit(node)
+            self.bind(target, name)
+
+    def bind(self, target: ast.AST, name: str = "<expression>") -> None:
+        def binding(symbol: str, previous: str) -> str:
+            if name == "<expression>" or name.startswith("<unresolved>."):
+                leaf = previous.rsplit(".", 1)[-1]
+                sensitive = symbol if symbol in MECHANISMS else leaf
+                return (
+                    "<unresolved>." + symbol + ("." + sensitive if sensitive in MECHANISMS else "")
+                )
+            return name
+
+        if isinstance(target, ast.Name):
+            self.aliases[target.id] = binding(target.id, self.aliases.get(target.id, target.id))
+        elif isinstance(target, ast.Attribute):
+            qualified = expression_name(target.value, self.aliases) + "." + target.attr
+            self.aliases["@" + qualified] = binding(qualified, qualified)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                self.bind(item)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.visit(node.annotation)
+        if node.value is not None:
+            self.visit(node.value)
+            self.bind(node.target, expression_name(node.value, self.aliases))
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        self.visit(node.value)
+        self.bind(node.target)
+
+    def visit_Delete(self, node: ast.Delete) -> None:
+        for target in node.targets:
+            self.bind(target)
+
+    def merge_aliases(self, states: list[dict[str, str]]) -> None:
+        merged: dict[str, str] = {}
+        for name in set().union(*(state.keys() for state in states)):
+            values = {state.get(name, "<unresolved>." + name) for state in states}
+            if len(values) == 1:
+                merged[name] = values.pop()
+            else:
+                sensitive = sorted(
+                    value.rsplit(".", 1)[-1]
+                    for value in values
+                    if value.rsplit(".", 1)[-1] in MECHANISMS
+                )
+                merged[name] = "<unresolved>." + name + ("." + sensitive[0] if sensitive else "")
+        self.aliases = merged
+
+    def branch(self, statements: list[ast.stmt], initial: dict[str, str]) -> dict[str, str]:
+        self.aliases = dict(initial)
+        for statement in statements:
+            self.visit(statement)
+        return dict(self.aliases)
+
+    def visit_If(self, node: ast.If) -> None:
+        self.visit(node.test)
+        initial = dict(self.aliases)
+        self.merge_aliases([self.branch(node.body, initial), self.branch(node.orelse, initial)])
+
+    def visit_IfExp(self, node: ast.IfExp) -> None:
+        self.visit(node.test)
+        initial = dict(self.aliases)
+        self.visit(node.body)
+        body = dict(self.aliases)
+        self.aliases = initial
+        self.visit(node.orelse)
+        self.merge_aliases([body, dict(self.aliases)])
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> None:
+        for index, value in enumerate(node.values):
+            initial = dict(self.aliases)
+            self.visit(value)
+            if index:
+                self.merge_aliases([initial, dict(self.aliases)])
+
+    def visit_While(self, node: ast.While) -> None:
+        self.visit(node.test)
+        initial = dict(self.aliases)
+        body = self.branch(node.body, initial)
+        self.merge_aliases([initial, body, self.branch(node.orelse, body)])
+
+    def visit_Try(self, node: ast.Try | ast.TryStar) -> None:
+        initial = dict(self.aliases)
+        body = self.branch(node.body, initial)
+        states = [initial, body, self.branch(node.orelse, body)]
+        for handler in node.handlers:
+            self.aliases = dict(initial)
+            self.visit(handler)
+            states.append(dict(self.aliases))
+        self.merge_aliases(states)
+        for statement in node.finalbody:
+            self.visit(statement)
+
+    visit_TryStar = visit_Try
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.visit(node.value)
+        self.bind(node.target, expression_name(node.value, self.aliases))
+
+    def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+        self.visit(node.iter)
+        initial = dict(self.aliases)
+        self.bind(node.target)
+        for statement in [*node.body, *node.orelse]:
+            self.visit(statement)
+        self.merge_aliases([initial, dict(self.aliases)])
+
+    visit_AsyncFor = visit_For
+
+    def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self.bind(item.optional_vars)
+        for statement in node.body:
+            self.visit(statement)
+
+    visit_AsyncWith = visit_With
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.type is not None:
+            self.visit(node.type)
+        if node.name is not None:
+            self.bind(ast.Name(id=node.name, ctx=ast.Store()))
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for value in [*node.args.defaults, *node.args.kw_defaults]:
+            if value is not None:
+                self.visit(value)
+        outer, class_outer = self.aliases, self.class_outer_aliases
+        self.aliases = self.deferred_aliases()
+        self.class_outer_aliases = None
+        arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        arguments += [argument for argument in (node.args.vararg, node.args.kwarg) if argument]
+        for argument in arguments:
+            self.bind(ast.Name(id=argument.arg, ctx=ast.Store()))
+        self.deferred += 1
+        try:
+            self.visit(node.body)
+        finally:
+            self.deferred -= 1
+            self.aliases, self.class_outer_aliases = outer, class_outer
 
     def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         # Dekoratory, wartości domyślne i adnotacje mogą działać przy imporcie.
         for value in [*node.decorator_list, *node.args.defaults, *node.args.kw_defaults]:
             if value is not None:
                 self.visit(value)
-        for argument in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]:
+        type_bindings = self.type_parameters(node)
+        annotation_outer = self.aliases
+        self.aliases = {**annotation_outer, **type_bindings}
+        annotated_arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        annotated_arguments += [
+            argument for argument in (node.args.vararg, node.args.kwarg) if argument
+        ]
+        for argument in annotated_arguments:
             if argument.annotation is not None:
                 self.visit(argument.annotation)
         if node.returns is not None:
             self.visit(node.returns)
+        self.aliases = annotation_outer
+        outer, class_outer = self.aliases, self.class_outer_aliases
+        self.aliases = self.deferred_aliases()
+        self.aliases.update(type_bindings)
+        self.class_outer_aliases = None
+        outer_rebound = self.scope_rebound_names
+        self.scope_rebound_names = outer_rebound | self.rebound_names(
+            ast.Module(body=node.body, type_ignores=[])
+        )
+        arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        arguments += [argument for argument in (node.args.vararg, node.args.kwarg) if argument]
+        for argument in arguments:
+            self.bind(ast.Name(id=argument.arg, ctx=ast.Store()))
         self.deferred += 1
-        for statement in node.body:
-            self.visit(statement)
-        self.deferred -= 1
+        try:
+            for statement in node.body:
+                self.visit(statement)
+        finally:
+            self.deferred -= 1
+            self.aliases, self.class_outer_aliases = outer, class_outer
+            self.scope_rebound_names = outer_rebound
+        self.aliases[node.name] = "<unresolved>." + node.name
 
     visit_AsyncFunctionDef = visit_FunctionDef
+
+    def type_parameters(self, node: ast.AST) -> dict[str, str]:
+        # getattr zachowuje działanie narzędzia na Pythonie 3.11. Analiza AST
+        # obejmuje leniwe bounds CPython 3.12 bez uruchamiania ich kodu.
+        parameters: list[ast.AST] = getattr(node, "type_params", [])
+        outer = self.aliases
+        self.aliases = dict(outer)
+        names = [str(getattr(parameter, "name")) for parameter in parameters]
+        try:
+            for name in names:
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+            for parameter in parameters:
+                self.visit(parameter)
+            return {name: self.aliases[name] for name in names}
+        finally:
+            self.aliases = outer
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for value in node.decorator_list:
+            self.visit(value)
+        type_bindings = self.type_parameters(node)
+        outer, class_outer = self.aliases, self.class_outer_aliases
+        self.aliases = {**outer, **type_bindings}
+        for value in node.bases:
+            self.visit(value)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+        enclosing = class_outer if class_outer is not None else outer
+        self.class_outer_aliases = {**enclosing, **type_bindings}
+        self.aliases = dict(self.class_outer_aliases)
+        try:
+            for statement in node.body:
+                self.visit(statement)
+        finally:
+            self.aliases, self.class_outer_aliases = outer, class_outer
+        self.aliases[node.name] = "<unresolved>." + node.name
+
+    def visit_comprehension_scope(
+        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+    ) -> None:
+        outer, class_outer = self.aliases, self.class_outer_aliases
+        self.aliases = dict(class_outer if class_outer is not None else outer)
+        self.class_outer_aliases = None
+        try:
+            for generator in node.generators:
+                self.visit(generator.iter)
+                self.bind(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+        finally:
+            self.aliases, self.class_outer_aliases = outer, class_outer
+
+    visit_ListComp = visit_comprehension_scope
+    visit_SetComp = visit_comprehension_scope
+    visit_DictComp = visit_comprehension_scope
+    visit_GeneratorExp = visit_comprehension_scope
 
     def visit_Call(self, node: ast.Call) -> None:
         name = expression_name(node.func, self.aliases)
@@ -328,7 +630,9 @@ class SourceVisitor(ast.NodeVisitor):
         )
         mechanism = leaf in MECHANISMS
         if leaf == "compile":
-            mechanism = name in {"compile", "builtins.compile", "__builtins__.compile"}
+            # Wyjątek ma znane pochodzenie symbolu. Nieznane obj.compile może
+            # wskazywać builtin; sam suffix compile nie uzasadnia pominięcia.
+            mechanism = name != "re.compile"
         if mechanism or reflective:
             target: str | None = None
             if leaf in {"__import__", "import_module"} and node.args:

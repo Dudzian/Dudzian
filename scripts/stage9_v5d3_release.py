@@ -296,6 +296,384 @@ def local_imports(node: ast.AST, module: str, paths: dict[str, str]) -> set[str]
     return result
 
 
+def compile_calls(tree: ast.AST) -> set[ast.Call]:
+    """Wyłącza wyłącznie re.compile ustalone przez jawne importy i aliasy.
+
+    Nieznane pochodzenie, przesłonięcie lub refleksja nie stanowią dowodu,
+    że kompilowane jest wyrażenie regularne. Analiza nie wykonuje źródeł.
+    """
+
+    class CompileVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.aliases: dict[str, str] = {}
+            self.result: set[ast.Call] = set()
+            self.class_outer: dict[str, str] | None = None
+            self.scope_statements: list[ast.stmt] = []
+
+        def name(self, node: ast.AST) -> str:
+            if isinstance(node, ast.Name):
+                return self.aliases.get(
+                    node.id, node.id if node.id == "compile" else f"?.{node.id}"
+                )
+            if isinstance(node, ast.Attribute):
+                return self.name(node.value) + "." + node.attr
+            if isinstance(node, ast.Subscript):
+                if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                    base = self.name(node.value).removesuffix(".__dict__")
+                    return base + "." + node.slice.value
+                base = self.name(node.value).removesuffix(".__dict__")
+                if base in {"builtins", "?.__builtins__"} or self.name(node.value).endswith(
+                    ".__dict__"
+                ):
+                    return "?.compile"
+            if isinstance(node, ast.Call) and self.name(node.func) in {
+                "?.getattr",
+                "getattr",
+                "builtins.getattr",
+                "?.__builtins__.getattr",
+            }:
+                if len(node.args) >= 2:
+                    attribute = node.args[1]
+                    if isinstance(attribute, ast.Constant) and isinstance(attribute.value, str):
+                        return self.name(node.args[0]) + "." + attribute.value
+                    return "?.compile"
+            return "?"
+
+        def compiler(self, node: ast.AST) -> bool:
+            name = self.name(node)
+            if name == "re.compile":
+                return False
+            if name == "compile" or name.endswith(".compile"):
+                return True
+            return any(self.compiler(child) for child in ast.iter_child_nodes(node))
+
+        def bind(self, target: ast.AST, name: str = "?") -> None:
+            if isinstance(target, ast.Name):
+                previous = self.aliases.get(target.id, "")
+                if name.startswith("?") and (
+                    previous.endswith(".compile") or previous == "compile" or target.id == "compile"
+                ):
+                    name = "?.compile"
+                self.aliases[target.id] = name
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                for item in target.elts:
+                    self.bind(item)
+            elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+                # Przypisanie re.compile = ... odbiera dowód znanego pochodzenia.
+                if target.attr == "compile":
+                    self.bind(target.value)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            for alias in node.names:
+                self.aliases[alias.asname or alias.name.split(".")[0]] = (
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            for alias in node.names:
+                self.aliases[alias.asname or alias.name] = (
+                    ((node.module or "?") if not node.level else "?.relative") + "." + alias.name
+                )
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            self.visit(node.value)
+            name = self.name(node.value)
+            for target in node.targets:
+                self.bind(target, name)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            self.visit(node.annotation)
+            if node.value is not None:
+                self.visit(node.value)
+            self.bind(node.target, self.name(node.value) if node.value is not None else "?")
+
+        def visit_AugAssign(self, node: ast.AugAssign) -> None:
+            self.visit(node.value)
+            self.bind(node.target)
+
+        def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+            self.visit(node.value)
+            self.bind(node.target, self.name(node.value))
+
+        def local_bindings(self, nodes: list[ast.stmt]) -> set[str]:
+            names: set[str] = set()
+            pending: list[ast.AST] = list(nodes)
+            while pending:
+                node = pending.pop()
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names.add(node.name)
+                    continue
+                if isinstance(node, ast.Lambda):
+                    continue
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                    names.add(node.id)
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.ctx, ast.Store)
+                    and node.attr == "compile"
+                    and isinstance(node.value, ast.Name)
+                ):
+                    names.add(node.value.id)
+                if isinstance(node, ast.Import):
+                    names.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+                if isinstance(node, ast.ImportFrom):
+                    names.update(alias.asname or alias.name for alias in node.names)
+                if isinstance(node, ast.ExceptHandler) and node.name:
+                    names.add(node.name)
+                pending.extend(ast.iter_child_nodes(node))
+            return names
+
+        def visit_Module(self, node: ast.Module) -> None:
+            self.scope_statements = node.body
+            for statement in node.body:
+                self.visit(statement)
+
+        def rebound_names(self) -> set[str]:
+            seen: set[str] = set()
+            repeated: set[str] = set()
+            for statement in self.scope_statements:
+                names = self.local_bindings([statement])
+                repeated.update(seen & names)
+                seen.update(names)
+            return repeated
+
+        def visit_type_parameters(self, node: ast.AST) -> set[str]:
+            # Pole istnieje od 3.12; narzędzia przygotowania wspierają także 3.11.
+            parameters: list[ast.AST] = list(getattr(node, "type_params", ()))
+            if not parameters:
+                return set()
+            names = {getattr(parameter, "name") for parameter in parameters}
+            previous = self.aliases.copy()
+            # Bounds są odroczone i mogą być odczytane po ponownym związaniu aliasu.
+            for name in self.rebound_names():
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+            for name in names:
+                self.aliases[name] = "?." + name
+            for parameter in parameters:
+                self.visit(parameter)
+            self.aliases = previous
+            return names
+
+        def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            for expression in [
+                *node.decorator_list,
+                *node.args.defaults,
+                *node.args.kw_defaults,
+            ]:
+                if expression is not None:
+                    self.visit(expression)
+            arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            arguments += [
+                argument for argument in (node.args.vararg, node.args.kwarg) if argument is not None
+            ]
+            type_names = self.visit_type_parameters(node)
+            annotation_aliases = self.aliases.copy()
+            for name in type_names:
+                self.aliases[name] = "?." + name
+            for annotation in [*(argument.annotation for argument in arguments), node.returns]:
+                if annotation is not None:
+                    self.visit(annotation)
+            self.aliases = annotation_aliases
+            self.aliases[node.name] = "?"
+            previous = self.aliases.copy()
+            previous_class = self.class_outer
+            if self.class_outer is not None:
+                self.aliases = self.class_outer.copy()
+            self.class_outer = None
+            # Ciało funkcji może działać po późniejszym przypisaniu w outer scope.
+            # Zmienny alias traci wtedy dowód re.compile.
+            for name in self.rebound_names():
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+            previous_statements = self.scope_statements
+            self.scope_statements = node.body
+            for name in self.local_bindings(node.body):
+                self.aliases[name] = "?." + name
+            for name in type_names:
+                self.aliases[name] = "?." + name
+            for argument in arguments:
+                self.aliases[argument.arg] = "?." + argument.arg
+            for statement in node.body:
+                self.visit(statement)
+            self.aliases = previous
+            self.class_outer = previous_class
+            self.scope_statements = previous_statements
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            for expression in [*node.args.defaults, *node.args.kw_defaults]:
+                if expression is not None:
+                    self.visit(expression)
+            previous = self.aliases.copy()
+            previous_class = self.class_outer
+            if self.class_outer is not None:
+                self.aliases = self.class_outer.copy()
+            self.class_outer = None
+            for argument in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]:
+                self.aliases[argument.arg] = "?." + argument.arg
+            for variadic in (node.args.vararg, node.args.kwarg):
+                if variadic is not None:
+                    self.aliases[variadic.arg] = "?." + variadic.arg
+            self.visit(node.body)
+            self.aliases = previous
+            self.class_outer = previous_class
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            for expression in node.decorator_list:
+                self.visit(expression)
+            type_names = self.visit_type_parameters(node)
+            base_aliases = self.aliases.copy()
+            for name in type_names:
+                self.aliases[name] = "?." + name
+            for expression in [*node.bases, *(keyword.value for keyword in node.keywords)]:
+                self.visit(expression)
+            self.aliases = base_aliases
+            previous = self.aliases.copy()
+            previous_class = self.class_outer
+            self.class_outer = (
+                previous_class.copy() if previous_class is not None else previous.copy()
+            )
+            for name in type_names:
+                self.class_outer[name] = "?." + name
+            self.aliases = self.class_outer.copy()
+            for statement in node.body:
+                self.visit(statement)
+            self.aliases = previous
+            self.class_outer = previous_class
+            self.aliases[node.name] = "?"
+
+        def visit_Delete(self, node: ast.Delete) -> None:
+            for target in node.targets:
+                self.bind(target)
+
+        def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
+            for item in node.items:
+                self.visit(item.context_expr)
+                if item.optional_vars is not None:
+                    self.bind(item.optional_vars)
+            for statement in node.body:
+                self.visit(statement)
+
+        visit_AsyncWith = visit_With
+
+        def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+            if node.type is not None:
+                self.visit(node.type)
+            if node.name:
+                self.bind(ast.Name(id=node.name, ctx=ast.Store()))
+            for statement in node.body:
+                self.visit(statement)
+            if node.name:
+                self.bind(ast.Name(id=node.name, ctx=ast.Store()))
+
+        def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+            self.visit(node.iter)
+            self.bind(node.target)
+            for name in self.local_bindings(node.body):
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+            for statement in [*node.body, *node.orelse]:
+                self.visit(statement)
+            for name in self.local_bindings(node.body):
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+
+        visit_AsyncFor = visit_For
+
+        def visit_If(self, node: ast.If) -> None:
+            self.visit(node.test)
+            previous = self.aliases.copy()
+            names = self.local_bindings([*node.body, *node.orelse])
+            for branch in (node.body, node.orelse):
+                self.aliases = previous.copy()
+                for name in names:
+                    self.bind(ast.Name(id=name, ctx=ast.Store()))
+                for statement in branch:
+                    self.visit(statement)
+            for name in names:
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+
+        def visit_While(self, node: ast.While) -> None:
+            self.visit(node.test)
+            names = self.local_bindings([*node.body, *node.orelse])
+            for name in names:
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+            for statement in [*node.body, *node.orelse]:
+                self.visit(statement)
+            for name in names:
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+
+        def visit_Try(self, node: ast.Try | ast.TryStar) -> None:
+            previous = self.aliases.copy()
+            names = self.local_bindings([node])
+            branches: list[list[ast.AST]] = [
+                list(node.body),
+                list(node.handlers),
+                list(node.orelse),
+                list(node.finalbody),
+            ]
+            for branch in branches:
+                self.aliases = previous.copy()
+                for name in names:
+                    self.bind(ast.Name(id=name, ctx=ast.Store()))
+                for statement in branch:
+                    self.visit(statement)
+            for name in names:
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+
+        visit_TryStar = visit_Try
+
+        def visit_BoolOp(self, node: ast.BoolOp) -> None:
+            self.generic_visit(node)
+            for name in self.local_bindings([ast.Expr(value=node)]):
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+
+        def visit_IfExp(self, node: ast.IfExp) -> None:
+            self.visit(node.test)
+            previous = self.aliases.copy()
+            names = self.local_bindings([ast.Expr(value=node.body), ast.Expr(value=node.orelse)])
+            for branch in (node.body, node.orelse):
+                self.aliases = previous.copy()
+                for name in names:
+                    self.bind(ast.Name(id=name, ctx=ast.Store()))
+                self.visit(branch)
+            for name in names:
+                self.bind(ast.Name(id=name, ctx=ast.Store()))
+
+        def visit_comprehension_expression(
+            self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+        ) -> None:
+            previous = self.aliases.copy()
+            previous_class = self.class_outer
+            for index, generator in enumerate(node.generators):
+                self.visit(generator.iter)
+                if index == 0 and self.class_outer is not None:
+                    self.aliases = self.class_outer.copy()
+                    self.class_outer = None
+                self.bind(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+            self.aliases = previous
+            self.class_outer = previous_class
+
+        visit_ListComp = visit_comprehension_expression
+        visit_SetComp = visit_comprehension_expression
+        visit_DictComp = visit_comprehension_expression
+        visit_GeneratorExp = visit_comprehension_expression
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if self.compiler(node.func):
+                self.result.add(node)
+            self.generic_visit(node)
+
+    visitor = CompileVisitor()
+    visitor.visit(tree)
+    return visitor.result
+
+
 def dynamic_calls(tree: ast.AST) -> list[ast.Call]:
     """Rozpoznaje mechanizmy po nazwie AST, bez dopasowania podciągu execute.
 
@@ -307,7 +685,6 @@ def dynamic_calls(tree: ast.AST) -> list[ast.Call]:
         "import_module",
         "exec",
         "eval",
-        "compile",
         "run_path",
         "run_module",
         "CDLL",
@@ -338,10 +715,13 @@ def dynamic_calls(tree: ast.AST) -> list[ast.Call]:
                     if isinstance(value, ast.Name)
                     else (value.attr if isinstance(value, ast.Attribute) else "")
                 )
-                if name in aliases:
+                if (isinstance(value, ast.Name) and name in aliases) or (
+                    isinstance(value, ast.Attribute) and name in mechanisms
+                ):
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                     aliases.update(target.id for target in targets if isinstance(target, ast.Name))
         changed = aliases != previous
+    compilers = compile_calls(tree)
     result = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -351,13 +731,15 @@ def dynamic_calls(tree: ast.AST) -> list[ast.Call]:
                 part.id
                 if isinstance(part, ast.Name)
                 else part.attr
-                if isinstance(part, ast.Attribute)
+                if isinstance(part, ast.Attribute) and part.attr in mechanisms
                 else part.value
+                if isinstance(part, ast.Constant)
+                else ""
                 for part in ast.walk(node.func)
                 if isinstance(part, (ast.Name, ast.Attribute))
                 or (isinstance(part, ast.Constant) and isinstance(part.value, str))
             }
-            if names & aliases:
+            if names & aliases or node in compilers:
                 result.append(node)
     return result
 

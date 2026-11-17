@@ -72,6 +72,144 @@ def test_false_dynamic_imports(source: str) -> None:
 @pytest.mark.parametrize(
     "source",
     [
+        "import re as regex\nregex.compile('pattern')\n",
+        "from re import compile\ncompile('pattern')\n",
+        "from re import compile as c\nc('pattern')\n",
+        "import re\nc = re.compile\nother = c\nother('pattern')\n",
+        "import re as regex\nc = regex.compile\nc('pattern')\n",
+        "import re\ncompile = re.compile\ncompile('pattern')\n",
+        "import re\nc: object = re.compile\nc('pattern')\n",
+        "import re\ngetattr(re, 'compile')('pattern')\n",
+        "import re\nfrom builtins import getattr as get\nget(re, 'compile')('pattern')\n",
+        "import re\ndef f():\n import re as regex\n regex.compile('pattern')\nre.compile('pattern')\n",
+        "import re\nclass Regex:\n from re import compile as c\n c('pattern')\nre.compile('pattern')\n",
+        "import re\n[re.compile('pattern') for item in things]\n",
+    ],
+)
+def test_proven_re_compile_aliases_are_not_dynamic(tmp_path: Path, source: str) -> None:
+    result = analyze(tmp_path, source)
+    assert result["dynamic_mechanisms"] == []
+    assert result["static_graph_closed"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "compile(source, 'module', 'exec')\n",
+        "import builtins\nbuiltins.compile(source, 'module', 'exec')\n",
+        "import builtins as b\nb.compile(source, 'module', 'exec')\n",
+        "from builtins import compile as c\nc(source, 'module', 'exec')\n",
+        "c = compile\nother = c\nother(source, 'module', 'exec')\n",
+        "import builtins as b\nc = b.compile\nc(source, 'module', 'exec')\n",
+        "__builtins__['compile'](source, 'module', 'exec')\n",
+        "import builtins\ngetattr(builtins, 'compile')(source, 'module', 'exec')\n",
+        "import builtins as b\ngetattr(b, mechanism)(source)\n",
+        "__builtins__[mechanism](source)\n",
+        "import builtins as b\nb.__dict__[mechanism](source)\n",
+        "unknown.compile(source, 'module', 'exec')\n",
+        "re.compile(source, 'module', 'exec')\n",
+        "import re\nre = unknown\nre.compile(source, 'module', 'exec')\n",
+        "import re\nre = factory()\nre.compile(source, 'module', 'exec')\n",
+        "import re\nc = re.compile\nc = unknown\nc(source, 'module', 'exec')\n",
+        "from re import compile\ncompile = unknown\ncompile(source, 'module', 'exec')\n",
+        "import re\nre.compile = exec\nre.compile(source)\n",
+        "from re import compile\ndef f(compile):\n compile(source, 'module', 'exec')\n",
+        "import re\nf = lambda re: re.compile(source, 'module', 'exec')\n",
+        "from re import compile\nfor compile in compilers:\n compile(source, 'module', 'exec')\n",
+        "from re import compile\nwith context as compile:\n compile(source, 'module', 'exec')\n",
+        "from re import compile\n[compile(source, 'module', 'exec') for compile in compilers]\n",
+        "from re import compile as c\ntry:\n pass\nexcept Exception as c:\n c(source)\n",
+        "def f():\n from re import compile\ncompile(source, 'module', 'exec')\n",
+        "class Regex:\n from re import compile\ncompile(source, 'module', 'exec')\n",
+        "class Outer:\n from re import compile\n class Inner:\n  compile(source, 'module', 'exec')\n",
+        "class Outer:\n from re import compile\n class Inner:\n  def f():\n   compile(source, 'module', 'exec')\n",
+        "from re import compile as c\ndef f():\n c(source, 'module', 'exec')\nfrom builtins import compile as c\nf()\n",
+        "def outer():\n from re import compile as c\n def inner():\n  c(source, 'module', 'exec')\n from builtins import compile as c\n inner()\n",
+        "if condition:\n from re import compile\ncompile(source, 'module', 'exec')\n",
+        "while condition:\n from re import compile\ncompile(source, 'module', 'exec')\n",
+        "if condition:\n compile = exec\nelse:\n from re import compile\ncompile(source)\n",
+        "try:\n raise Exception()\n from re import compile\nexcept Exception:\n pass\ncompile(source, 'module', 'exec')\n",
+        "import re\ncondition and (compile := re.compile)\ncompile(source, 'module', 'exec')\n",
+        "import re\ncompile = re.compile if condition else unknown\ncompile(source, 'module', 'exec')\n",
+    ],
+)
+def test_compile_and_unknown_rebindings_require_review(tmp_path: Path, source: str) -> None:
+    result = analyze(tmp_path, source)
+    assert result["unresolved_dynamic_mechanisms"]
+    assert not result["static_graph_closed"]
+
+
+def test_function_import_aliases_do_not_leak_into_module_scope() -> None:
+    visitor = closure.SourceVisitor("app/main.py")
+    visitor.visit(
+        ast.parse(
+            "import re\ndef f():\n import builtins as re\n re.compile(source, 'module', 'exec')\n"
+            "re.compile('pattern')\n"
+        )
+    )
+    assert [item["mechanism"] for item in visitor.dynamic] == ["builtins.compile"]
+    assert visitor.dynamic[0]["phase"] == "deferred"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(*args: compile(source, 'module', 'exec')): pass\n",
+        "import builtins\ndef f(**kwargs: builtins.compile(source, 'module', 'exec')): pass\n",
+    ],
+)
+def test_variadic_argument_annotations_require_dynamic_review(tmp_path: Path, source: str) -> None:
+    result = analyze(tmp_path, source)
+    assert result["unresolved_dynamic_mechanisms"]
+    assert not result["static_graph_closed"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="Wymagana składnia type_params CPython 3.12")
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f[T: compile(source, 'module', 'exec')](): pass\n",
+        "import builtins\ndef f[T: builtins.compile(source, 'module', 'exec')](): pass\n",
+        "import builtins as b\nclass C[T: b.compile(source, 'module', 'exec')]: pass\n",
+        "def f[T: exec(source)](): pass\n",
+        "class C[T: eval(source)]: pass\n",
+        "import importlib\ndef f[T: importlib.import_module(module)](): pass\n",
+        "import builtins\nclass C[T: getattr(builtins, mechanism)(source)]: pass\n",
+        "import re\ndef f[re: re.compile(source, 'module', 'exec')](): pass\n",
+        "from re import compile\ndef f[compile: compile(source, 'module', 'exec')](): pass\n",
+        "import re\nclass C[re]:\n def f():\n  re.compile(source, 'module', 'exec')\n",
+        "import re\ndef f[re](value: re.compile(source, 'module', 'exec')): pass\n",
+    ],
+)
+def test_cpython312_type_parameter_bounds_require_dynamic_review(
+    tmp_path: Path, source: str
+) -> None:
+    result = analyze(tmp_path, source)
+    assert result["unresolved_dynamic_mechanisms"]
+    assert not result["static_graph_closed"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="Wymagana składnia type_params CPython 3.12")
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import re\ndef f[T: re.compile('pattern')](): pass\nre.compile('pattern')\n",
+        "import re as regex\nclass C[T: regex.compile('pattern')]: pass\n",
+        "from re import compile as c\ndef f[T: c('pattern')](): pass\n",
+        "import re\ndef f[re](): pass\nre.compile('pattern')\n",
+    ],
+)
+def test_cpython312_type_parameters_preserve_proven_regex_and_outer_scope(
+    tmp_path: Path, source: str
+) -> None:
+    result = analyze(tmp_path, source)
+    assert result["dynamic_mechanisms"] == []
+    assert result["static_graph_closed"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
         "exec(value)\n",
         "eval(value)\n",
         "compile(value, 'x', 'exec')\n",
@@ -121,6 +259,13 @@ def test_real_preflight_graph_preserves_contract() -> None:
     assert result["preflight_dynamic_targets"] == ["libvirt", "zstandard"]
     assert len(result["sources"]) == 27
     assert "PySide6>=6.7,<6.11" in result["installation_contract"]["project_dependencies"]
+    assert {item["mechanism"] for item in result["dynamic_mechanisms"]} == {
+        "importlib.import_module"
+    }
+    assert all(
+        "re.compile" not in item["mechanism"] and "collector.execute" not in item["mechanism"]
+        for item in result["dynamic_mechanisms"]
+    )
 
 
 def test_cli_isolated_no_site_output(tmp_path: Path) -> None:

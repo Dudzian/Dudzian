@@ -1026,3 +1026,175 @@ def test_partial_previous_verification_receipts_are_refused_after_resealing(bund
     result, report = _verify(bundle)
     assert result.returncode == 2
     assert report["reason_code"] == "PREVIOUS_REPORT_INCOMPLETE"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import re\nre.compile('x')",
+        "import re as regex\nregex.compile('x')",
+        "from re import compile as regex_compile\nregex_compile('x')",
+        "import re\nregex = re\nregex_compile = regex.compile\nregex_compile('x')",
+        "import re\ncompile = re.compile\ncompile('x')",
+        "import re\nregex_compile = getattr(re, 'compile')\nregex_compile('x')",
+        "import re\nre.__dict__['compile']('x')",
+        "import re\nre.compile('compile').match('x')",
+        "def f():\n import re\n re.compile('x')",
+        "from re import compile\ndef f():\n compile('x')",
+        "class C:\n from re import compile\n compile('x')",
+        "from re import compile\nclass C:\n compile = unknown\n def f(self):\n  compile('x')",
+        "collector.execute(request)",
+    ],
+)
+def test_regex_compilation_has_a_proven_origin_and_is_not_dynamic(source: str) -> None:
+    import ast
+
+    assert not release.dynamic_calls(ast.parse(source))
+    assert not verifier.dynamic_calls(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "compile(source, 'name', 'exec')",
+        "import builtins\nbuiltins.compile(source, 'name', 'exec')",
+        "import builtins as b\nb.compile(source, 'name', 'exec')",
+        "from builtins import compile as compiler\ncompiler(source, 'name', 'exec')",
+        "compiler = compile\ncompiler(source, 'name', 'exec')",
+        "import builtins\ncompiler = builtins.compile\ncompiler(source, 'name', 'exec')",
+        "getattr(unknown, 'compile')(source)",
+        "getattr(unknown, name)(source)",
+        "from builtins import getattr as get\nget(unknown, name)(source)",
+        "from builtins import getattr as get\nget(unknown, 'compile')(source)",
+        "__builtins__['compile'](source)",
+        "__builtins__[name](source)",
+        "import builtins\nbuiltins.__dict__[name](source)",
+        "unknown.compile(source)",
+        "re.compile(source)",
+        "from .re import compile as compiler\ncompiler(source)",
+        "from re import compile\ncompile = unknown\ncompile(source)",
+        "import re\nre = unknown\nre.compile(source)",
+        "import re\ncompiler = re.compile\ncompiler = unknown\ncompiler(source)",
+        "from re import compile\ndef f(compile):\n compile(source)",
+        "import re\ndef f(re):\n re.compile(source)",
+        "def f():\n from re import compile\n compile('x')\ndef g():\n compile(source)",
+        "class C:\n from re import compile\n compile('x')\ncompile(source)",
+        "import builtins as re\nclass C:\n import re\n def f(self):\n  re.compile(source)",
+        "class Outer:\n from re import compile\n class Inner:\n  compile(source)",
+        "class Outer:\n from re import compile\n f = lambda: compile(source)",
+        "class Outer:\n from re import compile\n f = [compile(source) for x in things]",
+        "from re import compile\nfor compile in things:\n compile(source)",
+        "from re import compile\nwith context as compile:\n compile(source)",
+        "from re import compile\n[compile(source) for compile in things]",
+        "from re import compile\ntry:\n pass\nexcept Exception as compile:\n compile(source)",
+        "import re\nre.compile = unknown\nre.compile(source)",
+        "from re import compile\nif condition:\n compile = unknown\ncompile(source)",
+        "from re import compile\ndel compile\ncompile(source)",
+        "from re import compile as compiler\ndef f():\n compiler(source)\nfrom builtins import compile as compiler\nf()",
+    ],
+)
+def test_builtin_and_unresolved_compilers_remain_dynamic(source: str) -> None:
+    import ast
+
+    expected = [ast.unparse(node) for node in release.dynamic_calls(ast.parse(source))]
+    assert expected
+    assert [ast.unparse(node) for node in verifier.dynamic_calls(ast.parse(source))] == expected
+
+
+def test_generator_and_independent_verifier_keep_identical_dynamic_rules() -> None:
+    import ast
+
+    functions = []
+    for path in (
+        ROOT / "scripts/stage9_v5d3_release.py",
+        ROOT / "scripts/stage9_v5d3_verify_bundle.py",
+    ):
+        tree = ast.parse(path.read_text())
+        functions.append(
+            [
+                ast.dump(node)
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef)
+                and node.name in {"compile_calls", "dynamic_calls"}
+            ]
+        )
+    assert functions[0] == functions[1]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "while condition:\n from re import compile\ncompile(source)",
+        "try:\n raise Exception()\n from re import compile\nexcept Exception:\n pass\ncompile(source)",
+        "import re\ncondition and (compile := re.compile)\ncompile(source)",
+        "import re\n(compile := re.compile) if condition else None\ncompile(source)",
+    ],
+)
+def test_conditional_alias_binding_is_not_proof_of_regex_origin(source: str) -> None:
+    import ast
+
+    assert release.dynamic_calls(ast.parse(source))
+    assert verifier.dynamic_calls(ast.parse(source))
+
+
+def test_builtin_alias_does_not_change_unrelated_execute_attribute() -> None:
+    import ast
+
+    source = "execute = exec\ncollector.execute(request)\nexecute(source)"
+    assert [ast.unparse(node) for node in release.dynamic_calls(ast.parse(source))] == [
+        "execute(source)"
+    ]
+    assert [ast.unparse(node) for node in verifier.dynamic_calls(ast.parse(source))] == [
+        "execute(source)"
+    ]
+
+
+@pytest.mark.parametrize(
+    "signature",
+    [
+        "x: compile(source, 'file', 'exec')",
+        "x: compile(source, 'file', 'exec'), /",
+        "*, x: compile(source, 'file', 'exec')",
+        "*args: compile(source, 'file', 'exec')",
+        "**kwargs: compile(source, 'file', 'exec')",
+    ],
+)
+@pytest.mark.parametrize("kind", ["def", "async def"])
+def test_compile_is_detected_in_every_argument_annotation(signature: str, kind: str) -> None:
+    import ast
+
+    source = f"{kind} f({signature}):\n pass"
+    assert [ast.unparse(node) for node in release.dynamic_calls(ast.parse(source))] == [
+        "compile(source, 'file', 'exec')"
+    ]
+    assert [ast.unparse(node) for node in verifier.dynamic_calls(ast.parse(source))] == [
+        "compile(source, 'file', 'exec')"
+    ]
+
+
+def test_argument_annotation_uses_outer_import_before_parameter_shadowing() -> None:
+    import ast
+
+    source = "import re\ndef f(re: re.compile('x')):\n pass"
+    assert not release.dynamic_calls(ast.parse(source))
+    assert not verifier.dynamic_calls(ast.parse(source))
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12), reason="Parametry typów wymagają parsera CPython 3.12"
+)
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f[T: compile(source, 'file', 'exec')]():\n pass",
+        "async def f[T: compile(source, 'file', 'exec')]():\n pass",
+        "class C[T: compile(source, 'file', 'exec')]:\n pass",
+        "from re import compile\ndef f[compile](x: compile(source, 'file', 'exec')):\n pass",
+        "from re import compile as compiler\ndef f[T: compiler(source, 'file', 'exec')]():\n pass\nfrom builtins import compile as compiler",
+    ],
+)
+def test_compile_is_detected_in_function_and_class_type_parameters(source: str) -> None:
+    import ast
+
+    assert release.dynamic_calls(ast.parse(source))
+    assert verifier.dynamic_calls(ast.parse(source))
