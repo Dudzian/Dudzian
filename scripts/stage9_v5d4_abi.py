@@ -93,10 +93,14 @@ def _pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def read_json(path: Path) -> dict[str, Any]:
-    value = json.loads(read_bytes(path), object_pairs_hook=_pairs)
+def parse_json(raw: bytes) -> dict[str, Any]:
+    value = json.loads(raw, object_pairs_hook=_pairs)
     require(type(value) is dict, "JSON_OBJECT_REQUIRED")
     return cast(dict[str, Any], value)
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    return parse_json(read_bytes(path))
 
 
 @dataclass(frozen=True)
@@ -285,10 +289,15 @@ def _import_audit(
             require(not directory.is_symlink(), "SYMLINK_REJECTED")
         for path in root.rglob("*"):
             require(not path.is_symlink(), "SYMLINK_REJECTED")
-            if path.name in {"sitecustomize.py", "usercustomize.py"} or path.suffix in {
-                ".pth",
-                ".pyc",
-            }:
+            if (
+                any(
+                    part in {"sitecustomize", "usercustomize"}
+                    or part.startswith(("sitecustomize.", "usercustomize."))
+                    for part in path.relative_to(root).parts
+                )
+                or path.suffix in {".pth", ".pyc", ".pyo"}
+                or "__pycache__" in path.relative_to(root).parts
+            ):
                 raise Refusal("STARTUP_IMPORT_CONFIGURATION_REJECTED")
     imports = request["required_imports"]
     require(
@@ -543,11 +552,12 @@ def main() -> int:
         require(
             re.fullmatch(r"[a-f0-9]{64}", args.expectations_sha256) is not None, "SHA256_REJECTED"
         )
+        expectations_raw = read_bytes(args.expectations)
         require(
-            sha256(read_bytes(args.expectations)) == args.expectations_sha256,
+            sha256(expectations_raw) == args.expectations_sha256,
             "EXPECTATIONS_SHA256_MISMATCH",
         )
-        report = diagnose(read_json(args.request), read_json(args.expectations))
+        report = diagnose(read_json(args.request), parse_json(expectations_raw))
         status = 0
     except (
         Refusal,
