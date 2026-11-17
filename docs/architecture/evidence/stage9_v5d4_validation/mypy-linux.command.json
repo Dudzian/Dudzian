@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "/workspace/work/v5d4-quality/bin/python",
+    "-m",
+    "mypy",
+    "--cache-dir=/workspace/work/v5d4-final-mypy"
+  ],
+  "cwd": "/workspace/work/v5d4",
+  "exit": 0,
+  "seconds": 15.409
+}

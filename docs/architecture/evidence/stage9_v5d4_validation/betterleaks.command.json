@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/workspace/work/v5d4-betterleaks/betterleaks",
+    "dir",
+    "--baseline-path",
+    ".betterleaks-baseline.json",
+    "--redact=100",
+    "--no-banner",
+    "--no-color",
+    "--report-format",
+    "json",
+    "--report-path",
+    "/workspace/work/v5d4/docs/architecture/evidence/stage9_v5d4_validation/betterleaks.json",
+    "."
+  ],
+  "cwd": "/workspace/work/v5d4",
+  "exit": 0,
+  "seconds": 3.295
+}

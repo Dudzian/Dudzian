@@ -247,6 +247,72 @@ def read_tree(descriptor: int) -> dict[str, tuple[bytes, str]]:
     return result
 
 
+def dynamic_calls(tree: ast.AST) -> list[ast.Call]:
+    """Rozpoznaje mechanizmy po nazwie AST, bez dopasowania podciągu execute.
+
+    Alias nie stanowi dowodu wykonania; pozostaje wskazaniem do przeglądu.
+    Nierozstrzygalne przepływy danych wymagają osobnego przeglądu domknięcia.
+    """
+    mechanisms = {
+        "__import__",
+        "import_module",
+        "exec",
+        "eval",
+        "compile",
+        "run_path",
+        "run_module",
+        "CDLL",
+        "PyDLL",
+        "LoadLibrary",
+        "spec_from_file_location",
+        "spec_from_loader",
+        "dlopen",
+        "load_dynamic",
+        "module_from_spec",
+        "exec_module",
+        "load_module",
+    }
+    aliases = set(mechanisms)
+    # Proste aliasy importu i przypisania są domykane przed analizą wywołań.
+    changed = True
+    while changed:
+        previous = set(aliases)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name in aliases:
+                        aliases.add(alias.asname or alias.name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                value = node.value
+                name = (
+                    value.id
+                    if isinstance(value, ast.Name)
+                    else (value.attr if isinstance(value, ast.Attribute) else "")
+                )
+                if name in aliases:
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    aliases.update(target.id for target in targets if isinstance(target, ast.Name))
+        changed = aliases != previous
+    result = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            # Zachowujemy getattr(..., "exec") i słownikowe wyszukiwanie
+            # __builtins__["eval"], które wcześniejszy skan tekstowy widział.
+            names = {
+                part.id
+                if isinstance(part, ast.Name)
+                else part.attr
+                if isinstance(part, ast.Attribute)
+                else part.value
+                for part in ast.walk(node.func)
+                if isinstance(part, (ast.Name, ast.Attribute))
+                or (isinstance(part, ast.Constant) and isinstance(part.value, str))
+            }
+            if names & aliases:
+                result.append(node)
+    return result
+
+
 def check_source_closure(files: dict[str, tuple[bytes, str]]) -> int:
     pending = list(REQUIRED_SOURCES)
     visited: set[str] = set()
@@ -264,24 +330,15 @@ def check_source_closure(files: dict[str, tuple[bytes, str]]) -> int:
             initializer = "/".join(package[:count]) + "/__init__.py"
             if initializer != path:
                 pending.append(initializer)
+        for dynamic_node in dynamic_calls(tree):
+            dynamic_expected.append(
+                {
+                    "path": path,
+                    "line": dynamic_node.lineno,
+                    "expression": ast.unparse(dynamic_node)[:1000],
+                }
+            )
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                function = ast.unparse(node.func)
-                if any(
-                    token in function
-                    for token in (
-                        "import_module",
-                        "__import__",
-                        "exec",
-                        "eval",
-                        "run_path",
-                        "CDLL",
-                        "PyDLL",
-                    )
-                ):
-                    dynamic_expected.append(
-                        {"path": path, "line": node.lineno, "expression": ast.unparse(node)[:1000]}
-                    )
             modules: list[str] = []
             if isinstance(node, ast.Import):
                 modules = [alias.name for alias in node.names]
@@ -565,6 +622,8 @@ def check_secrets(path: str, data: bytes) -> None:
 def permitted_file(path: str) -> bool:
     return (
         path in REQUIRED_FILES | CONTROL_FILES
+        or path
+        in {f"logs/previous-verification.{suffix}" for suffix in ("stdout", "stderr", "exit")}
         or (path.startswith("sources/deployment/") and path.endswith(".py"))
         or (path.startswith("sources/scripts/") and path.endswith(".py"))
     )
@@ -576,7 +635,20 @@ def verify(path: str) -> dict[str, Any]:
         files = read_tree(descriptor)
     finally:
         os.close(descriptor)
+    return verify_files(files)
+
+
+def verify_files(files: dict[str, tuple[bytes, str]]) -> dict[str, Any]:
     require(CONTROL_FILES | REQUIRED_FILES <= set(files), "BUNDLE_INCOMPLETE")
+    previous = {f"logs/previous-verification.{suffix}" for suffix in ("stdout", "stderr", "exit")}
+    require(not (previous & files.keys()) or previous <= files.keys(), "PREVIOUS_REPORT_INCOMPLETE")
+    if previous <= files.keys():
+        require(files["logs/previous-verification.exit"][0] == b"0\n", "PREVIOUS_VERIFIER_FAILED")
+        previous_report = json_object(files["logs/previous-verification.stdout"][0])
+        require(
+            type(previous_report) is dict and previous_report.get("local_consistency") == "PASS",
+            "PREVIOUS_VERIFIER_FAILED",
+        )
     for name in REQUIRED_FILES:
         if name.endswith(".json"):
             json_object(files[name][0])
@@ -648,12 +720,120 @@ def verify(path: str) -> dict[str, Any]:
     }
 
 
+def read_receipt(directory: int, name: str) -> bytes:
+    """Odczyt pojedynczego pliku koperty bez symlinków i bez wykonania jego treści."""
+    named = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    require(stat.S_ISREG(named.st_mode) and named.st_nlink == 1, "HANDOFF_OBJECT_REJECTED")
+    require(
+        named.st_mode & 0o7022 == 0 and named.st_size <= MAX_FILE_BYTES, "HANDOFF_OBJECT_REJECTED"
+    )
+    child = os.open(
+        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=directory
+    )
+    try:
+        require(identity(named) == identity(os.fstat(child)), "TREE_CHANGED")
+        chunks = []
+        size = 0
+        while chunk := os.read(child, 65536):
+            size += len(chunk)
+            require(size <= named.st_size, "TREE_CHANGED")
+            chunks.append(chunk)
+        require(
+            size == named.st_size and identity(named) == identity(os.fstat(child)), "TREE_CHANGED"
+        )
+        require(
+            identity(named) == identity(os.stat(name, dir_fd=directory, follow_symlinks=False)),
+            "TREE_CHANGED",
+        )
+        return b"".join(chunks)
+    finally:
+        os.close(child)
+
+
+def verify_handoff(path: str) -> dict[str, Any]:
+    descriptor = open_root(path)
+    try:
+        before = os.fstat(descriptor)
+        require(before.st_mode & 0o7022 == 0, "UNSAFE_MODE")
+        manifest = keys(
+            json_object(read_receipt(descriptor, "HANDOFF.json")),
+            {
+                "profile",
+                "files",
+                "independent_approval",
+                "safety",
+            },
+            "HANDOFF_SCHEMA",
+        )
+        require(manifest["profile"] == "stage9-v5d4-handoff-v1", "HANDOFF_SCHEMA")
+        require(
+            manifest["independent_approval"] == "UNVERIFIED" and manifest["safety"] == SAFETY,
+            "HANDOFF_AUTHORITY_REJECTED",
+        )
+        require(
+            type(manifest["files"]) is list and len(manifest["files"]) == 5, "HANDOFF_INCOMPLETE"
+        )
+        bundle_descriptor = os.open(
+            "bundle", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=descriptor
+        )
+        try:
+            files = read_tree(bundle_descriptor)
+            bundle_identity = identity(os.fstat(bundle_descriptor))
+        finally:
+            os.close(bundle_descriptor)
+        report = verify_files(files)
+        payloads = {
+            "bundle/MANIFEST.json": files["MANIFEST.json"][0],
+            "bundle/SHA256SUMS": files["SHA256SUMS"][0],
+            **{
+                name: read_receipt(descriptor, name)
+                for name in ("verification.json", "verification.stderr", "verification.exit")
+            },
+        }
+        declared = set()
+        for entry in manifest["files"]:
+            keys(entry, {"path", "sha256", "size"}, "HANDOFF_SCHEMA")
+            name = relative_path(entry["path"])
+            require(name in payloads and name not in declared, "HANDOFF_FILESET_MISMATCH")
+            declared.add(name)
+            data = payloads[name]
+            require(
+                type(entry["size"]) is int and entry["size"] == len(data), "HANDOFF_SIZE_MISMATCH"
+            )
+            require(entry["sha256"] == hashlib.sha256(data).hexdigest(), "HANDOFF_SHA256_MISMATCH")
+            check_secrets(name, data)
+        require(declared == set(payloads), "HANDOFF_INCOMPLETE")
+        require(payloads["verification.exit"] == b"0\n", "HANDOFF_VERIFIER_FAILED")
+        require(json_object(payloads["verification.json"]) == report, "HANDOFF_REPORT_MISMATCH")
+        require(not payloads["verification.stderr"], "HANDOFF_VERIFIER_STDERR")
+        require(
+            bundle_identity
+            == identity(os.stat("bundle", dir_fd=descriptor, follow_symlinks=False)),
+            "TREE_CHANGED",
+        )
+        require(identity(before) == identity(os.fstat(descriptor)), "TREE_CHANGED")
+        return {
+            "profile": "stage9-v5d4-handoff-verification-v1",
+            "local_consistency": "PASS",
+            "release_commit": report["release_commit"],
+            "independent_approval": "UNVERIFIED",
+            "safety": SAFETY,
+        }
+    finally:
+        os.close(descriptor)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("bundle", help="Katalog pakietu do odczytowej kontroli")
+    parser.add_argument(
+        "--handoff",
+        action="store_true",
+        help="Wymagaj koperty i oryginalnych raportów obok bundle/",
+    )
+    parser.add_argument("bundle", help="Katalog bundle lub katalog przekazania z --handoff")
     args = parser.parse_args(argv)
     try:
-        report = verify(args.bundle)
+        report = verify_handoff(args.bundle) if args.handoff else verify(args.bundle)
         exit_code = 0
     except (OSError, ValueError, TypeError, KeyError, SyntaxError, RecursionError) as error:
         report = {

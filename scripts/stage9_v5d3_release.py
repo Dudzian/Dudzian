@@ -296,9 +296,76 @@ def local_imports(node: ast.AST, module: str, paths: dict[str, str]) -> set[str]
     return result
 
 
+def dynamic_calls(tree: ast.AST) -> list[ast.Call]:
+    """Rozpoznaje mechanizmy po nazwie AST, bez dopasowania podciągu execute.
+
+    Alias nie stanowi dowodu wykonania; pozostaje wskazaniem do przeglądu.
+    Nierozstrzygalne przepływy danych wymagają osobnego przeglądu domknięcia.
+    """
+    mechanisms = {
+        "__import__",
+        "import_module",
+        "exec",
+        "eval",
+        "compile",
+        "run_path",
+        "run_module",
+        "CDLL",
+        "PyDLL",
+        "LoadLibrary",
+        "spec_from_file_location",
+        "spec_from_loader",
+        "dlopen",
+        "load_dynamic",
+        "module_from_spec",
+        "exec_module",
+        "load_module",
+    }
+    aliases = set(mechanisms)
+    # Proste aliasy importu i przypisania są domykane przed analizą wywołań.
+    changed = True
+    while changed:
+        previous = set(aliases)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name in aliases:
+                        aliases.add(alias.asname or alias.name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                value = node.value
+                name = (
+                    value.id
+                    if isinstance(value, ast.Name)
+                    else (value.attr if isinstance(value, ast.Attribute) else "")
+                )
+                if name in aliases:
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    aliases.update(target.id for target in targets if isinstance(target, ast.Name))
+        changed = aliases != previous
+    result = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            # Zachowujemy getattr(..., "exec") i słownikowe wyszukiwanie
+            # __builtins__["eval"], które wcześniejszy skan tekstowy widział.
+            names = {
+                part.id
+                if isinstance(part, ast.Name)
+                else part.attr
+                if isinstance(part, ast.Attribute)
+                else part.value
+                for part in ast.walk(node.func)
+                if isinstance(part, (ast.Name, ast.Attribute))
+                or (isinstance(part, ast.Constant) and isinstance(part.value, str))
+            }
+            if names & aliases:
+                result.append(node)
+    return result
+
+
 def collect_sources(repository: Path, revision: str, bundle: Path) -> dict[str, Any]:
     paths = tree(repository, revision)
-    pending, collected, dynamic = set(ROOTS), {}, []
+    initializers = {path.split("/")[0] + "/__init__.py" for path in ROOTS}
+    pending, collected, dynamic = set(ROOTS) | (initializers & paths.keys()), {}, []
     while pending:
         path = min(pending)
         pending.remove(path)
@@ -312,36 +379,10 @@ def collect_sources(repository: Path, revision: str, bundle: Path) -> dict[str, 
                 local_imports(node, path.removesuffix(".py").replace("/", "."), paths)
                 - collected.keys()
             )
-            if isinstance(node, ast.Call):
-                expression = ast.unparse(node.func)
-                if any(
-                    token in expression
-                    for token in (
-                        "import_module",
-                        "__import__",
-                        "exec",
-                        "eval",
-                        "run_path",
-                        "CDLL",
-                        "PyDLL",
-                    )
-                ):
-                    dynamic.append(
-                        {"path": path, "line": node.lineno, "expression": ast.unparse(node)[:1000]}
-                    )
-    for path in ROOTS:
-        initializer = path.split("/")[0] + "/__init__.py"
-        if initializer in paths and initializer not in collected:
-            # Initializery również są analizowane, nigdy importowane.
-            data = source(repository, revision, paths, initializer)
-            syntax = ast.parse(data)
-            require(
-                not any(
-                    local_imports(n, initializer.replace("/", "."), paths) for n in ast.walk(syntax)
-                ),
-                "Initializer wymaga poszerzenia analizy.",
+        for node in dynamic_calls(syntax):
+            dynamic.append(
+                {"path": path, "line": node.lineno, "expression": ast.unparse(node)[:1000]}
             )
-            collected[initializer] = data
     collected["pyproject.toml"] = source(repository, revision, paths, "pyproject.toml")
     for path, data in sorted(collected.items()):
         destination = bundle / "sources" / path
@@ -438,6 +479,13 @@ def stage(attempt: Path, letter: str, state: dict[str, Any]) -> None:
                     timeout=120,
                     check=False,
                 )
+                for suffix, data in (
+                    ("stdout", result.stdout),
+                    ("stderr", result.stderr),
+                    ("exit", f"{result.returncode}\n".encode("ascii")),
+                ):
+                    with (bundle / "logs" / f"previous-verification.{suffix}").open("xb") as stream:
+                        stream.write(data)
                 require(
                     result.returncode == 0,
                     "Poprzedni ukończony pakiet nie przeszedł weryfikacji; zachowano go bez zmian.",
@@ -626,6 +674,49 @@ def seal(attempt: Path, state: dict[str, Any]) -> None:
             stream.write(f"{digest}  {digest_path}\n")
 
 
+def handoff(attempt: Path) -> None:
+    """Wiąże oryginalny stdout/stderr/exit z zamknięciem bundle, poza jego manifestem.
+
+    Weryfikacja nie może znajdować się we własnym badanym manifeście.
+    Koperta i hashe zapewniają spójność transportu, bez ustanawiania aprobaty.
+    """
+    names = (
+        "bundle/MANIFEST.json",
+        "bundle/SHA256SUMS",
+        "verification.json",
+        "verification.stderr",
+        "verification.exit",
+    )
+    entries = []
+    for name in names:
+        path = attempt / name
+        require(path.is_file() and not path.is_symlink(), "Niekompletny materiał przekazania.")
+        metadata = path.stat()
+        require(metadata.st_nlink == 1 and metadata.st_size <= LIMIT, "Nieprawidłowy raport.")
+        data = path.read_bytes()
+        scan_bytes(data)
+        entries.append(
+            {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+        )
+    require(
+        (attempt / "verification.exit").read_bytes() == b"0\n", "Weryfikator odmówił przekazania."
+    )
+    report = json.loads((attempt / "verification.json").read_bytes())
+    require(
+        type(report) is dict and report.get("local_consistency") == "PASS",
+        "Brak pomyślnego raportu weryfikatora.",
+    )
+    dump(
+        attempt / "HANDOFF.json",
+        {
+            "profile": "stage9-v5d4-handoff-v1",
+            "files": entries,
+            "independent_approval": "UNVERIFIED",
+            "safety": SAFETY,
+        },
+    )
+
+
 def invalidate(attempt: Path, state: dict[str, Any], *, interrupted: bool) -> None:
     """Zachowuje odrzucone zamknięcie, odbiera mu znacznik ukończenia."""
     bundle = attempt / "bundle"
@@ -671,6 +762,8 @@ def main() -> int:
                 finalize(attempt, state)
             elif action == "seal":
                 seal(attempt, state)
+            elif action == "handoff":
+                handoff(attempt)
             else:
                 raise Refusal("Nieznana czynność.")
         except (OSError, ValueError, KeyError, SyntaxError, subprocess.SubprocessError) as exc:

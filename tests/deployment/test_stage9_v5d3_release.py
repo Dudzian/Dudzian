@@ -841,3 +841,188 @@ def test_interrupted_preparation_retains_attempt_state(
     assert process.returncode != 0, stdout + stderr
     assert list(tmp_path.glob("stage9-v5d3-*/state.json"))
     assert not list(tmp_path.glob("stage9-v5d3-*/bundle/COMPLETE.json"))
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "collector.execute(request)",
+        "executor.execute(request)",
+        "obj.evaluation()",
+        "obj.import_module_status()",
+    ],
+)
+def test_execute_and_similarly_named_methods_are_not_dynamic_imports(expression: str) -> None:
+    import ast
+
+    syntax = ast.parse(expression)
+    assert not release.dynamic_calls(syntax)
+    assert not verifier.dynamic_calls(syntax)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "exec(source)",
+        "eval(source)",
+        "__import__(name)",
+        "importlib.import_module(name)",
+        "getattr(importlib, 'import_module')(name)",
+        "__builtins__['eval'](source)",
+        "runpy.run_path(path)",
+        "runpy.run_module(name)",
+        "loader.exec_module(module)",
+        "ctypes.CDLL(path)",
+        "ffi.dlopen(path)",
+        "imp.load_dynamic(name, path)",
+        "importlib.util.spec_from_loader(name, loader)",
+        "ctypes.PyDLL(path)",
+        "ctypes.cdll.LoadLibrary(path)",
+        "importlib.util.spec_from_file_location(name, path)",
+        "from importlib import import_module as load\nload(name)",
+        "execute = exec\nexecute(source)",
+        "loader = importlib.import_module\nloader(name)",
+    ],
+)
+def test_dynamic_mechanisms_and_simple_aliases_remain_visible(expression: str) -> None:
+    import ast
+
+    syntax = ast.parse(expression)
+    assert release.dynamic_calls(syntax)
+    assert verifier.dynamic_calls(syntax)
+    assert [ast.unparse(node) for node in release.dynamic_calls(syntax)] == [
+        ast.unparse(node) for node in verifier.dynamic_calls(syntax)
+    ]
+
+
+def test_real_controller_execute_is_absent_from_dynamic_inventory(prepared_bundle: Path) -> None:
+    expressions = [
+        row["expression"] for row in _json(prepared_bundle / "IMPORTS.json")["dynamic_imports"]
+    ]
+    assert not any("collector.execute(" in expression for expression in expressions)
+    assert any("import_module(" in expression for expression in expressions)
+
+
+@pytest.fixture
+def handoff(prepared_bundle: Path, tmp_path: Path) -> Path:
+    destination = tmp_path / "handoff"
+    destination.mkdir()
+    shutil.copytree(prepared_bundle, destination / "bundle")
+    for name in ("HANDOFF.json", "verification.json", "verification.stderr", "verification.exit"):
+        shutil.copy2(prepared_bundle.parent / name, destination / name)
+    return destination
+
+
+def test_handoff_retains_original_report_exit_and_checksums(handoff: Path) -> None:
+    before = {
+        name: (handoff / name).read_bytes()
+        for name in (
+            "verification.json",
+            "verification.stderr",
+            "verification.exit",
+            "HANDOFF.json",
+        )
+    }
+    assert verifier.verify_handoff(str(handoff))["local_consistency"] == "PASS"
+    assert (handoff / "verification.exit").read_bytes() == b"0\n"
+    for name, data in before.items():
+        assert (handoff / name).read_bytes() == data
+    result = subprocess.run(
+        ["/usr/bin/bash", str(VERIFY), "--handoff", str(handoff)], capture_output=True, timeout=20
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "verification.json",
+        "verification.stderr",
+        "verification.exit",
+        "HANDOFF.json",
+        "bundle/SHA256SUMS",
+    ],
+)
+def test_handoff_refuses_missing_original_evidence(handoff: Path, missing: str) -> None:
+    (handoff / missing).unlink()
+    with pytest.raises((verifier.Refusal, OSError)):
+        verifier.verify_handoff(str(handoff))
+
+
+def test_handoff_refuses_changed_original_report(handoff: Path) -> None:
+    with (handoff / "verification.json").open("ab") as stream:
+        stream.write(b" ")
+    with pytest.raises(verifier.Refusal, match="HANDOFF_"):
+        verifier.verify_handoff(str(handoff))
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "expected"),
+    [
+        ("verification.exit", b"2\n", "HANDOFF_VERIFIER_FAILED"),
+        ("verification.json", b"{}\n", "HANDOFF_REPORT_MISMATCH"),
+        ("verification.stderr", b"warning\n", "HANDOFF_VERIFIER_STDERR"),
+    ],
+)
+def test_handoff_semantics_cannot_be_bypassed_by_rehashing(
+    handoff: Path, name: str, data: bytes, expected: str
+) -> None:
+    (handoff / name).write_bytes(data)
+    manifest = _json(handoff / "HANDOFF.json")
+    for entry in manifest["files"]:
+        if entry["path"] == name:
+            entry["sha256"] = hashlib.sha256(data).hexdigest()
+            entry["size"] = len(data)
+    _write_json(handoff / "HANDOFF.json", manifest)
+    with pytest.raises(verifier.Refusal, match=expected):
+        verifier.verify_handoff(str(handoff))
+
+
+def test_handoff_original_receipt_symlink_is_refused(handoff: Path) -> None:
+    path = handoff / "verification.json"
+    path.unlink()
+    path.symlink_to("/dev/null")
+    with pytest.raises((verifier.Refusal, OSError)):
+        verifier.verify_handoff(str(handoff))
+
+
+def test_resume_preserves_all_original_verifier_streams(
+    prepared_bundle: Path, source_checkout: Path, tmp_path: Path
+) -> None:
+    result = _prepare(source_checkout, tmp_path, "--resume", str(prepared_bundle))
+    assert result.returncode == 0, result.stdout + result.stderr
+    current = _bundle_path(tmp_path)
+    assert (current / "logs/previous-verification.exit").read_bytes() == b"0\n"
+    assert (current / "logs/previous-verification.stderr").read_bytes() == b""
+    assert _json(current / "logs/previous-verification.stdout")["local_consistency"] == "PASS"
+    assert verifier.verify_handoff(str(current.parent))["local_consistency"] == "PASS"
+
+
+def test_initializer_dynamic_import_is_analyzed_without_execution(
+    source_checkout: Path, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    shutil.copytree(source_checkout, source)
+    (source / "deployment/__init__.py").write_text(
+        "import importlib\nimportlib.import_module('untrusted_synthetic_module')\n"
+    )
+    _commit(source)
+    parent = tmp_path / "results"
+    parent.mkdir()
+    result = _prepare(source, parent)
+    assert result.returncode == 0, result.stdout + result.stderr
+    current = _bundle_path(parent)
+    inventory = _json(current / "IMPORTS.json")
+    assert any(
+        row["path"] == "deployment/__init__.py" and "import_module(" in row["expression"]
+        for row in inventory["dynamic_imports"]
+    )
+    assert verifier.verify_handoff(str(current.parent))["local_consistency"] == "PASS"
+
+
+def test_partial_previous_verification_receipts_are_refused_after_resealing(bundle: Path) -> None:
+    (bundle / "logs/previous-verification.stdout").write_bytes(b"{}\n")
+    _reseal(bundle)
+    result, report = _verify(bundle)
+    assert result.returncode == 2
+    assert report["reason_code"] == "PREVIOUS_REPORT_INCOMPLETE"
