@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 from typing import Any
+import venv
 
 import pytest
 
@@ -41,6 +42,12 @@ import json
 import os
 from pathlib import Path
 import sys
+
+# Każde wywołanie atrap pomija site, środowisko Pythona i zapis bytecode.
+if not (sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode):
+    sys.exit(98)
+if "site" in sys.modules:
+    sys.exit(98)
 
 name = Path(sys.argv[0]).name
 args = sys.argv[1:]
@@ -161,7 +168,8 @@ class InventoryHost:
             executable = self.bin / name
             wrapper = _TOOL.replace("__SCENARIO_PATH__", repr(str(self.scenario)))
             wrapper = wrapper.replace("__COMMAND_LOG_PATH__", repr(str(self.log)))
-            executable.write_text(f"#!{sys.executable}\n{wrapper}")
+            # Jeden argument shebang działa także na macOS; atrapy używają tylko stdlib.
+            executable.write_text(f"#!{sys.executable} -ISB\n{wrapper}")
             executable.chmod(0o755)
 
     def run(
@@ -264,6 +272,67 @@ def test_all_present_is_only_inventory_and_retains_independent_approval_gap(
         "UNVERIFIED",
         "INDEPENDENT_SOURCE_REVIEW_REQUIRED",
     )
+
+
+def test_synthetic_tools_skip_site_hooks_and_inherited_python_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Własna kopia zaufanego interpretera fixture; bez pip, pakietów i sieci.
+    environment = tmp_path / "fixture-python"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    fixture_python = environment / "bin/python"
+    site_packages = list(environment.glob("lib/python*/site-packages"))
+    assert len(site_packages) == 1
+    pth_marker = tmp_path / "pth-executed"
+    site_marker = tmp_path / "sitecustomize-executed"
+    inherited_marker = tmp_path / "inherited-startup-executed"
+
+    def marker_source(path: Path) -> str:
+        return f"import pathlib; pathlib.Path({str(path)!r}).write_text('synthetic startup')\n"
+
+    (site_packages[0] / "fixture-startup.pth").write_text(marker_source(pth_marker))
+    (site_packages[0] / "sitecustomize.py").write_text(marker_source(site_marker))
+    # Próba kontrolna potwierdza działanie obu hooków, gdy site pozostaje aktywne.
+    subprocess.run(
+        [str(fixture_python), "-I", "-B", "-c", "pass"],
+        env={"PATH": os.defpath, "LC_ALL": "C"},
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    assert pth_marker.is_file()
+    assert site_marker.is_file()
+    pth_marker.unlink()
+    site_marker.unlink()
+    inherited = tmp_path / "inherited-python-path"
+    inherited.mkdir()
+    (inherited / "sitecustomize.py").write_text(marker_source(inherited_marker))
+    (inherited / "usercustomize.py").write_text(marker_source(inherited_marker))
+    startup = inherited / "startup.py"
+    startup.write_text(marker_source(inherited_marker))
+    host_root = tmp_path / "host"
+    host_root.mkdir()
+    with monkeypatch.context() as interpreter:
+        interpreter.setattr(sys, "executable", str(fixture_python))
+        fixture_host = InventoryHost(host_root)
+    result = fixture_host.run(
+        probe_libvirt=True,
+        extra_environment={"PYTHONPATH": str(inherited), "PYTHONSTARTUP": str(startup)},
+    )
+    assert _rows(result)["libvirt_readonly"][0] == "PRESENT"
+    assert {name for name, _ in fixture_host.calls()} == {
+        "uname",
+        "stat",
+        "git",
+        "timeout",
+        "dpkg-query",
+        "virsh",
+    }
+    assert not pth_marker.exists()
+    assert not site_marker.exists()
+    assert not inherited_marker.exists()
+    assert not list(tmp_path.rglob("__pycache__"))
+    _assert_blocked_authorization(result)
 
 
 def test_default_inventory_never_connects_to_libvirt_even_when_dependencies_exist(
