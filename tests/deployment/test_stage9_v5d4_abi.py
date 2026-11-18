@@ -5,10 +5,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -324,6 +326,31 @@ def test_symlink_dependency_is_refused(environment: Any, tmp_path: Path) -> None
     expectations["sha256"][str(linked)] = hashlib.sha256(target.read_bytes()).hexdigest()
     with pytest.raises(abi.Refusal, match="SYMLINK_REJECTED"):
         _diagnose(environment)
+
+
+@pytest.mark.parametrize("kind", ["file", "ancestor_directory"])
+def test_symlink_refusal_category_precedes_windows_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "evidence.bin").write_bytes(b"inert data")
+    link = tmp_path / "alias"
+    if kind == "file":
+        link.symlink_to(target / "evidence.bin")
+        attempted = link
+    else:
+        link.symlink_to(target, target_is_directory=True)
+        attempted = link / "evidence.bin"
+
+    def forbidden_backend(*args, **kwargs):
+        pytest.fail("Publiczna odmowa ABI musi poprzedzać wybór backendu Windows.")
+
+    # Modelujemy tylko kolejność odmowy, nie kwalifikację natywnych uchwytów.
+    monkeypatch.setattr(abi, "os", SimpleNamespace(name="nt", path=os.path))
+    monkeypatch.setattr(abi, "runpy", SimpleNamespace(run_path=forbidden_backend))
+    with pytest.raises(abi.Refusal, match="^SYMLINK_REJECTED$"):
+        abi.read_bytes(attempted)
 
 
 def test_readelf_parser_records_versions_without_execution() -> None:

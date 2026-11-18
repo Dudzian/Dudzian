@@ -106,7 +106,19 @@ kontrolera ani VM. Końcowy nowy SHA i rzeczywiste wyniki PASS/FAIL/SKIP
 Windows, macOS i Ubuntu zostaną zapisane w opisie istniejącego PR #3284;
 wyniki lokalne nie zastępują natywnych Actions.
 
-Lokalnie po poprawkach: **V5d4 377 PASS / 22 SKIP** oraz **Stage 9 safe CI
+Pełny Windows dla pierwszej aktualizacji
+`2cb8a71b7dd8cbd15526eb8fcc27872f87af3c52` wykonał wszystkie nowe testy
+czytnika Win32: **19 PASS / 0 FAIL / 0 SKIP** (potwierdzone przez JUnit).
+Ujawnił też jedną dalszą regresję kontraktu ABI:
+`test_symlink_dependency_is_refused` wymagał `SYMLINK_REJECTED`, a backend
+zwracał `NONREGULAR_INPUT`. Dowiązanie było odrzucane, lecz zmieniła się
+publiczna kategoria błędu. Przywrócono wspólne wstępne kontrole ABI przed
+wyborem backendu. Nie poszerzono oczekiwanej kategorii starego testu.
+Dwa nowe testy negatywne sprawdzają odmowę pliku i przodka symlink przed
+załadowaniem backendu. Natywne testy zachowują dokładne kody publiczne ABI
+oraz odrębne kody pozostałych czytników; nie zmieniono zasad odmowy.
+
+Lokalnie po końcowej poprawce: **V5d4 379 PASS / 22 SKIP** oraz **Stage 9 safe CI
 39 PASS**. Precyzyjne SKIP na Linux obejmują 19 natywnych przypadków Windows,
 jeden natywny test odmowy profilu Windows i dwa testy CLI wymagające hosta
 innego niż Linux. Pełny dotychczasowy zakres Ruff, dokładny hook

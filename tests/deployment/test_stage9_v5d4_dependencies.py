@@ -1005,13 +1005,18 @@ def test_windows_reader_without_native_backend_refuses_without_fallback(
 def test_windows_native_reader_rejects_hardlinked_file(
     tmp_path: Path, evidence_reader: Callable[[Path], bytes]
 ) -> None:
+    from scripts import stage9_v5d4_abi
+
     path = tmp_path / "source.bin"
     path.write_bytes(b"required evidence")
     linked = tmp_path / "hardlink.bin"
     os.link(path, linked)
-    with pytest.raises(ValueError, match="^NONREGULAR_INPUT$"):
+    refusal = (
+        "FILE_REJECTED" if evidence_reader is stage9_v5d4_abi.read_bytes else "NONREGULAR_INPUT"
+    )
+    with pytest.raises(ValueError, match="^" + refusal + "$"):
         evidence_reader(path)
-    with pytest.raises(ValueError, match="^NONREGULAR_INPUT$"):
+    with pytest.raises(ValueError, match="^" + refusal + "$"):
         evidence_reader(linked)
 
 
@@ -1020,6 +1025,8 @@ def test_windows_native_reader_rejects_hardlinked_file(
 def test_windows_native_reader_rejects_symlink_and_symlink_ancestor(
     tmp_path: Path, kind: str, evidence_reader: Callable[[Path], bytes]
 ) -> None:
+    from scripts import stage9_v5d4_abi
+
     target = tmp_path / "target"
     target.mkdir()
     (target / "evidence.bin").write_bytes(b"required evidence")
@@ -1036,6 +1043,8 @@ def test_windows_native_reader_rejects_symlink_and_symlink_ancestor(
             pytest.skip("Windows ERROR_PRIVILEGE_NOT_HELD przy tworzeniu symlinku fixture.")
         raise
     refusal = "NONREGULAR_INPUT" if kind == "file" else "WINDOWS_REPARSE_OR_SPECIAL_INPUT"
+    if evidence_reader is stage9_v5d4_abi.read_bytes:
+        refusal = "SYMLINK_REJECTED"
     with pytest.raises(ValueError, match="^" + refusal + "$"):
         evidence_reader(attempted)
 
