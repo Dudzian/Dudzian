@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import stat
 import subprocess
 from collections.abc import Callable
@@ -57,14 +58,27 @@ def file_identity(value: os.stat_result) -> tuple[int, ...]:
 
 def read_bytes(path: Path) -> bytes:
     require(path.is_absolute() and str(path) == os.path.abspath(path), "PATH_REJECTED")
+    if os.name != "nt":
+        require(
+            os.name == "posix"
+            and bool(getattr(os, "O_NOFOLLOW", None))
+            and bool(getattr(os, "O_NONBLOCK", None)),
+            "SECURE_FILE_READER_UNAVAILABLE",
+        )
+    # Zachowaj publiczne kategorie odmowy ABI przed wyborem backendu.
     for component in (*reversed(path.parents), path):
         require(not component.is_symlink(), "SYMLINK_REJECTED")
     metadata = path.lstat()
     require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1, "FILE_REJECTED")
     require(0 <= metadata.st_size <= LIMIT, "FILE_LIMIT_EXCEEDED")
-    descriptor = os.open(
-        path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    )
+    if os.name == "nt":
+        tools = runpy.run_path(str(Path(__file__).with_name("stage9_v5d4_dependencies.py")))
+        try:
+            return cast(bytes, tools["windows_read_regular"](path, LIMIT))
+        except ValueError as exc:
+            code = "FILE_LIMIT_EXCEEDED" if str(exc) == "INPUT_TOO_LARGE" else str(exc)
+            raise Refusal(code) from exc
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as stream:
         require(
             file_identity(os.fstat(stream.fileno())) == file_identity(metadata), "ARTIFACT_CHANGED"
@@ -93,10 +107,14 @@ def _pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def read_json(path: Path) -> dict[str, Any]:
-    value = json.loads(read_bytes(path), object_pairs_hook=_pairs)
+def parse_json(raw: bytes) -> dict[str, Any]:
+    value = json.loads(raw, object_pairs_hook=_pairs)
     require(type(value) is dict, "JSON_OBJECT_REQUIRED")
     return cast(dict[str, Any], value)
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    return parse_json(read_bytes(path))
 
 
 @dataclass(frozen=True)
@@ -285,10 +303,15 @@ def _import_audit(
             require(not directory.is_symlink(), "SYMLINK_REJECTED")
         for path in root.rglob("*"):
             require(not path.is_symlink(), "SYMLINK_REJECTED")
-            if path.name in {"sitecustomize.py", "usercustomize.py"} or path.suffix in {
-                ".pth",
-                ".pyc",
-            }:
+            if (
+                any(
+                    part in {"sitecustomize", "usercustomize"}
+                    or part.startswith(("sitecustomize.", "usercustomize."))
+                    for part in path.relative_to(root).parts
+                )
+                or path.suffix in {".pth", ".pyc", ".pyo"}
+                or "__pycache__" in path.relative_to(root).parts
+            ):
                 raise Refusal("STARTUP_IMPORT_CONFIGURATION_REJECTED")
     imports = request["required_imports"]
     require(
@@ -543,11 +566,12 @@ def main() -> int:
         require(
             re.fullmatch(r"[a-f0-9]{64}", args.expectations_sha256) is not None, "SHA256_REJECTED"
         )
+        expectations_raw = read_bytes(args.expectations)
         require(
-            sha256(read_bytes(args.expectations)) == args.expectations_sha256,
+            sha256(expectations_raw) == args.expectations_sha256,
             "EXPECTATIONS_SHA256_MISMATCH",
         )
-        report = diagnose(read_json(args.request), read_json(args.expectations))
+        report = diagnose(read_json(args.request), parse_json(expectations_raw))
         status = 0
     except (
         Refusal,
