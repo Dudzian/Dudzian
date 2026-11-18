@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.security.tokens import ServiceToken, ServiceTokenValidator
+from bot_core.runtime._grpc_support import validate_plaintext_grpc_host
 from bot_core.observability.risk import RiskObservabilitySink
 
 try:  # pragma: no cover - środowiska bez protobuf/gRPC
@@ -731,6 +732,8 @@ class RiskServer:
     ) -> None:
         if grpc is None or trading_pb2_grpc is None:
             raise RuntimeError("Uruchomienie RiskServer wymaga pakietów grpcio oraz trading_pb2*")
+        if server_credentials is None:
+            host = validate_plaintext_grpc_host(host)
         self._store = RiskSnapshotStore(maxlen=history_size)
         self._servicer = RiskServiceServicer(
             self._store,
