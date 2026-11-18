@@ -1,0 +1,11 @@
+[
+  "/workspace/work/security-venv/bin/python",
+  "-m",
+  "pip_audit",
+  "--requirement",
+  "deploy/packaging/requirements-desktop.lock",
+  "--format",
+  "json",
+  "--output",
+  "/workspace/work/security-logs/pip-audit-report.json"
+]

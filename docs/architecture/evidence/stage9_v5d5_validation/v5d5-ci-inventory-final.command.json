@@ -1,0 +1,11 @@
+[
+  "/workspace/work/quality-venv/bin/python",
+  "-m",
+  "pytest",
+  "-q",
+  "--confcutdir=tests/scripts",
+  "tests/scripts/test_stage9_operator_v5d2_inventory.py",
+  "tests/scripts/test_stage9_v5d4_ci_history.py",
+  "tests/scripts/test_stage9_v5d5_ci_contract.py",
+  "--junitxml=/workspace/work/v5d5-validation/v5d5-ci-inventory-final.xml"
+]

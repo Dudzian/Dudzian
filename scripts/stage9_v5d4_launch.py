@@ -18,10 +18,16 @@ import platform
 import runpy
 import stat
 import sysconfig
+from typing import Any
 
 
-def verify_tree(root: Path, expected: dict[str, str]) -> None:
+def verify_tree(
+    root: Path, expected: dict[str, str], expected_directories: list[str] | None = None
+) -> None:
+    if any(path.is_symlink() for path in (root, *root.parents)):
+        raise ValueError("SYMLINK_RUNTIME")
     actual: dict[str, str] = {}
+    directories: list[str] = []
     for path in root.rglob("*"):
         if path.is_symlink():
             raise ValueError("SYMLINK_RUNTIME")
@@ -30,12 +36,101 @@ def verify_tree(root: Path, expected: dict[str, str]) -> None:
             stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1
         ):
             raise ValueError("NONREGULAR_RUNTIME")
+        if stat.S_ISDIR(metadata.st_mode):
+            directories.append(path.relative_to(root).as_posix())
         if path.is_file() and path != root / "ENVIRONMENT.json":
             actual[path.relative_to(root).as_posix()] = hashlib.sha256(
                 path.read_bytes()
             ).hexdigest()
     if actual != expected:
         raise ValueError("RUNTIME_CONTENT_MISMATCH")
+    if expected_directories is not None and sorted(directories) != expected_directories:
+        raise ValueError("RUNTIME_DIRECTORY_MISMATCH")
+
+
+def verify_shared_receipt(root: Path, receipt: dict[str, Any]) -> None:
+    """Recheck exact owners, independent expectations and installed bytes.
+
+    The external receipt digest and explicit native gate are still mandatory;
+    this consistency check cannot authenticate or authorize a local receipt.
+    """
+    if type(receipt) is not dict or type(receipt.get("files")) is not dict:
+        raise ValueError("SHARED_WHEEL_RECEIPT_SCHEMA")
+    fields = {
+        "wheel_materialization",
+        "shared_wheel_members",
+        "shared_wheel_expectations",
+        "shared_wheel_policy",
+        "shared_wheel_output",
+    }
+    if (
+        receipt.get("profile") != "stage9-v5d5-prepared-environment-v1"
+        and not fields.intersection(receipt)
+        and "shared-audit.py" not in receipt["files"]
+    ):
+        return
+    if (
+        receipt.get("profile") != "stage9-v5d5-prepared-environment-v1"
+        or not fields <= set(receipt)
+        or "directories" not in receipt
+        or "shared-audit.py" not in receipt["files"]
+    ):
+        raise ValueError("SHARED_WHEEL_RECEIPT_INCOMPLETE")
+    tools = runpy.run_path(str(root / "shared-audit.py"))
+    packages = receipt["wheel_materialization"]
+    shared = tools["verify_shared"](packages, receipt["shared_wheel_expectations"])
+    if receipt["shared_wheel_policy"] != tools["POLICY_ID"] or not tools["exact"](
+        receipt["shared_wheel_members"], shared
+    ):
+        raise ValueError("SHARED_WHEEL_RECEIPT_MISMATCH")
+    if (
+        type(receipt.get("package_files")) is not dict
+        or type(receipt.get("wheel_archives")) is not list
+        or not all(
+            type(package) is dict
+            and all(
+                type(package.get(key)) is str for key in ("name", "version", "filename", "sha256")
+            )
+            for package in receipt["wheel_archives"]
+        )
+    ):
+        raise ValueError("SHARED_WHEEL_RECEIPT_SCHEMA")
+    identities = [
+        {key: package[key] for key in ("name", "version", "filename", "sha256")}
+        for package in packages
+    ]
+    archives = [
+        {key: package[key] for key in ("name", "version", "filename", "sha256")}
+        for package in receipt["wheel_archives"]
+    ]
+    if sorted(identities, key=lambda row: row["name"]) != sorted(
+        archives, key=lambda row: row["name"]
+    ):
+        raise ValueError("SHARED_WHEEL_ARCHIVE_INVENTORY_MISMATCH")
+    for package in packages:
+        for member in package["materialized_members"].values():
+            name, digest = member["path"], member["sha256"]
+            if (
+                receipt["package_files"].get(name) != digest
+                or receipt["files"].get("packages/" + name) != digest
+            ):
+                raise ValueError("SHARED_WHEEL_MAPPING_MISMATCH")
+    expected_output = [
+        {"path": row["path"], "sha256": row["sha256"], "mode": 0o600, "type": "regular"}
+        for row in shared["members"]
+    ]
+    if not tools["exact"](receipt["shared_wheel_output"], expected_output):
+        raise ValueError("SHARED_WHEEL_OUTPUT_MISMATCH")
+    for row in expected_output:
+        path = root / "packages" / row["path"]
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != row["mode"]
+            or hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]
+        ):
+            raise ValueError("SHARED_WHEEL_OUTPUT_CHANGED")
 
 
 class FixedRootFinder(importlib.abc.MetaPathFinder):
@@ -82,9 +177,12 @@ def main(argv: list[str] | None = None) -> int:
         if hashlib.sha256(raw).hexdigest() != args[2]:
             raise ValueError("INDEPENDENT_RECEIPT_DIGEST_MISMATCH")
         receipt = json.loads(raw)
+        if type(receipt) is not dict:
+            raise ValueError("RECEIPT_SCHEMA_REJECTED")
         if receipt["root"] != str(root):
             raise ValueError("RUNTIME_LOCATION_CHANGED")
-        verify_tree(root, receipt["files"])
+        verify_tree(root, receipt["files"], receipt.get("directories"))
+        verify_shared_receipt(root, receipt)
         auditor = runpy.run_path(str(root / "runtime-audit.py"))
         if (
             auditor["base_runtime_inventory"]([Path(p) for p in receipt["base_runtime"]["roots"]])
