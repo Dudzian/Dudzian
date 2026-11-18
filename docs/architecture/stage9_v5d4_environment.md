@@ -1,5 +1,11 @@
 # Stage 9 V5d4 — przygotowanie środowiska kontrolera
 
+Uzupełnienie dla przypiętego wheel PySide6-Essentials 6.10.3:
+[polityka dwóch pominięć bytecode i raport kolizji](stage9_v5d4_wheel_bytecode_remediation.md).
+Pełny `RECORD` poprzedza decyzję o pominięciu; obowiązuje osobna, niezależna
+akceptacja wyjątku kontraktu instalacji. Bytecode nigdy nie trafia do celu,
+a 62 kolizje Essentials/Addons nadal powodują odmowę.
+
 Baza: `913ae53a2e351291f86b05c4e3de1bb56c3559e1`, repozytorium
 `Dudzian/Dudzian`. Narzędzia budują nowy lokalny katalog z zatwierdzonych
 wejść; nie instalują do `/opt/cryptohunter` ani `/etc/cryptohunter`.
