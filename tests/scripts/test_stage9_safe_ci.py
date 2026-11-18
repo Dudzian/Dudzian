@@ -50,6 +50,7 @@ def test_dispatch_routes_only_explicit_safe_scope_and_keeps_old_jobs():
     assert set(current["jobs"]) == set(old["jobs"]) | {
         "stage9-safe-validation",
         "stage9-v5d1-static-contract",
+        "stage9-v5d4-static-environment",
     }
 
 
@@ -133,6 +134,111 @@ def test_v5d1_static_job_preserves_safe_scope_and_has_no_native_entrypoint():
     assert job["steps"].index(inventory) < job["steps"].index(uploads[1])
     assert "virsh" not in inventory["run"]
     assert "--probe-libvirt-after-local-auth-review" not in inventory["run"]
+    assert "secrets." not in json.dumps(job)
+
+
+def test_v5d4_static_job_preserves_safe_scope_and_has_no_native_entrypoint():
+    job = workflow()["jobs"]["stage9-v5d4-static-environment"]
+    assert job["if"] == (
+        "(github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stage9-safe')"
+    )
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == 15
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"] == {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+    assert not {"environment", "services", "needs", "continue-on-error"} & set(job)
+    assert len(job["steps"]) == 6
+    checkout, setup, install, lint, tests, upload = job["steps"]
+    assert set(checkout) == {"uses", "with"}
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == {
+        "ref": "${{ github.sha }}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    assert set(setup) == {"uses", "with"}
+    assert setup["uses"].startswith("actions/setup-python@")
+    assert setup["with"] == {"python-version": "3.12"}
+    for step in (install, lint, tests):
+        assert set(step) == {"name", "run"}
+    assert shlex.split(install["run"]) == [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "pytest",
+        "pytest-cov",
+        "ruff==0.14.11",
+        "mypy==1.10.0",
+    ]
+    # Exact commands allow only static tools and the synthetic regression harnesses.
+    assert [shlex.split(line) for line in lint["run"].splitlines()] == [
+        [
+            "python",
+            "-m",
+            "ruff",
+            "check",
+            "scripts/stage9_v5d4_*.py",
+            "tests/deployment/test_stage9_v5d4_*.py",
+        ],
+        [
+            "python",
+            "-m",
+            "ruff",
+            "format",
+            "--check",
+            "scripts/stage9_v5d4_*.py",
+            "tests/deployment/test_stage9_v5d4_*.py",
+        ],
+        ["python", "-m", "mypy", "scripts/stage9_v5d4_*.py"],
+        [
+            "bash",
+            "-n",
+            "scripts/stage9_v5d3_prepare_release.sh",
+            "scripts/stage9_v5d3_verify_bundle.sh",
+        ],
+    ]
+    assert [shlex.split(line) for line in tests["run"].replace("\\\n", "").splitlines()] == [
+        ["git", "cat-file", "-e", "17e03a9cb42a84302401415f96ac90e756926915^{commit}"],
+        [
+            "python",
+            "-m",
+            "pytest",
+            "-q",
+            "--confcutdir=tests/deployment",
+            "tests/deployment/test_stage9_v5d4_*.py",
+            "tests/deployment/test_stage9_v5d3_release.py",
+            "-p",
+            "pytest_cov.plugin",
+            "--cov=scripts.stage9_v5d4_abi",
+            "--cov=scripts.stage9_v5d4_closure",
+            "--cov=scripts.stage9_v5d4_dependencies",
+            "--cov=scripts.stage9_v5d4_environment",
+            "--cov=scripts.stage9_v5d4_launch",
+            "--cov-branch",
+            "--cov-report=xml:stage9-v5d4-coverage.xml",
+            "--junitxml=stage9-v5d4-static.xml",
+        ],
+        [
+            "python",
+            "-m",
+            "pytest",
+            "-q",
+            "--confcutdir=tests/scripts",
+            "tests/scripts/test_stage9_operator_v5d2_inventory.py",
+            "tests/scripts/test_stage9_v5d4_ci_history.py",
+            "--junitxml=stage9-v5d4-v5d2-regression.xml",
+        ],
+    ]
+    assert set(upload) == {"name", "if", "uses", "with"}
+    assert upload["if"] == "always()"
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["with"] == {
+        "name": "stage9-v5d4-static-${{ github.sha }}-${{ github.run_attempt }}",
+        "path": "stage9-v5d4-static.xml\nstage9-v5d4-v5d2-regression.xml\nstage9-v5d4-coverage.xml\n",
+        "if-no-files-found": "error",
+        "retention-days": 14,
+    }
     assert "secrets." not in json.dumps(job)
 
 

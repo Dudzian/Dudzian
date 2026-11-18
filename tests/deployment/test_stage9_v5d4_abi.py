@@ -5,10 +5,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -246,12 +248,33 @@ def test_wrong_soname(environment: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "filename", ["unsafe.pth", "old.pyc", "sitecustomize.py", "usercustomize.py"]
+    "filename",
+    [
+        "unsafe.pth",
+        "old.pyc",
+        "old.pyo",
+        "sitecustomize.py",
+        "usercustomize.py",
+        "sitecustomize/__init__.py",
+        "usercustomize/__init__.py",
+        "sitecustomize.abi3.so",
+        "usercustomize.cpython-312-x86_64-linux-gnu.so",
+        "package/sitecustomize/module.py",
+        "package/__pycache__/cached.txt",
+    ],
 )
 def test_hidden_startup_and_bytecode_paths_are_refused(environment: Any, filename: str) -> None:
     request, _, _ = environment
     path = Path(request["import_roots"][0]) / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("import malicious\n", encoding="utf-8")
+    with pytest.raises(abi.Refusal, match="STARTUP_IMPORT_CONFIGURATION_REJECTED"):
+        _diagnose(environment)
+
+
+def test_empty_unapproved_bytecode_cache_is_refused(environment: Any) -> None:
+    request, _, _ = environment
+    (Path(request["import_roots"][0]) / "__pycache__").mkdir()
     with pytest.raises(abi.Refusal, match="STARTUP_IMPORT_CONFIGURATION_REJECTED"):
         _diagnose(environment)
 
@@ -303,6 +326,31 @@ def test_symlink_dependency_is_refused(environment: Any, tmp_path: Path) -> None
     expectations["sha256"][str(linked)] = hashlib.sha256(target.read_bytes()).hexdigest()
     with pytest.raises(abi.Refusal, match="SYMLINK_REJECTED"):
         _diagnose(environment)
+
+
+@pytest.mark.parametrize("kind", ["file", "ancestor_directory"])
+def test_symlink_refusal_category_precedes_windows_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "evidence.bin").write_bytes(b"inert data")
+    link = tmp_path / "alias"
+    if kind == "file":
+        link.symlink_to(target / "evidence.bin")
+        attempted = link
+    else:
+        link.symlink_to(target, target_is_directory=True)
+        attempted = link / "evidence.bin"
+
+    def forbidden_backend(*args, **kwargs):
+        pytest.fail("Publiczna odmowa ABI musi poprzedzać wybór backendu Windows.")
+
+    # Modelujemy tylko kolejność odmowy, nie kwalifikację natywnych uchwytów.
+    monkeypatch.setattr(abi, "os", SimpleNamespace(name="nt", path=os.path))
+    monkeypatch.setattr(abi, "runpy", SimpleNamespace(run_path=forbidden_backend))
+    with pytest.raises(abi.Refusal, match="^SYMLINK_REJECTED$"):
+        abi.read_bytes(attempted)
 
 
 def test_readelf_parser_records_versions_without_execution() -> None:
@@ -575,3 +623,53 @@ def test_large_native_artifact_read_and_oversized_refusal(tmp_path: Path) -> Non
         stream.truncate(abi.LIMIT + 1)
     with pytest.raises(abi.Refusal, match="FILE_LIMIT_EXCEEDED"):
         abi.read_bytes(path)
+
+
+def test_cli_parses_exact_pinned_expectation_bytes_once(
+    environment: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    request, expectations, records = environment
+    request_path = tmp_path / "request.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    expectations_path = tmp_path / "expectations.json"
+    pinned = json.dumps(expectations).encode()
+    expectations_path.write_bytes(pinned)
+    original_read = abi.read_bytes
+    original_diagnose = abi.diagnose
+    reads: list[Path] = []
+
+    def mutate_after_pinned_read(path):
+        raw = original_read(path)
+        if path == expectations_path:
+            reads.append(path)
+            expectations_path.write_bytes(b'{"changed_after_pinned_read":"must not be parsed"}')
+        return raw
+
+    monkeypatch.setattr(abi, "read_bytes", mutate_after_pinned_read)
+    monkeypatch.setattr(
+        abi,
+        "diagnose",
+        lambda current_request, current_expectations: original_diagnose(
+            current_request,
+            current_expectations,
+            reader=lambda path: records[str(path)],
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            abi.__file__,
+            str(request_path),
+            "--expectations",
+            str(expectations_path),
+            "--expectations-sha256",
+            abi.sha256(pinned),
+        ],
+    )
+    assert abi.main() == 0
+    report = json.loads(capsys.readouterr().out)
+    assert reads == [expectations_path]
+    assert expectations_path.read_bytes() != pinned
+    assert report["measurements"] == expectations["sha256"]
+    assert report["approval_authority"] == "NOT_ESTABLISHED_BY_THIS_TOOL"
