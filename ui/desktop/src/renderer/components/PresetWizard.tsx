@@ -1,22 +1,9 @@
 import React, { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
-import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { presetSchema, type PresetFormValues } from '../../shared/presetSchema';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { usePerformanceProfiler } from '../contexts/PerformanceProfilerContext';
-
-const presetSchema = z.object({
-  name: z.string().min(3, 'Nazwa powinna mieć co najmniej 3 znaki'),
-  riskLevel: z.enum(['conservative', 'balanced', 'aggressive']),
-  allocation: z.object({
-    spot: z.number().min(0).max(100),
-    futures: z.number().min(0).max(100),
-    staking: z.number().min(0).max(100)
-  }).refine((value) => value.spot + value.futures + value.staking === 100, 'Alokacja musi sumować się do 100%'),
-  exchanges: z.array(z.string()).nonempty('Wybierz przynajmniej jedną giełdę')
-});
-
-type PresetFormValues = z.infer<typeof presetSchema>;
 
 type PresetWizardProps = {
   onActivateStrategy: (strategyId: string | null) => void;
