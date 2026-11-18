@@ -1,0 +1,876 @@
+{
+  "approval": "NOT_GRANTED",
+  "execution": "NOT_EXECUTED",
+  "inspector_recheck": {
+    "addons": {
+      "materialized_members": 1283,
+      "native_members": 189,
+      "omitted_members": 0
+    },
+    "combined_materialization_reason": "WHEEL_MATERIALIZATION_COLLISION:PySide6/Qt3DAnimation.pyi",
+    "combined_materialization_status": "REFUSED",
+    "essentials": {
+      "materialized_members": 2338,
+      "native_members": 263,
+      "omitted_members": 2
+    },
+    "full_operator_wheelhouse": "NOT_REPRODUCED_67_OTHER_WHEELS_NOT_INSPECTED",
+    "real_target_extraction_or_build": "NOT_EXECUTED"
+  },
+  "limitations_pl": [
+    "Magic a70d0d0a identyfikuje format CPython 3.11, nie dokładną wersję poprawkową, build ani kompilator.",
+    "Nie deserializowano marshal, nie wykonywano bytecode ani źródeł; nie wykazano semantycznej równoważności pyc i py.",
+    "Timestamp i rozmiar w nagłówku są deklaracjami, nie kryptograficznym wiązaniem ze źródłem.",
+    "Zgodność SHA-256 z PyPI nie stanowi niezależnej aprobaty, podpisu wydawcy ani kwalifikacji środowiska.",
+    "Wszystkie 62 kolizje pozostają niezatwierdzone; obejmują trzy źródła Python.",
+    "ELF, źródła Python i pozostały kod nadal wymagają dotychczasowego przeglądu i aprobaty; nie wykonano kwalifikacji ABI/runtime."
+  ],
+  "packages": [
+    {
+      "bytecode": [
+        {
+          "flags": 0,
+          "header_hex": "a70d0d0a00000000dd6ccb69df000000",
+          "magic_hex": "a70d0d0a",
+          "member": "PySide6/support/__pycache__/__init__.cpython-311.pyc",
+          "sha256": "5e8a29507803d23847f5444596f792cbf95aa49ece2217cac2cd62489459a883",
+          "size": 353,
+          "source": "PySide6/support/__init__.py",
+          "source_mtime": 1774939357,
+          "source_mtime_utc": "2026-03-31T06:42:37+00:00",
+          "source_present": true,
+          "source_sha256": "544cd819bb55076c22ad952087d0dcef414dc64f6f09a4ac65ad1ee0216b5695",
+          "source_size": 223,
+          "source_size_header": 223,
+          "source_size_matches": true
+        },
+        {
+          "flags": 0,
+          "header_hex": "a70d0d0a00000000dd6ccb695d020000",
+          "magic_hex": "a70d0d0a",
+          "member": "PySide6/support/__pycache__/deprecated.cpython-311.pyc",
+          "sha256": "a5f978d1d2e82a5d08e4a1bbe3a098e486ce601ed18ac1da4ba359aac02d5a02",
+          "size": 293,
+          "source": "PySide6/support/deprecated.py",
+          "source_mtime": 1774939357,
+          "source_mtime_utc": "2026-03-31T06:42:37+00:00",
+          "source_present": true,
+          "source_sha256": "95431e9fc9d51387f56f2b1a75f38be22794a4addcd7c416f09b515ac0c35506",
+          "source_size": 605,
+          "source_size_header": 605,
+          "source_size_matches": true
+        }
+      ],
+      "directories": 0,
+      "distribution": "PySide6-Essentials",
+      "duplicate_names": false,
+      "elf_count": 263,
+      "executable_mode_count": 303,
+      "filename": "pyside6_essentials-6.10.3-cp39-abi3-manylinux_2_34_x86_64.whl",
+      "files": 2340,
+      "members": 2340,
+      "metadata": {
+        "Name": "PySide6_Essentials",
+        "Requires-Dist": [
+          "shiboken6==6.10.3"
+        ],
+        "Requires-Python": "<3.15,>=3.9",
+        "Version": "6.10.3"
+      },
+      "origin_url": "https://files.pythonhosted.org/packages/df/78/1b2bc96e720c17b35f8d6f54a13d32fbcd4cb8a8fc4a3dba8741711a3ab0/pyside6_essentials-6.10.3-cp39-abi3-manylinux_2_34_x86_64.whl",
+      "other_executable_mode_members": [
+        {
+          "member": "PySide6/scripts/requirements-android.txt",
+          "sha256": "4595e166537fdcaca599f1fdea1518188bb9e39c91ba5ff34fcc72d1e84b2e8a",
+          "size": 36
+        },
+        {
+          "member": "PySide6/scripts/deploy_lib/default.spec",
+          "sha256": "c1e35ad6a75ccea2c32e99fad56e4a5ee757297bc6d94a7d16b6bdf96a1dbbaf",
+          "size": 2233
+        },
+        {
+          "member": "PySide6/scripts/deploy_lib/pyside_icon.icns",
+          "sha256": "f78a57af88cbfea1b3b4f10836ffdbad882da0ce7c88fbb0d0bb6704047dd616",
+          "size": 47064
+        },
+        {
+          "member": "PySide6/scripts/deploy_lib/pyside_icon.ico",
+          "sha256": "13086f8c95852e903b5edaf7619a96b64279c152443a2a2f547270cd085aa18b",
+          "size": 48446
+        },
+        {
+          "member": "PySide6/scripts/deploy_lib/pyside_icon.jpg",
+          "sha256": "22450b7fb937f873239488951953480656405f362a881b57eaf33737bd1385a0",
+          "size": 8157
+        }
+      ],
+      "pypi_digest_match": true,
+      "pypi_json_sha256": "10b3425e2246d5478809bef203427d222544e07a59b289cf22a921a73a1e4943",
+      "pypi_json_url": "https://pypi.org/pypi/PySide6-Essentials/6.10.3/json",
+      "python_source_count": 42,
+      "record_file_set_exact": true,
+      "record_sha256_size_checks": 2339,
+      "sha256": "5fb32b48010f513335a2166ac3df279c5996fb96402fd91a4875fc717fe55de0",
+      "size": 77077386,
+      "startup_hooks_pth_pyo_sitecustomize_usercustomize": [],
+      "symlinks_special_files": false,
+      "unsafe_paths": false,
+      "upload_time_iso_8601": "2026-04-02T08:48:47.900915Z",
+      "wheel": {
+        "Generator": "setuptools (78.1.0)",
+        "Root-Is-Purelib": "false",
+        "Tag": "cp39-abi3-manylinux_2_34_x86_64",
+        "Wheel-Version": "1.0"
+      },
+      "zip_contiguous_local_records_no_prefix_no_trailer_no_gaps": true,
+      "zip_crc_local_member_names_read_success": true,
+      "zip_eocd_disk_count_directory_bounds_match": true,
+      "zip_local_central_flags_sizes_crc_methods_agree": true
+    },
+    {
+      "bytecode": [],
+      "directories": 0,
+      "distribution": "PySide6-Addons",
+      "duplicate_names": false,
+      "elf_count": 189,
+      "executable_mode_count": 174,
+      "filename": "pyside6_addons-6.10.3-cp39-abi3-manylinux_2_34_x86_64.whl",
+      "files": 1283,
+      "members": 1283,
+      "metadata": {
+        "Name": "PySide6_Addons",
+        "Requires-Dist": [
+          "shiboken6==6.10.3",
+          "PySide6_Essentials==6.10.3"
+        ],
+        "Requires-Python": "<3.15,>=3.9",
+        "Version": "6.10.3"
+      },
+      "origin_url": "https://files.pythonhosted.org/packages/3d/fb/9df1103a6b71c35a223ea7ba7898c3aa3b1fb91d1aaf85b78f8a9a468121/pyside6_addons-6.10.3-cp39-abi3-manylinux_2_34_x86_64.whl",
+      "other_executable_mode_members": [],
+      "pypi_digest_match": true,
+      "pypi_json_sha256": "ed8347106dd02d23a61e30bef08d61e0608172e8cc55cc05f8b221726bbb763e",
+      "pypi_json_url": "https://pypi.org/pypi/PySide6-Addons/6.10.3/json",
+      "python_source_count": 7,
+      "record_file_set_exact": true,
+      "record_sha256_size_checks": 1282,
+      "sha256": "a9a53a824ba8429953345c89a2dd5dc65d1f1d7e88b6cf1b975a6ef4f4d9760f",
+      "size": 170760635,
+      "startup_hooks_pth_pyo_sitecustomize_usercustomize": [],
+      "symlinks_special_files": false,
+      "unsafe_paths": false,
+      "upload_time_iso_8601": "2026-04-02T08:47:40.365924Z",
+      "wheel": {
+        "Generator": "setuptools (78.1.0)",
+        "Root-Is-Purelib": "false",
+        "Tag": "cp39-abi3-manylinux_2_34_x86_64",
+        "Wheel-Version": "1.0"
+      },
+      "zip_contiguous_local_records_no_prefix_no_trailer_no_gaps": true,
+      "zip_crc_local_member_names_read_success": true,
+      "zip_eocd_disk_count_directory_bounds_match": true,
+      "zip_local_central_flags_sizes_crc_methods_agree": true
+    }
+  ],
+  "profile": "stage9-v5d4-wheel-bytecode-static-inspection-v1",
+  "reference_cpython_magic": {
+    "blob_sha1": "f603a89f7f5a98c5081df371ee6f76aed4df7f79",
+    "confirmed_hex": "a70d0d0a",
+    "expression": "MAGIC_NUMBER = (3495).to_bytes(2, 'little') + b'\\r\\n'",
+    "url": "https://github.com/python/cpython/blob/v3.11.0/Lib/importlib/_bootstrap_external.py#L420"
+  },
+  "repository_base": "b143b570a8159426020ddaac8c31d74059667c70",
+  "retained_inventory_scope_pl": "Raport zachowuje metadane, bytecode, liczniki i wszystkie 62 kolizje; pełen inwentarz wszystkich członków zmierzono przy inspekcji, ale nie powielono w repozytorium. Inspektor odtwarza pełny materialized_members z oryginalnych przypiętych wheel.",
+  "safety_status": {
+    "OBSERVER_3A": "BLOCKED",
+    "PRODUCTION": "NO-GO",
+    "STAGE_3B": "NOT_AUTHORIZED",
+    "STAGE_9": "IN_PROGRESS"
+  },
+  "shared_member_collisions": [
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/Qt3DAnimation.pyi",
+      "mode": "0o100644",
+      "sha256": "ee3b1c65b2ff4ccfb69db77a2b3e287cffee9ae4b19a483b31914289ac8a8625",
+      "size": 30930,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/Qt3DCore.pyi",
+      "mode": "0o100644",
+      "sha256": "abeefd82a06c54e0ceb811e7a6432868fc6f31a930ae0d101b359aa050b5b87f",
+      "size": 35578,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/Qt3DExtras.pyi",
+      "mode": "0o100644",
+      "sha256": "df36057ecb02dc736dc69a949bcbd1bcd40bf2a0ceb46b3b26939cb9421b5706",
+      "size": 75668,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/Qt3DInput.pyi",
+      "mode": "0o100644",
+      "sha256": "2efae1da887b5a8414c1365a60a93759cfb5511ee454a6150c790451956779e4",
+      "size": 23767,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/Qt3DLogic.pyi",
+      "mode": "0o100644",
+      "sha256": "6e12a6c870387d6ed37785dd36347c3a799040a6b28af37ea644f3fde7d22fbf",
+      "size": 994,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/Qt3DRender.pyi",
+      "mode": "0o100644",
+      "sha256": "fcf5352dc5d4d1463a589f61493757852e33981e5ac1bf3142f7fa926e08816a",
+      "size": 147702,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtBluetooth.pyi",
+      "mode": "0o100644",
+      "sha256": "900ff951a4a9df65c654dd5fabf3b0f488ceeaec0e65855c2d6ef0422036a4e8",
+      "size": 72822,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtCharts.pyi",
+      "mode": "0o100644",
+      "sha256": "a058788c9d2782b02477411c6c42b6fef501a9137ba4ace87048c22cc8835f41",
+      "size": 106955,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtConcurrent.pyi",
+      "mode": "0o100644",
+      "sha256": "a3f978e025c2f8f850d8c1b979fd47781d509729e58862eda92038ba5b22a3d5",
+      "size": 3817,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtCore.pyi",
+      "mode": "0o100644",
+      "sha256": "0a8c9dfda27cede5051cabfd582570bf26e1051d5d30bee6114b359627391803",
+      "size": 552930,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtDBus.pyi",
+      "mode": "0o100644",
+      "sha256": "3172df3ac2b505ebf040ca6160cf4b0a9b650bb3755d5476f6abca06c00e765a",
+      "size": 33933,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtDataVisualization.pyi",
+      "mode": "0o100644",
+      "sha256": "f3e4259937840185eeb8a8b53bfe01bec2845f79fc5d8aaa34995d023d20d233",
+      "size": 114681,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtDesigner.pyi",
+      "mode": "0o100644",
+      "sha256": "5f32fc2fc4d4290144936f60e825be6d8820530f8afab883410d78abeb6c5f4e",
+      "size": 29943,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtGraphs.pyi",
+      "mode": "0o100644",
+      "sha256": "d820798c931b8783cf8a026e43c1f9c9334fb9cff21d03c771bfd0d1296bf82d",
+      "size": 154716,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtGraphsWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "02d9fe330ac5aa3749a1a197cc5969ec4bdcb932aba6154e692c10c65adefe29",
+      "size": 20508,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtGui.pyi",
+      "mode": "0o100644",
+      "sha256": "2a597735578534cb7275510e072731e7728f13ea7f4935ce824eb4a61750a718",
+      "size": 625997,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtHelp.pyi",
+      "mode": "0o100644",
+      "sha256": "f0cce35edff64b0373ab510a47f8b7a288274fbc2e4aa061082c3020134fac46",
+      "size": 16618,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtHttpServer.pyi",
+      "mode": "0o100644",
+      "sha256": "17669881470c1da13a83d896d635ea09377d2799695347e9985338ead707db52",
+      "size": 15355,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtLocation.pyi",
+      "mode": "0o100644",
+      "sha256": "cb059fe355c91bf697f489eec4bbe310e5d499af13e518f91283c160ef4a0428",
+      "size": 57311,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtMultimedia.pyi",
+      "mode": "0o100644",
+      "sha256": "c81b630413ca09a7e2c60cb379ae0667bf37d2cf5c64e856757088b0c0094d5c",
+      "size": 88555,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtMultimediaWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "1af5ec4a8fbe91fc67c64019818e07fbefed506212da23f1864bd2399c7c3d10",
+      "size": 3339,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtNetwork.pyi",
+      "mode": "0o100644",
+      "sha256": "ab4cca9fd5239ecb811392d90934908b34ee540c2fc4587f3d7ca1d1f8a43769",
+      "size": 147030,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtNetworkAuth.pyi",
+      "mode": "0o100644",
+      "sha256": "6f6611cd03b7bf2b2831432a878bd69edd49bcc5596861a95936b48616593b76",
+      "size": 27670,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtNfc.pyi",
+      "mode": "0o100644",
+      "sha256": "8bf5b10d2cfc6832e1eb2ab84084e474ac6a49a1136cc86d3d233dfad1202736",
+      "size": 18368,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtOpenGL.pyi",
+      "mode": "0o100644",
+      "sha256": "6720bf58471ac3820fa1b166a7c5368352330b2da3bf9fca918a1d8c8e9a7a5f",
+      "size": 1206589,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtOpenGLWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "518400b2516f2bca39a554acae2acdbb17f307e38a5d4b0fef2db69b300271c5",
+      "size": 3264,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtPdf.pyi",
+      "mode": "0o100644",
+      "sha256": "9574a99062e491da8fb7eb14ec3f7f22776b4a5b2fade39fa4eaf73f757d10fa",
+      "size": 16191,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtPdfWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "15ec6774a171f740f00a8c3e9ea5ec6e55dc0a8818e56821444d2a8002b93fee",
+      "size": 5281,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtPositioning.pyi",
+      "mode": "0o100644",
+      "sha256": "b29a7375e8dd366a8437bae4d97f73d4d4d3b2d06e894b31bd0648a35b76356f",
+      "size": 38444,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtPrintSupport.pyi",
+      "mode": "0o100644",
+      "sha256": "9d953419e558fdf930139c6715fe70c9f384dab2a9104d0ad58ce51092eec5ce",
+      "size": 16889,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtQml.pyi",
+      "mode": "0o100644",
+      "sha256": "d0bef60b580a75515edeaa9c4c2cdfeb76340bb9da5b455dad071e79f869e20e",
+      "size": 51704,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtQuick.pyi",
+      "mode": "0o100644",
+      "sha256": "42c4a63e80323e3a9f761bab3a3b6767193be361a15e19317d9ecd5069ad78f2",
+      "size": 88751,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtQuick3D.pyi",
+      "mode": "0o100644",
+      "sha256": "08d62baeb5a7c3f9de7f77f05c44eaf00ca0d1aa2caccaad20a4aae5eaf0cdb9",
+      "size": 14348,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtQuickControls2.pyi",
+      "mode": "0o100644",
+      "sha256": "3e07d01d0144d883f78d867f3b93c3383a4363f2f980b281e1285d87bbead28f",
+      "size": 1370,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtQuickTest.pyi",
+      "mode": "0o100644",
+      "sha256": "b0977987bbfdea5953e871f7b2ddff971d50dea40ef197de28eac18f39e94a01",
+      "size": 694,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtQuickWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "d3caa79cd9efd5a9440b737e358e2f423199025337a52a14e3b9f20f4ae7f930",
+      "size": 5471,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtRemoteObjects.pyi",
+      "mode": "0o100644",
+      "sha256": "7c31cb6bae4f2d7276a9aac7d6008f2fc4798c2c074b66c7bf73f622aa78819e",
+      "size": 19499,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtScxml.pyi",
+      "mode": "0o100644",
+      "sha256": "e7a769fa9637759e3dc0b311ed9dedc936320089399686e86ceb5c6cf9da7e5c",
+      "size": 17522,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtSensors.pyi",
+      "mode": "0o100644",
+      "sha256": "6233707ce0df307ef6facba50b54378552bd69a98b59e866d9e7f27e257e7fbf",
+      "size": 27936,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtSerialBus.pyi",
+      "mode": "0o100644",
+      "sha256": "27597e0c768cbed3c98cdcef83b06c1197f7b9c514c954d2fd990664a8548e2f",
+      "size": 37587,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtSerialPort.pyi",
+      "mode": "0o100644",
+      "sha256": "105ae6fe2c88c1f678b7e660b3b1063dd76058897568c81656a159073f6dbbfa",
+      "size": 9541,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtSpatialAudio.pyi",
+      "mode": "0o100644",
+      "sha256": "8f1bcfdd5513c93520ebc2f455b89d22c5683fa80b64508c5e9c8db416a5dd6b",
+      "size": 12209,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtSql.pyi",
+      "mode": "0o100644",
+      "sha256": "44ed3a1e86b8e131516261b03f9fadca708de3c7b299188fa8bd400dda81f77b",
+      "size": 34228,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtStateMachine.pyi",
+      "mode": "0o100644",
+      "sha256": "a136d181e090e6d409c3609e6714671a63cb99ec57a8099a7a65950a1265d4af",
+      "size": 17056,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtSvg.pyi",
+      "mode": "0o100644",
+      "sha256": "1d2f7b7f0e49286232a2d269638d0834def5131afbf0b0d7189824c5f111489a",
+      "size": 6746,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtSvgWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "04d9ae9008f7b3248e5a7b8ececff8573ca2cd9b99049e41bcac91fe937cc45c",
+      "size": 2574,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtTest.pyi",
+      "mode": "0o100644",
+      "sha256": "b6d253062f958528635e0312f5cf381a18e3cae9f05f1dccd608d64a33c52da2",
+      "size": 21983,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtTextToSpeech.pyi",
+      "mode": "0o100644",
+      "sha256": "dced47228b32ec1bad29320d4a1f58229ff63852b0cbdda411a05088db546623",
+      "size": 9852,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtUiTools.pyi",
+      "mode": "0o100644",
+      "sha256": "86f1dbf95fbb6d64f8cbdc319eb83a633bea08e64e2d7a10f99c01f323a41619",
+      "size": 2347,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtWebChannel.pyi",
+      "mode": "0o100644",
+      "sha256": "ca69e4cf3879fd211e6cb303f648fdba7f610fddad6d399cba3128ce59a57752",
+      "size": 1948,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtWebEngineCore.pyi",
+      "mode": "0o100644",
+      "sha256": "bcef577be7b4d63fb9a7c1336c54c5ccbe58c501411a6d2cf2d1f9f30d5a1205",
+      "size": 72637,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtWebEngineQuick.pyi",
+      "mode": "0o100644",
+      "sha256": "147d416bc53c50e252ba2993713579d310317c3b17229fdc41de1218e6ff638a",
+      "size": 9035,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtWebEngineWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "f77a57e20d1e40c093cfaa4d6284533b746d62e96424c6a5ad18c58054db2dbf",
+      "size": 6359,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtWebSockets.pyi",
+      "mode": "0o100644",
+      "sha256": "d5016bf161daef5272b43d767e16ae3146c1d03fe8ffbab460c881dc37fb3bd5",
+      "size": 12630,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtWebView.pyi",
+      "mode": "0o100644",
+      "sha256": "1da437dc95e285037fe9c02e785f6cf58847f07f3076b08a65f34c7c7b0f3dfd",
+      "size": 548,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtWidgets.pyi",
+      "mode": "0o100644",
+      "sha256": "88691b6e26b78707e39d2279911da76b9be2aeb76573abb0f85122bba950ca39",
+      "size": 603070,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/QtXml.pyi",
+      "mode": "0o100644",
+      "sha256": "9eb600340820b022d2959d03a723d1423655ba12b624f6578339cf79f0061c5c",
+      "size": 20166,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/__feature__.pyi",
+      "mode": "0o100664",
+      "sha256": "3f3f79ca62c186e1c5d07b228a6db57809c184804449426bda4cd31f269072e5",
+      "size": 246,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/__init__.py",
+      "mode": "0o100644",
+      "sha256": "fe42fff5fcd2e9291495519bd068660a2861173bd106e5f145d8b6f72c1281fe",
+      "size": 6220,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/_config.py",
+      "mode": "0o100644",
+      "sha256": "216206d44725c34fbb9add3ad00e6df452bc3f4eec2e923a0f716607a438d071",
+      "size": 823,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/_git_pyside_version.py",
+      "mode": "0o100644",
+      "sha256": "bac9879d5cf3f32d412f1e94254d1a1b6b6ed2959841519fda9d5645cc561c7b",
+      "size": 693,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    },
+    {
+      "distributions": [
+        "pyside6-essentials",
+        "pyside6-addons"
+      ],
+      "member": "PySide6/py.typed",
+      "mode": "0o100664",
+      "sha256": "154d2b3a1255946ec4511a7952fdb07cfbe01a6ee9c7c6eae5dfabd460c833c1",
+      "size": 33,
+      "status": "REFUSED_REQUIRES_SEPARATE_ANALYSIS"
+    }
+  ],
+  "status": "PROPOSAL_REQUIRES_INDEPENDENT_APPROVAL"
+}

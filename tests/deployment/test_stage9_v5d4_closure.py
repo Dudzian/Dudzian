@@ -9,19 +9,31 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 from scripts import stage9_v5d4_closure as closure
 
 
+POSIX_RUNTIME_SUPPORTED = os.name == "posix" and all(
+    isinstance(getattr(os, flag, None), int) and getattr(os, flag) > 0
+    for flag in ("O_NOFOLLOW", "O_NONBLOCK")
+)
+posix_runtime = pytest.mark.skipif(
+    not POSIX_RUNTIME_SUPPORTED,
+    reason="Dowody bazowego runtime wymagają POSIX oraz O_NOFOLLOW/O_NONBLOCK",
+)
+
+
 def repository(tmp_path: Path, source: str = "") -> Path:
     (tmp_path / "app").mkdir()
-    (tmp_path / "app/__init__.py").write_text("")
-    (tmp_path / "app/main.py").write_text(source)
+    (tmp_path / "app/__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "app/main.py").write_text(source, encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nrequires-python=">=3.11"\ndependencies=["cryptography>=50.0.1,<51"]\n'
-        '[project.optional-dependencies]\nobserver-kvm-preflight=["defusedxml==0.7.1"]\n'
+        '[project.optional-dependencies]\nobserver-kvm-preflight=["defusedxml==0.7.1"]\n',
+        encoding="utf-8",
     )
     return tmp_path
 
@@ -32,9 +44,11 @@ def analyze(tmp_path: Path, source: str = "") -> dict:
 
 def test_initializers_transitive_and_deferred_imports(tmp_path: Path) -> None:
     root = repository(tmp_path, "from . import child\ndef f():\n import optional_external\n")
-    (root / "app/__init__.py").write_text("from . import initialized\n")
-    (root / "app/child.py").write_text("import external_dependency\n")
-    (root / "app/initialized.py").write_text("raise RuntimeError('NIE IMPORTOWAĆ')\n")
+    (root / "app/__init__.py").write_text("from . import initialized\n", encoding="utf-8")
+    (root / "app/child.py").write_text("import external_dependency\n", encoding="utf-8")
+    (root / "app/initialized.py").write_text(
+        "raise RuntimeError('NIE IMPORTOWAĆ')\n", encoding="utf-8"
+    )
     result = closure.inventory(root, ("app/main.py",))
     assert result["static_graph_closed"]
     assert {item["path"] for item in result["sources"]} == {
@@ -239,7 +253,7 @@ def test_literal_dynamic_target_is_recorded_not_approved(tmp_path: Path) -> None
 
 def test_initializer_dynamic_code_not_omitted(tmp_path: Path) -> None:
     root = repository(tmp_path)
-    (root / "app/__init__.py").write_text("eval(value)\n")
+    (root / "app/__init__.py").write_text("eval(value)\n", encoding="utf-8")
     result = closure.inventory(root, ("app/main.py",))
     assert result["unresolved_dynamic_mechanisms"][0]["source"] == "app/__init__.py"
 
@@ -288,9 +302,99 @@ def test_cli_isolated_no_site_output(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(output.read_text())["static_graph_closed"]
+    assert json.loads(output.read_text(encoding="utf-8"))["static_graph_closed"]
 
 
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        {"name": "nt"},
+        {"name": "nt", "O_NOFOLLOW": 131072, "O_NONBLOCK": 2048},
+        {"name": "posix", "O_NONBLOCK": 2048},
+        {"name": "posix", "O_NOFOLLOW": 131072},
+        {"name": "posix", "O_NOFOLLOW": 0, "O_NONBLOCK": 2048},
+        {"name": "posix", "O_NOFOLLOW": 131072, "O_NONBLOCK": 0},
+    ],
+)
+def test_base_runtime_missing_capability_refuses_before_filesystem_access(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capabilities: dict
+) -> None:
+    root = tmp_path / "must-not-be-inspected"
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Nieobsługiwany host nie może normalizować ani odczytywać korzeni runtime")
+
+    # Modelujemy wyłącznie odmowy. To nie kwalifikuje semantyki POSIX na Windows.
+    monkeypatch.setattr(closure, "os", SimpleNamespace(**capabilities, open=forbidden))
+    monkeypatch.setattr(closure, "Path", forbidden)
+    with pytest.raises(closure.Refusal, match="BASE_RUNTIME_POSIX_CAPABILITY_REQUIRED"):
+        closure.base_runtime_inventory([root])
+
+
+def test_base_runtime_capability_refusal_has_controlled_cli_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    output = tmp_path / "must-not-be-created.json"
+    monkeypatch.setattr(closure, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            closure.__file__,
+            "--base-runtime-root",
+            str(tmp_path / "must-not-be-inspected"),
+            "--output",
+            str(output),
+        ],
+    )
+    assert closure.main() == 2
+    captured = capsys.readouterr()
+    assert "Refusal" in captured.err
+    assert "AttributeError" not in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+    assert not output.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Sprawdzenie rzeczywistej odmowy hosta Windows")
+def test_base_runtime_native_windows_refuses_before_root_access(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "missing-runtime"
+    output = tmp_path / "must-not-be-created.json"
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Windows nie może rozpocząć odczytu dowodów bazowego runtime POSIX")
+
+    monkeypatch.setattr(closure, "Path", forbidden)
+    with pytest.raises(closure.Refusal, match="BASE_RUNTIME_POSIX_CAPABILITY_REQUIRED"):
+        closure.base_runtime_inventory([root])
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            closure.__file__,
+            "--base-runtime-root",
+            str(root),
+            "--output",
+            str(output),
+        ],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 2, result.stderr
+    assert b"Refusal" in result.stderr
+    assert b"AttributeError" not in result.stderr
+    assert b"Traceback" not in result.stderr
+    assert result.stdout == b""
+    assert not root.exists()
+    assert not output.exists()
+
+
+@posix_runtime
 def test_base_runtime_superset_hashes_cache_and_all_native_bytes(tmp_path: Path) -> None:
     base = tmp_path / "python3.12"
     (base / "lib-dynload").mkdir(parents=True)
@@ -305,7 +409,7 @@ def test_base_runtime_superset_hashes_cache_and_all_native_bytes(tmp_path: Path)
         (base / relative).write_bytes(data)
     for name in ("site-packages", "dist-packages"):
         (base / name).mkdir()
-        (base / name / "excluded.pth").write_text("import dangerous\n")
+        (base / name / "excluded.pth").write_text("import dangerous\n", encoding="utf-8")
     result = closure.base_runtime_inventory([base])
     assert result["files"] == {
         str(base / name): hashlib.sha256(data).hexdigest() for name, data in values.items()
@@ -317,13 +421,14 @@ def test_base_runtime_superset_hashes_cache_and_all_native_bytes(tmp_path: Path)
     assert not result["installation_approved"]
 
 
+@posix_runtime
 def test_base_runtime_zip_file_root_and_external_symlink_target(tmp_path: Path) -> None:
     archive = tmp_path / "python312.zip"
     archive.write_bytes(b"opaque zip bytes, never opened as code")
     base = tmp_path / "python3.12"
     base.mkdir()
     target = tmp_path / "outside.py"
-    target.write_text("raise RuntimeError('never execute symlink target')\n")
+    target.write_text("raise RuntimeError('never execute symlink target')\n", encoding="utf-8")
     alias = base / "sitecustomize.py"
     alias.symlink_to("../outside.py")
     result = closure.base_runtime_inventory([base, archive])
@@ -337,10 +442,11 @@ def test_base_runtime_zip_file_root_and_external_symlink_target(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("kind", ["directory", "loop", "broken", "ancestor"])
+@posix_runtime
 def test_base_runtime_refuses_unsafe_symlinks(tmp_path: Path, kind: str) -> None:
     base = tmp_path / "base"
     base.mkdir()
-    (base / "source.py").write_text("pass\n")
+    (base / "source.py").write_text("pass\n", encoding="utf-8")
     if kind == "directory":
         (base / "alias").symlink_to(base, target_is_directory=True)
     elif kind == "loop":
@@ -356,6 +462,7 @@ def test_base_runtime_refuses_unsafe_symlinks(tmp_path: Path, kind: str) -> None
         closure.base_runtime_inventory([base])
 
 
+@posix_runtime
 def test_base_runtime_bounded_chain_records_every_external_hop(tmp_path: Path) -> None:
     base = tmp_path / "python3.12"
     base.mkdir()
@@ -375,6 +482,7 @@ def test_base_runtime_bounded_chain_records_every_external_hop(tmp_path: Path) -
     }
 
 
+@posix_runtime
 def test_base_runtime_chain_limit_refuses(tmp_path: Path) -> None:
     base = tmp_path / "base"
     base.mkdir()
@@ -389,6 +497,8 @@ def test_base_runtime_chain_limit_refuses(tmp_path: Path) -> None:
         closure.base_runtime_inventory([base])
 
 
+@posix_runtime
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Scenariusz wymaga rzeczywistego FIFO POSIX")
 def test_base_runtime_refuses_special_file_without_opening_it(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / "pipe")
     with pytest.raises(closure.Refusal, match="specjalny"):
@@ -396,6 +506,7 @@ def test_base_runtime_refuses_special_file_without_opening_it(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("kind", ["file", "directory"])
+@posix_runtime
 def test_base_runtime_unreadable_evidence_refuses(tmp_path: Path, kind: str) -> None:
     target = tmp_path / "evidence"
     if kind == "file":
@@ -410,16 +521,18 @@ def test_base_runtime_unreadable_evidence_refuses(tmp_path: Path, kind: str) -> 
         target.chmod(0o700)
 
 
+@posix_runtime
 def test_base_runtime_empty_or_pth_evidence_refuses(tmp_path: Path) -> None:
     with pytest.raises(closure.Refusal):
         closure.base_runtime_inventory([])
     with pytest.raises(closure.Refusal):
         closure.base_runtime_inventory([tmp_path])
-    (tmp_path / "unexpected.pth").write_text("import dangerous\n")
+    (tmp_path / "unexpected.pth").write_text("import dangerous\n", encoding="utf-8")
     with pytest.raises(closure.Refusal, match=".pth"):
         closure.base_runtime_inventory([tmp_path])
 
 
+@posix_runtime
 def test_base_runtime_changed_file_changes_inventory(tmp_path: Path) -> None:
     target = tmp_path / "stdlib.py"
     target.write_bytes(b"first revision")
@@ -432,7 +545,7 @@ def test_base_runtime_changed_file_changes_inventory(tmp_path: Path) -> None:
 def test_base_runtime_cli_isolated_without_repository(tmp_path: Path) -> None:
     base = tmp_path / "base"
     base.mkdir()
-    (base / "required.py").write_text("raise RuntimeError('never execute')\n")
+    (base / "required.py").write_text("raise RuntimeError('never execute')\n", encoding="utf-8")
     archive = tmp_path / "python312.zip"
     archive.write_bytes(b"zip")
     root = Path(__file__).resolve().parents[2]
@@ -452,6 +565,13 @@ def test_base_runtime_cli_isolated_without_repository(tmp_path: Path) -> None:
         timeout=30,
         check=False,
     )
+    if not POSIX_RUNTIME_SUPPORTED:
+        assert result.returncode == 2, result.stderr
+        assert b"Refusal" in result.stderr
+        assert b"AttributeError" not in result.stderr
+        assert b"Traceback" not in result.stderr
+        assert result.stdout == b""
+        return
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["roots"] == sorted([str(base), str(archive)])

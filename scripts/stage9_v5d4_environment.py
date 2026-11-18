@@ -17,7 +17,7 @@ import runpy
 import stat
 import sys
 import sysconfig
-from typing import Any
+from typing import Any, cast
 import venv
 import zipfile
 
@@ -50,13 +50,28 @@ def file_identity(value: os.stat_result) -> tuple[int, ...]:
 
 
 def read(path: Path) -> bytes:
+    if os.name == "nt":
+        try:
+            return cast(
+                bytes,
+                helper("stage9_v5d4_dependencies.py")["windows_read_regular"](
+                    path, 512 * 1024 * 1024
+                ),
+            )
+        except ValueError as exc:
+            code = "INPUT_LIMIT" if str(exc) == "INPUT_TOO_LARGE" else str(exc)
+            raise Refusal(code) from exc
+    require(
+        os.name == "posix"
+        and bool(getattr(os, "O_NOFOLLOW", None))
+        and bool(getattr(os, "O_NONBLOCK", None)),
+        "SECURE_FILE_READER_UNAVAILABLE",
+    )
     require(not any(p.is_symlink() for p in (path, *path.parents)), "SYMLINK_INPUT")
     before = path.lstat()
     require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1, "NONREGULAR_INPUT")
     require(before.st_size <= 512 * 1024 * 1024, "INPUT_LIMIT")
-    descriptor = os.open(
-        path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    )
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as stream:
         require(file_identity(os.fstat(stream.fileno())) == file_identity(before), "INPUT_CHANGED")
         data = stream.read(512 * 1024 * 1024 + 1)
@@ -68,7 +83,7 @@ def read(path: Path) -> bytes:
     return data
 
 
-def document(path: Path) -> Any:
+def parse_document(raw: bytes) -> Any:
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in items:
@@ -76,7 +91,11 @@ def document(path: Path) -> Any:
             result[key] = value
         return result
 
-    return json.loads(read(path), object_pairs_hook=pairs)
+    return json.loads(raw, object_pairs_hook=pairs)
+
+
+def document(path: Path) -> Any:
+    return parse_document(read(path))
 
 
 def relative(value: str) -> Path:
@@ -95,7 +114,11 @@ def relative(value: str) -> Path:
 def check_startup(path: Path) -> None:
     require(
         path.suffix not in {".pth", ".pyc", ".pyo"}
-        and path.name not in {"sitecustomize.py", "usercustomize.py"}
+        and not any(
+            part in {"sitecustomize", "usercustomize"}
+            or part.startswith(("sitecustomize.", "usercustomize."))
+            for part in path.parts
+        )
         and "__pycache__" not in path.parts,
         "STARTUP_OR_BYTECODE_REJECTED",
     )
@@ -110,12 +133,35 @@ def write_new(root: Path, name: str, data: bytes) -> None:
     path.chmod(0o600)
 
 
-def extract_wheel(data: bytes, destination: Path) -> None:
-    """Tylko purelib/platlib/data, bez skryptów instalacyjnych i bez hooks.
+def reserve_path(files: dict[str, str], directories: set[str], name: str, digest: str) -> None:
+    """Nawet identyczne bajty nie ustanawiają zgody na współdzielenie pliku."""
+    path = relative(name)
+    check_startup(path)
+    require(name not in files and name not in directories, "MATERIALIZATION_COLLISION")
+    parents = [parent.as_posix() for parent in path.parents if parent != Path(".")]
+    require(not any(parent in files for parent in parents), "MATERIALIZATION_COLLISION")
+    files[name] = digest
+    directories.update(parents)
 
-    Dane .data/data są zachowane w jawnej lokalnej lokalizacji; koła potrzebujące
-    systemowego prefixu, nagłówków lub skryptów wymagają osobnego projektu.
+
+def wheel_plan(data: bytes, package: dict[str, Any] | None = None) -> dict[str, dict[str, str]]:
+    """Pełna walidacja poprzedza pierwszy zapis; nic z wheel nie jest wykonywane.
+
+    Budowa zawsze przekazuje kompletny pakiet z propozycji i ponownie używa
+    inspektora. Wariant bez pakietu służy wyłącznie surowemu kopiowaniu ZIP:
+    nie może pomijać bytecode ani przyznawać wyjątku od kontroli startup.
     """
+    if package is not None:
+        deps = helper("stage9_v5d4_dependencies.py")
+        rebuilt = deps["inspect_wheel_bytes"](data, package["filename"], package["origin"])
+        require(
+            deps["canonical"](rebuilt) == deps["canonical"](package),
+            "WHEEL_PLAN_CHANGED_AFTER_VERIFICATION",
+        )
+        return dict(rebuilt["materialized_members"])
+    plan: dict[str, dict[str, str]] = {}
+    files: dict[str, str] = {}
+    directories: set[str] = set()
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         require(len(archive.infolist()) < 100_000, "WHEEL_MEMBER_LIMIT")
         require(sum(i.file_size for i in archive.infolist()) <= 2 * 1024**3, "WHEEL_SIZE_LIMIT")
@@ -123,8 +169,11 @@ def extract_wheel(data: bytes, destination: Path) -> None:
         for info in archive.infolist():
             require(info.filename not in seen, "DUPLICATE_WHEEL_MEMBER")
             seen.add(info.filename)
+            require(info.orig_filename == info.filename, "UNSAFE_MEMBER")
             p = relative(info.filename.rstrip("/"))
-            require(not stat.S_ISLNK(info.external_attr >> 16), "WHEEL_SYMLINK")
+            mode = info.external_attr >> 16
+            require(stat.S_IFMT(mode) in {0, stat.S_IFREG, stat.S_IFDIR}, "WHEEL_MEMBER_SPECIAL")
+            check_startup(p)
             if info.is_dir():
                 continue
             parts = p.parts
@@ -133,7 +182,40 @@ def extract_wheel(data: bytes, destination: Path) -> None:
                     len(parts) > 2 and parts[1] in {"purelib", "platlib"}, "UNSUPPORTED_WHEEL_DATA"
                 )
                 p = Path(*parts[2:])
-            write_new(destination, p.as_posix(), archive.read(info))
+            content_sha = sha(archive.read(info))
+            reserve_path(files, directories, p.as_posix(), content_sha)
+            plan[info.filename] = {"path": p.as_posix(), "sha256": content_sha}
+    return plan
+
+
+def extract_wheel(data: bytes, destination: Path, package: dict[str, Any] | None = None) -> None:
+    """Materializuj dokładny plan; oryginalny wheel i RECORD pozostają niezmienione."""
+    plan = wheel_plan(data, package)
+    # Sprawdź wszystkie istniejące cele przed jakimkolwiek zapisem tego wheel.
+    for member in plan.values():
+        target = destination / relative(member["path"])
+        check_startup(target)
+        require(not target.exists() and not target.is_symlink(), "MATERIALIZATION_COLLISION")
+        for parent in target.parents:
+            require(not parent.is_symlink(), "MATERIALIZATION_SYMLINK")
+            require(not parent.exists() or parent.is_dir(), "MATERIALIZATION_COLLISION")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for name, member in plan.items():
+            content = archive.read(name)
+            require(sha(content) == member["sha256"], "WHEEL_MEMBER_PLAN_MISMATCH")
+            write_new(destination, member["path"], content)
+
+
+def verify_materialized(root: Path, expected: dict[str, str]) -> None:
+    actual: dict[str, str] = {}
+    for path in root.rglob("*"):
+        require(not path.is_symlink(), "MATERIALIZATION_SYMLINK")
+        check_startup(path)
+        if path.is_dir():
+            continue
+        require(stat.S_ISREG(path.lstat().st_mode), "MATERIALIZATION_SPECIAL")
+        actual[path.relative_to(root).as_posix()] = sha(read(path))
+    require(actual == expected, "MATERIALIZED_INVENTORY_MISMATCH")
 
 
 def helper(name: str) -> dict[str, Any]:
@@ -142,6 +224,12 @@ def helper(name: str) -> dict[str, Any]:
 
 
 def host_contract() -> dict[str, str]:
+    require(sys.platform == "linux", "UBUNTU_LINUX_HOST_REQUIRED")
+    require(
+        callable(getattr(platform, "freedesktop_os_release", None))
+        and callable(getattr(os, "confstr", None)),
+        "LINUX_HOST_CAPABILITY_MISSING",
+    )
     release = platform.freedesktop_os_release()
     return {
         "python_full_version": platform.python_version(),
@@ -158,16 +246,18 @@ def host_contract() -> dict[str, str]:
 
 def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dict[str, Any]:
     require(sys.flags.isolated == 1 and sys.flags.no_site == 1, "REQUIRE_ISOLATED_NO_SITE")
-    require(
-        sys.platform == "linux" and getattr(os, "geteuid")() != 0, "UNPRIVILEGED_ACCOUNT_REQUIRED"
-    )
+    require(sys.platform == "linux", "UBUNTU_LINUX_HOST_REQUIRED")
+    geteuid = getattr(os, "geteuid", None)
+    if not callable(geteuid):
+        raise Refusal("LINUX_HOST_CAPABILITY_MISSING")
+    require(geteuid() != 0, "UNPRIVILEGED_ACCOUNT_REQUIRED")
     require(
         set(inputs)
         == {"repository", "wheelhouse", "origins", "proposal", "abi_request", "abi_expectations"},
         "INPUT_SCHEMA_REJECTED",
     )
     require(
-        set(approval)
+        set(approval) - {"wheel_omissions"}
         == {
             "host",
             "proposal_sha256",
@@ -228,6 +318,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         proposal,
         approval["proposal_sha256"],
         approval["wheel_native"],
+        approval.get("wheel_omissions"),
     )
     closure_tools = helper("stage9_v5d4_closure.py")
     closure = closure_tools["inventory"](repository)
@@ -260,38 +351,21 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
             )
     abi_request_raw = read(Path(inputs["abi_request"]))
     require(sha(abi_request_raw) == approval["abi_request_sha256"], "ABI_REQUEST_MISMATCH")
-    abi_request = document(Path(inputs["abi_request"]))
+    abi_request = parse_document(abi_request_raw)
     abi_expectations_raw = read(Path(inputs["abi_expectations"]))
     require(
         sha(abi_expectations_raw) == approval["abi_expectations_sha256"],
         "ABI_EXPECTATIONS_MISMATCH",
     )
-    abi_expectations = document(Path(inputs["abi_expectations"]))
-    # Wszystkie kontrole poprzedzają tworzenie nowego katalogu. Częściowy wynik
-    # po I/O failure nie ma ENVIRONMENT.json i nie nadaje się do uruchomienia.
-    output.mkdir(mode=0o700)
-    runtime = output / "venv"
-    venv.EnvBuilder(system_site_packages=False, with_pip=False, symlinks=False).create(runtime)
-    # venv tworzy ten alias nawet przy symlinks=False. Nie jest używany przy -S.
-    lib64 = runtime / "lib64"
-    if lib64.is_symlink() and lib64.readlink() == Path("lib"):
-        lib64.unlink()
+    abi_expectations = parse_document(abi_expectations_raw)
     packages = output / "packages"
-    packages.mkdir(mode=0o700)
+    runtime = output / "venv"
     require(abi_request["import_roots"] == [str(packages)], "IMPORT_ROOT_PLAN_MISMATCH")
     require(
         {"libvirt", "libvirtmod", "cryptography", "defusedxml"}
         <= set(abi_request["required_imports"]),
         "REQUIRED_IMPORTS_MISSING",
     )
-    for package in proposal["packages"]:
-        data = read(Path(inputs["wheelhouse"]) / package["filename"])
-        require(sha(data) == package["sha256"], "WHEEL_CHANGED_AFTER_VERIFICATION")
-        extract_wheel(data, packages)
-    for name, digest in code.items():
-        data = read(repository / relative(name))
-        require(sha(data) == digest, "SOURCE_CHANGED_AFTER_REVIEW")
-        write_new(packages, name, data)
     bindings = approval["bindings"]
     require(
         set(bindings) == {"libvirt.py", "libvirtmod.cpython-312-x86_64-linux-gnu.so"},
@@ -301,18 +375,35 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         "libvirt.py": abi_request["libvirt_module"],
         "libvirtmod.cpython-312-x86_64-linux-gnu.so": abi_request["libvirt_extension"],
     }
+    planned: dict[str, str] = {}
+    planned_directories: set[str] = set()
+    for package in proposal["packages"]:
+        data = read(Path(inputs["wheelhouse"]) / relative(package["filename"]))
+        require(sha(data) == package["sha256"], "WHEEL_CHANGED_AFTER_VERIFICATION")
+        for member in wheel_plan(data, package).values():
+            reserve_path(planned, planned_directories, member["path"], member["sha256"])
+    for name, digest in code.items():
+        require(sha(read(repository / relative(name))) == digest, "SOURCE_CHANGED_AFTER_REVIEW")
+        reserve_path(planned, planned_directories, name, digest)
     for name, expected in bindings.items():
-        data = read(Path(expected["path"]))
-        require(sha(data) == expected["sha256"], "SYSTEM_BINDING_MISMATCH")
-        # Weryfikator analizuje KOPIĘ w nowym środowisku, nie inny plik hosta.
+        require(sha(read(Path(expected["path"]))) == expected["sha256"], "SYSTEM_BINDING_MISMATCH")
         require(binding_paths[name] == str(packages / name), "BINDING_ABI_PATH_MISMATCH")
-        write_new(packages, name, data)
+        reserve_path(planned, planned_directories, name, expected["sha256"])
     expected_interpreter = runtime / "bin" / "python3.12"
     require(
         abi_request["interpreter"] == str(expected_interpreter), "INTERPRETER_ABI_PATH_MISMATCH"
     )
+    # Dotychczasowy profil nie przyznaje zgody na relokację native z .data.
+    require(
+        not any(
+            ".data/" in member
+            for package in proposal["packages"]
+            for member in package["native_members"]
+        ),
+        "NATIVE_DATA_RELOCATION_REQUIRES_REVIEW",
+    )
     native_paths = {
-        str(packages / relative(member))
+        str(packages / relative(package["materialized_members"][member]["path"]))
         for package in proposal["packages"]
         for member in package["native_members"]
     } | {
@@ -320,15 +411,35 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         *base_runtime["native"],
         *host_tools,
     }
-    # .data relocation musi mieć to samo mapowanie także w zatwierdzonym ABI.
-    require(
-        not any(".data/" in name for name in native_paths), "NATIVE_DATA_RELOCATION_REQUIRES_REVIEW"
-    )
     require(
         native_paths
         <= set(abi_request["additional_extensions"]) | {abi_request["libvirt_extension"]},
         "NATIVE_ABI_INVENTORY_INCOMPLETE",
     )
+    # Pełne plany, aprobaty i kolizje sprawdzono przed pierwszym zapisem.
+    # ABI bada dopiero kopie. Częściowy wynik nie ma ENVIRONMENT.json.
+    output.mkdir(mode=0o700)
+    venv.EnvBuilder(system_site_packages=False, with_pip=False, symlinks=False).create(runtime)
+    # venv tworzy ten alias nawet przy symlinks=False. Nie jest używany przy -S.
+    lib64 = runtime / "lib64"
+    if lib64.is_symlink() and lib64.readlink() == Path("lib"):
+        lib64.unlink()
+    packages.mkdir(mode=0o700)
+    for package in proposal["packages"]:
+        data = read(Path(inputs["wheelhouse"]) / package["filename"])
+        require(sha(data) == package["sha256"], "WHEEL_CHANGED_AFTER_VERIFICATION")
+        extract_wheel(data, packages, package)
+    for name, digest in code.items():
+        data = read(repository / relative(name))
+        require(sha(data) == digest, "SOURCE_CHANGED_AFTER_REVIEW")
+        write_new(packages, name, data)
+    for name, expected in bindings.items():
+        data = read(Path(expected["path"]))
+        require(sha(data) == expected["sha256"], "SYSTEM_BINDING_MISMATCH")
+        # Weryfikator analizuje KOPIĘ w nowym środowisku, nie inny plik hosta.
+        require(binding_paths[name] == str(packages / name), "BINDING_ABI_PATH_MISMATCH")
+        write_new(packages, name, data)
+    verify_materialized(packages, planned)
     abi_result = helper("stage9_v5d4_abi.py")["diagnose"](abi_request, abi_expectations)
     require(abi_result["status"] == "STATIC_ABI_MATCH", "ABI_REFUSED")
     require(
@@ -338,16 +449,36 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     write_new(output, "launch.py", launcher)
     write_new(output, "runtime-audit.py", read(Path(__file__).with_name("stage9_v5d4_closure.py")))
     files = {
-        p.relative_to(output).as_posix(): sha(p.read_bytes())
+        p.relative_to(output).as_posix(): sha(read(p))
         for p in sorted(output.rglob("*"))
         if p.is_file() and not p.is_symlink()
     }
+    require(
+        {
+            name.removeprefix("packages/"): digest
+            for name, digest in files.items()
+            if name.startswith("packages/")
+        }
+        == planned,
+        "MATERIALIZED_INVENTORY_CHANGED_BEFORE_RECEIPT",
+    )
+    verify_materialized(packages, planned)
     receipt = {
         "profile": "stage9-v5d4-prepared-environment-v1",
         "files": files,
         "host": expected_host,
         "root": str(output),
         "dependency_verification": verification,
+        "wheel_archives": [
+            {key: package[key] for key in ("name", "version", "filename", "sha256", "origin")}
+            for package in proposal["packages"]
+        ],
+        "wheel_omissions": [
+            member for package in proposal["packages"] for member in package["omitted_members"]
+        ],
+        "installation_contract_exception": approval.get("wheel_omissions"),
+        "wheel_record_semantics": "UNCHANGED_UPSTREAM_ARCHIVE_RECORD_NOT_INSTALLED_INVENTORY",
+        "package_files": planned,
         "base_runtime": base_runtime,
         "external_files": {
             **base_runtime["files"],
@@ -383,7 +514,7 @@ def main() -> int:
     try:
         raw = read(args.approval)
         require(sha(raw) == args.approval_sha256, "INDEPENDENT_APPROVAL_DIGEST_MISMATCH")
-        result = build(document(args.inputs), document(args.approval), args.output)
+        result = build(document(args.inputs), parse_document(raw), args.output)
         print(
             json.dumps(
                 {
