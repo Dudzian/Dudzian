@@ -60,6 +60,15 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print('{"status":"REFUSED","reason":"EXPLICIT_NATIVE_LOAD_GATE_REQUIRED"}')
         return 2
+    if sys.platform != "linux":
+        print('{"status":"REFUSED","reason":"UBUNTU_LINUX_HOST_REQUIRED"}')
+        return 2
+    if not (
+        callable(getattr(platform, "freedesktop_os_release", None))
+        and callable(getattr(os, "confstr", None))
+    ):
+        print('{"status":"REFUSED","reason":"LINUX_HOST_CAPABILITY_MISSING"}')
+        return 2
     root = Path(__file__).absolute().parent
     try:
         receipt_metadata = (root / "ENVIRONMENT.json").lstat()

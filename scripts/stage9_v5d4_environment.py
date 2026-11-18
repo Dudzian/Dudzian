@@ -17,7 +17,7 @@ import runpy
 import stat
 import sys
 import sysconfig
-from typing import Any
+from typing import Any, cast
 import venv
 import zipfile
 
@@ -50,13 +50,28 @@ def file_identity(value: os.stat_result) -> tuple[int, ...]:
 
 
 def read(path: Path) -> bytes:
+    if os.name == "nt":
+        try:
+            return cast(
+                bytes,
+                helper("stage9_v5d4_dependencies.py")["windows_read_regular"](
+                    path, 512 * 1024 * 1024
+                ),
+            )
+        except ValueError as exc:
+            code = "INPUT_LIMIT" if str(exc) == "INPUT_TOO_LARGE" else str(exc)
+            raise Refusal(code) from exc
+    require(
+        os.name == "posix"
+        and bool(getattr(os, "O_NOFOLLOW", None))
+        and bool(getattr(os, "O_NONBLOCK", None)),
+        "SECURE_FILE_READER_UNAVAILABLE",
+    )
     require(not any(p.is_symlink() for p in (path, *path.parents)), "SYMLINK_INPUT")
     before = path.lstat()
     require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1, "NONREGULAR_INPUT")
     require(before.st_size <= 512 * 1024 * 1024, "INPUT_LIMIT")
-    descriptor = os.open(
-        path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    )
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as stream:
         require(file_identity(os.fstat(stream.fileno())) == file_identity(before), "INPUT_CHANGED")
         data = stream.read(512 * 1024 * 1024 + 1)
@@ -209,6 +224,12 @@ def helper(name: str) -> dict[str, Any]:
 
 
 def host_contract() -> dict[str, str]:
+    require(sys.platform == "linux", "UBUNTU_LINUX_HOST_REQUIRED")
+    require(
+        callable(getattr(platform, "freedesktop_os_release", None))
+        and callable(getattr(os, "confstr", None)),
+        "LINUX_HOST_CAPABILITY_MISSING",
+    )
     release = platform.freedesktop_os_release()
     return {
         "python_full_version": platform.python_version(),
@@ -225,9 +246,11 @@ def host_contract() -> dict[str, str]:
 
 def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dict[str, Any]:
     require(sys.flags.isolated == 1 and sys.flags.no_site == 1, "REQUIRE_ISOLATED_NO_SITE")
-    require(
-        sys.platform == "linux" and getattr(os, "geteuid")() != 0, "UNPRIVILEGED_ACCOUNT_REQUIRED"
-    )
+    require(sys.platform == "linux", "UBUNTU_LINUX_HOST_REQUIRED")
+    geteuid = getattr(os, "geteuid", None)
+    if not callable(geteuid):
+        raise Refusal("LINUX_HOST_CAPABILITY_MISSING")
+    require(geteuid() != 0, "UNPRIVILEGED_ACCOUNT_REQUIRED")
     require(
         set(inputs)
         == {"repository", "wheelhouse", "origins", "proposal", "abi_request", "abi_expectations"},

@@ -1,5 +1,9 @@
 # Stage 9 — V5d4: pominięcie przypiętego bytecode obcej wersji
 
+Uzupełnienie po pełnym CI:
+[remediacja Windows/macOS/Ubuntu i wykaz wszystkich awarii](stage9_v5d4_pr3284_ci_remediation.md).
+Polityka bytecode, RECORD, aprobaty i kolizji pozostaje bez zmian.
+
 Baza: `b143b570a8159426020ddaac8c31d74059667c70`, repozytorium
 `Dudzian/Dudzian`. Poprawka rozpoznaje wyłącznie dwa dokładnie przypięte pliki
 bytecode CPython 3.11 z określonego wheel PySide6-Essentials 6.10.3 jako

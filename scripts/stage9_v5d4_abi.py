@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import stat
 import subprocess
 from collections.abc import Callable
@@ -57,14 +58,25 @@ def file_identity(value: os.stat_result) -> tuple[int, ...]:
 
 def read_bytes(path: Path) -> bytes:
     require(path.is_absolute() and str(path) == os.path.abspath(path), "PATH_REJECTED")
+    if os.name == "nt":
+        tools = runpy.run_path(str(Path(__file__).with_name("stage9_v5d4_dependencies.py")))
+        try:
+            return cast(bytes, tools["windows_read_regular"](path, LIMIT))
+        except ValueError as exc:
+            code = "FILE_LIMIT_EXCEEDED" if str(exc) == "INPUT_TOO_LARGE" else str(exc)
+            raise Refusal(code) from exc
+    require(
+        os.name == "posix"
+        and bool(getattr(os, "O_NOFOLLOW", None))
+        and bool(getattr(os, "O_NONBLOCK", None)),
+        "SECURE_FILE_READER_UNAVAILABLE",
+    )
     for component in (*reversed(path.parents), path):
         require(not component.is_symlink(), "SYMLINK_REJECTED")
     metadata = path.lstat()
     require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1, "FILE_REJECTED")
     require(0 <= metadata.st_size <= LIMIT, "FILE_LIMIT_EXCEEDED")
-    descriptor = os.open(
-        path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    )
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as stream:
         require(
             file_identity(os.fstat(stream.fileno())) == file_identity(metadata), "ARTIFACT_CHANGED"

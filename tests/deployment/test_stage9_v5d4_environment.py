@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+import subprocess
 import sys
 import time
 import zipfile
@@ -37,6 +38,9 @@ def test_readers_allow_read_access_time_update(tmp_path: Path, reader) -> None:
 
 @pytest.mark.parametrize(
     "reader", [environment_module.read, abi_module.read_bytes, dependency_module.read_regular]
+)
+@pytest.mark.skipif(
+    os.name != "posix", reason="Test deskryptora POSIX; Windows blokuje zapis natywnym uchwytem."
 )
 def test_readers_detect_same_size_mutation_during_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader
@@ -73,14 +77,23 @@ def wheel(files: dict[str, bytes]) -> bytes:
     data = io.BytesIO()
     with zipfile.ZipFile(data, "w") as archive:
         for path, value in files.items():
-            archive.writestr(path, value)
+            # ZipInfo(path) normalizuje separator Windows przed zapisem. Fixture
+            # musi zachować w lokalnym i centralnym nagłówku badane surowe bajty.
+            info = zipfile.ZipInfo()
+            info.filename = path
+            info.orig_filename = path
+            archive.writestr(info, value)
     return data.getvalue()
 
 
 @pytest.mark.parametrize("name", ["../x", "/x", "x/../../y", "x\\y", "x//y"])
 def test_wheel_path_escape(tmp_path: Path, name: str) -> None:
+    data = wheel({name: b"bad"})
+    assert name.encode("utf-8") in data
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        assert archive.infolist()[0].orig_filename == name
     with pytest.raises(ValueError):
-        env["extract_wheel"](wheel({name: b"bad"}), tmp_path)
+        env["extract_wheel"](data, tmp_path)
     assert not (tmp_path.parent / "x").exists()
 
 
@@ -173,6 +186,7 @@ def test_runtime_unexpected_nested_receipt_is_not_ignored(tmp_path: Path) -> Non
         launch["verify_tree"](tmp_path, {})
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO wymaga natywnego API POSIX.")
 def test_runtime_unexpected_fifo_refuses_before_open(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / "module.py")
     with pytest.raises(ValueError, match="NONREGULAR_RUNTIME"):
@@ -198,6 +212,165 @@ def test_native_load_requires_explicit_gate() -> None:
     assert launch["main"](["--authorize-native-load"]) == 2
 
 
+@pytest.mark.parametrize("host_platform", ["win32", "darwin"])
+def test_unsupported_build_host_refuses_before_linux_apis(tmp_path, monkeypatch, host_platform):
+    namespace = env["build"].__globals__
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Nieobsługiwany host nie może odczytywać API ani materiału Linux.")
+
+    monkeypatch.setitem(
+        namespace,
+        "sys",
+        SimpleNamespace(flags=SimpleNamespace(isolated=1, no_site=1), platform=host_platform),
+    )
+    monkeypatch.setitem(namespace, "os", SimpleNamespace(geteuid=forbidden, confstr=forbidden))
+    monkeypatch.setitem(namespace, "platform", SimpleNamespace(freedesktop_os_release=forbidden))
+    monkeypatch.setitem(namespace, "helper", forbidden)
+    with pytest.raises(ValueError, match="UBUNTU_LINUX_HOST_REQUIRED"):
+        env["host_contract"]()
+    with pytest.raises(ValueError, match="UBUNTU_LINUX_HOST_REQUIRED"):
+        env["build"]({}, {}, tmp_path / "new")
+    assert not (tmp_path / "new").exists()
+
+
+@pytest.mark.parametrize("host_platform", ["win32", "darwin"])
+def test_unsupported_launcher_host_refuses_before_evidence_or_imports(
+    monkeypatch, capsys, host_platform
+):
+    namespace = launch["main"].__globals__
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Nieobsługiwany host nie może czytać os-release ani ładować runtime.")
+
+    monkeypatch.setitem(
+        namespace,
+        "sys",
+        SimpleNamespace(
+            flags=SimpleNamespace(isolated=1, no_site=1),
+            dont_write_bytecode=True,
+            platform=host_platform,
+        ),
+    )
+    monkeypatch.setitem(namespace, "os", SimpleNamespace(confstr=forbidden))
+    monkeypatch.setitem(namespace, "platform", SimpleNamespace(freedesktop_os_release=forbidden))
+    monkeypatch.setitem(namespace, "runpy", SimpleNamespace(run_path=forbidden))
+    monkeypatch.setitem(namespace, "importlib", SimpleNamespace(import_module=forbidden))
+    assert launch["main"](["--authorize-native-load", "--receipt-sha256", "0" * 64]) == 2
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["reason"] == "UBUNTU_LINUX_HOST_REQUIRED"
+    assert "Traceback" not in captured.err
+
+
+def test_build_missing_uid_capability_is_controlled_refusal(tmp_path, monkeypatch):
+    namespace = env["build"].__globals__
+    monkeypatch.setitem(
+        namespace,
+        "sys",
+        SimpleNamespace(flags=SimpleNamespace(isolated=1, no_site=1), platform="linux"),
+    )
+    monkeypatch.setitem(namespace, "os", SimpleNamespace())
+    with pytest.raises(ValueError, match="LINUX_HOST_CAPABILITY_MISSING"):
+        env["build"]({}, {}, tmp_path / "new")
+    assert not (tmp_path / "new").exists()
+
+
+@pytest.mark.parametrize("missing", ["os_release", "confstr"])
+def test_host_contract_missing_linux_capability_refuses_before_calls(monkeypatch, missing):
+    namespace = env["host_contract"].__globals__
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Niekompletny zestaw API nie może być użyty do pomiaru hosta.")
+
+    monkeypatch.setitem(namespace, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setitem(
+        namespace,
+        "platform",
+        SimpleNamespace(
+            **({} if missing == "os_release" else {"freedesktop_os_release": forbidden})
+        ),
+    )
+    monkeypatch.setitem(
+        namespace, "os", SimpleNamespace(**({} if missing == "confstr" else {"confstr": forbidden}))
+    )
+    with pytest.raises(ValueError, match="LINUX_HOST_CAPABILITY_MISSING"):
+        env["host_contract"]()
+
+
+@pytest.mark.parametrize("missing", ["os_release", "confstr"])
+def test_launcher_missing_linux_capability_refuses_before_evidence(monkeypatch, capsys, missing):
+    namespace = launch["main"].__globals__
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Brak możliwości pomiaru hosta musi zatrzymać launcher przed odczytami.")
+
+    monkeypatch.setitem(
+        namespace,
+        "sys",
+        SimpleNamespace(
+            flags=SimpleNamespace(isolated=1, no_site=1), dont_write_bytecode=True, platform="linux"
+        ),
+    )
+    monkeypatch.setitem(
+        namespace,
+        "platform",
+        SimpleNamespace(
+            **({} if missing == "os_release" else {"freedesktop_os_release": forbidden})
+        ),
+    )
+    monkeypatch.setitem(
+        namespace, "os", SimpleNamespace(**({} if missing == "confstr" else {"confstr": forbidden}))
+    )
+    assert launch["main"](["--authorize-native-load", "--receipt-sha256", "0" * 64]) == 2
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["reason"] == "LINUX_HOST_CAPABILITY_MISSING"
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.skipif(
+    sys.platform == "linux", reason="Odmowa wymaga rzeczywistego Windows lub macOS."
+)
+@pytest.mark.parametrize("tool", ["builder", "launcher"])
+def test_native_unsupported_host_cli_refuses_without_traceback(tmp_path, tool):
+    if tool == "builder":
+        inputs = tmp_path / "inputs.json"
+        inputs.write_bytes(b"{}")
+        approval = tmp_path / "approval.json"
+        approval.write_bytes(b"{}")
+        command = [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            env["__file__"],
+            "--inputs",
+            str(inputs),
+            "--approval",
+            str(approval),
+            "--approval-sha256",
+            env["sha"](b"{}"),
+            "--output",
+            str(tmp_path / "new"),
+        ]
+    else:
+        command = [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            launch["__file__"],
+            "--authorize-native-load",
+            "--receipt-sha256",
+            "0" * 64,
+        ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["status"] == "REFUSED"
+    assert "Traceback" not in result.stderr
+    assert not (tmp_path / "new").exists()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Natywna bramka uruchomienia wymaga Linux.")
 def test_native_gate_checks_receipt_and_never_invokes_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -213,6 +386,7 @@ def test_native_gate_checks_receipt_and_never_invokes_preflight(
             dont_write_bytecode=True,
             executable=sys.executable,
             meta_path=finder_list,
+            platform=sys.platform,
         ),
     )
     monkeypatch.setitem(namespace, "importlib", SimpleNamespace(import_module=calls.append))
@@ -259,6 +433,8 @@ def test_build_refuses_without_isolated_startup(tmp_path: Path) -> None:
 @pytest.fixture
 def staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Zastąp wyłącznie granicę hosta/ELF; pliki i staging pozostają rzeczywiste."""
+    if sys.platform != "linux":
+        pytest.skip("Model rootless staging bada kontrakt Linux; inne hosty odmawiają.")
     namespace = env["build"].__globals__
     host = {
         "python_full_version": "3.12.3",

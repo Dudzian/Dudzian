@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 import copy
 import csv
 import hashlib
 import io
 import json
+import os
 import stat
 from pathlib import Path
 import subprocess
@@ -53,7 +55,14 @@ def wheel(
     path = directory / f"{name}-{selected}-{tag}.whl"
     with zipfile.ZipFile(path, "w") as archive:
         for member, data in entries.items():
-            archive.writestr(member, data)
+            # ZipInfo(member) normalizuje ukośniki na Windows i ucina NUL.
+            # Fixture musi zachować rzeczywiste niepoprawne bajty członka.
+            info = zipfile.ZipInfo()
+            info.filename = member
+            info.orig_filename = member
+            info.create_system = 3
+            info.external_attr = (stat.S_IFREG | 0o644) << 16
+            archive.writestr(info, data)
     return path, {
         "url": f"https://example.invalid/{path.name}",
         "source": "TEST ONLY",
@@ -303,6 +312,15 @@ def test_supported_version_profile(actual: str, specifier: str, expected: bool) 
 def test_unsafe_wheel_members_refuse(tmp_path: Path, member: str) -> None:
     path, origin = wheel(tmp_path, "example", files={member: b"payload"})
     with pytest.raises(deps.Refusal):
+        deps.inspect_wheel(path, origin)
+
+
+@pytest.mark.parametrize("member", ["package\\escape.py", "package/\x00escape.py"])
+def test_wheel_fixture_preserves_unsafe_raw_member_names(tmp_path: Path, member: str) -> None:
+    path, origin = wheel(tmp_path, "example", files={member: b"inert"})
+    with zipfile.ZipFile(path) as archive:
+        assert member in {item.orig_filename for item in archive.infolist()}
+    with pytest.raises(deps.Refusal, match="^WHEEL_MEMBER_PATH$"):
         deps.inspect_wheel(path, origin)
 
 
@@ -905,11 +923,138 @@ def test_archive_executable_bit_does_not_create_unreviewed_native_or_executable_
                 item.create_system = 3
                 item.external_attr = (stat.S_IFREG | 0o755) << 16
             archive.writestr(item, content)
-    origin["sha256"] = deps.digest(path.read_bytes())
+    archive_bytes = path.read_bytes()
+    origin["sha256"] = deps.digest(archive_bytes)
     package = deps.inspect_wheel(path, origin)
     assert package["native_members"] == {}
+    approved_members = copy.deepcopy(package["materialized_members"])
     destination = tmp_path / "packages"
     destination.mkdir()
-    environment.extract_wheel(path.read_bytes(), destination, package)
-    assert (destination / member).read_bytes() == b"plain inert data"
-    assert stat.S_IMODE((destination / member).stat().st_mode) == 0o600
+    environment.extract_wheel(archive_bytes, destination, package)
+    materialized = destination / member
+    assert materialized.read_bytes() == b"plain inert data"
+    assert deps.digest(materialized.read_bytes()) == approved_members[member]["sha256"]
+    mode = stat.S_IMODE(materialized.stat().st_mode)
+    assert mode & 0o111 == 0
+    if os.name == "posix":
+        assert mode == 0o600
+    environment.verify_materialized(
+        destination,
+        {entry["path"]: entry["sha256"] for entry in approved_members.values()},
+    )
+    assert package["materialized_members"] == approved_members
+    assert path.read_bytes() == archive_bytes
+
+
+@pytest.fixture(params=("dependencies", "environment", "abi"))
+def evidence_reader(request: pytest.FixtureRequest) -> Callable[[Path], bytes]:
+    if request.param == "environment":
+        from scripts import stage9_v5d4_environment
+
+        return stage9_v5d4_environment.read
+    if request.param == "abi":
+        from scripts import stage9_v5d4_abi
+
+        return stage9_v5d4_abi.read_bytes
+    return deps.read_regular
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Wymaga rzeczywistych flag odczytu POSIX.")
+@pytest.mark.parametrize("missing", ["O_NOFOLLOW", "O_NONBLOCK"])
+def test_missing_posix_reader_protection_refuses_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    evidence_reader: Callable[[Path], bytes],
+    missing: str,
+) -> None:
+    def forbidden_open(*args, **kwargs):
+        raise AssertionError("Czytnik bez ochrony nie może otworzyć wejścia.")
+
+    monkeypatch.setattr(os, missing, None)
+    monkeypatch.setattr(os, "open", forbidden_open)
+    with pytest.raises(ValueError, match="^SECURE_FILE_READER_UNAVAILABLE$"):
+        evidence_reader(tmp_path / "unopened.bin")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Wymaga natywnego czytnika Windows i uchwytów Win32.")
+def test_windows_native_reader_preserves_binary_bytes_and_unicode_path(
+    tmp_path: Path, evidence_reader: Callable[[Path], bytes]
+) -> None:
+    path = tmp_path / "zażółć.bin"
+    content = b"\x00\r\n\x1a\xff\x80opaque data; never execute\r\n"
+    path.write_bytes(content)
+    assert evidence_reader(path) == content
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Wymaga rzeczywistego wyboru backendu Windows.")
+def test_windows_reader_without_native_backend_refuses_without_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    evidence_reader: Callable[[Path], bytes],
+) -> None:
+    import ctypes
+
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(b"readable evidence cannot bypass missing protection")
+    monkeypatch.setattr(ctypes, "WinDLL", None)
+    with pytest.raises(ValueError, match="^SECURE_FILE_READER_UNAVAILABLE$"):
+        evidence_reader(path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Wymaga rzeczywistego hardlinku NTFS.")
+def test_windows_native_reader_rejects_hardlinked_file(
+    tmp_path: Path, evidence_reader: Callable[[Path], bytes]
+) -> None:
+    path = tmp_path / "source.bin"
+    path.write_bytes(b"required evidence")
+    linked = tmp_path / "hardlink.bin"
+    os.link(path, linked)
+    with pytest.raises(ValueError, match="^NONREGULAR_INPUT$"):
+        evidence_reader(path)
+    with pytest.raises(ValueError, match="^NONREGULAR_INPUT$"):
+        evidence_reader(linked)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Wymaga rzeczywistych reparse points Windows.")
+@pytest.mark.parametrize("kind", ["file", "ancestor_directory"])
+def test_windows_native_reader_rejects_symlink_and_symlink_ancestor(
+    tmp_path: Path, kind: str, evidence_reader: Callable[[Path], bytes]
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "evidence.bin").write_bytes(b"required evidence")
+    link = tmp_path / "alias"
+    try:
+        if kind == "file":
+            link.symlink_to(target / "evidence.bin")
+            attempted = link
+        else:
+            link.symlink_to(target, target_is_directory=True)
+            attempted = link / "evidence.bin"
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows ERROR_PRIVILEGE_NOT_HELD przy tworzeniu symlinku fixture.")
+        raise
+    refusal = "NONREGULAR_INPUT" if kind == "file" else "WINDOWS_REPARSE_OR_SPECIAL_INPUT"
+    with pytest.raises(ValueError, match="^" + refusal + "$"):
+        evidence_reader(attempted)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Wymaga rzeczywistej kontroli współdzielenia Win32.")
+def test_windows_native_reader_refuses_evidence_open_for_writing(
+    tmp_path: Path, evidence_reader: Callable[[Path], bytes]
+) -> None:
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(b"required evidence")
+    with path.open("r+b"):
+        with pytest.raises(ValueError, match="^WINDOWS_PROTECTED_OPEN_FAILED$"):
+            evidence_reader(path)
+    assert evidence_reader(path) == b"required evidence"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Wymaga natywnego ograniczonego odczytu Windows.")
+def test_windows_native_reader_enforces_byte_limit(tmp_path: Path) -> None:
+    path = tmp_path / "evidence.bin"
+    path.write_bytes(b"bounded evidence")
+    with pytest.raises(deps.Refusal, match="^INPUT_TOO_LARGE$"):
+        deps.read_regular(path, limit=4)

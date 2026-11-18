@@ -95,14 +95,206 @@ def file_identity(value: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def windows_read_regular(path: Path, limit: int) -> bytes:
+    """Odczyt Win32 bez reparse i bez współdzielenia zapisu/usuwania.
+
+    Wzorzec przypięcia rodziców pochodzi z windows_custody_filesystem,
+    bez importu custody/pywin32 i bez ustanawiania zaufania do ACL.
+    Używamy natywnej tożsamości; CRT fstat starszego Pythona jej nie gwarantuje.
+    """
+    import ctypes
+    from ctypes import wintypes
+    from contextlib import ExitStack
+
+    loader = getattr(ctypes, "WinDLL", None)
+    if os.name != "nt" or loader is None:
+        raise Refusal("SECURE_FILE_READER_UNAVAILABLE")
+    path = path.absolute()
+    require(
+        re.fullmatch(r"[A-Za-z]:", path.drive) is not None
+        and "\x00" not in str(path)
+        and all(":" not in part and not part.endswith((" ", ".")) for part in path.parts[1:]),
+        "WINDOWS_INPUT_PATH",
+    )
+    before = path.lstat()
+    require(
+        stat.S_ISREG(before.st_mode) and before.st_nlink == 1,
+        "NONREGULAR_INPUT",
+    )
+    require(0 <= before.st_size <= limit, "INPUT_TOO_LARGE")
+
+    class Information(ctypes.Structure):
+        _fields_ = [
+            ("attributes", wintypes.DWORD),
+            ("created", wintypes.FILETIME),
+            ("accessed", wintypes.FILETIME),
+            ("written", wintypes.FILETIME),
+            ("volume", wintypes.DWORD),
+            ("size_high", wintypes.DWORD),
+            ("size_low", wintypes.DWORD),
+            ("links", wintypes.DWORD),
+            ("index_high", wintypes.DWORD),
+            ("index_low", wintypes.DWORD),
+        ]
+
+    class BasicInformation(ctypes.Structure):
+        _fields_ = [
+            ("created", ctypes.c_longlong),
+            ("accessed", ctypes.c_longlong),
+            ("written", ctypes.c_longlong),
+            ("changed", ctypes.c_longlong),
+            ("attributes", wintypes.DWORD),
+        ]
+
+    kernel = loader("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.GetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.POINTER(Information))
+    kernel.GetFileInformationByHandle.restype = wintypes.BOOL
+    kernel.GetFileInformationByHandleEx.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    )
+    kernel.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    kernel.GetFileType.argtypes = (wintypes.HANDLE,)
+    kernel.GetFileType.restype = wintypes.DWORD
+    kernel.GetFinalPathNameByHandleW.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    )
+    kernel.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    kernel.ReadFile.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    )
+    kernel.ReadFile.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+
+    def qualify(handle: Any, expected: Path, directory: bool) -> tuple[int, ...]:
+        info = Information()
+        basic = BasicInformation()
+        require(
+            bool(kernel.GetFileInformationByHandle(handle, ctypes.byref(info)))
+            and bool(
+                kernel.GetFileInformationByHandleEx(
+                    handle, 0, ctypes.byref(basic), ctypes.sizeof(basic)
+                )
+            ),
+            "WINDOWS_FILE_INFORMATION_UNAVAILABLE",
+        )
+        require(
+            kernel.GetFileType(handle) == 1
+            and not info.attributes & 0x400
+            and bool(info.attributes & 0x10) == directory
+            and (directory or info.links == 1),
+            "WINDOWS_REPARSE_OR_SPECIAL_INPUT",
+        )
+        final = ctypes.create_unicode_buffer(32768)
+        length = kernel.GetFinalPathNameByHandleW(handle, final, len(final), 0)
+        require(0 < length < len(final), "WINDOWS_FINAL_PATH_UNAVAILABLE")
+        actual = final.value
+        require(
+            actual.startswith("\\\\?\\") and not actual.startswith("\\\\?\\UNC\\"),
+            "WINDOWS_INPUT_PATH",
+        )
+        require(
+            os.path.normcase(actual[4:]) == os.path.normcase(str(expected)),
+            "WINDOWS_INPUT_REDIRECTED",
+        )
+        # AccessTime może zmienić się podczas odczytu; pozostałe pola są przypięte.
+        return (
+            info.attributes,
+            info.volume,
+            info.index_high,
+            info.index_low,
+            info.size_high,
+            info.size_low,
+            info.links,
+            basic.created,
+            basic.written,
+            basic.changed,
+            basic.attributes,
+        )
+
+    with ExitStack() as stack:
+
+        def open_handle(selected: Path, directory: bool) -> Any:
+            handle = kernel.CreateFileW(
+                str(selected),
+                0x81 if directory else 0x80000000,
+                3 if directory else 1,
+                None,
+                3,
+                0x02200000 if directory else 0x00200000,
+                None,
+            )
+            require(
+                handle not in {None, ctypes.c_void_p(-1).value}, "WINDOWS_PROTECTED_OPEN_FAILED"
+            )
+            stack.callback(kernel.CloseHandle, handle)
+            qualify(handle, selected, directory)
+            return handle
+
+        # LIST_DIRECTORY aktywuje zakaz rename/delete dla całego łańcucha.
+        parents = [(parent, open_handle(parent, True)) for parent in reversed(path.parents)]
+        handle = open_handle(path, False)
+        pinned = qualify(handle, path, False)
+        size = (pinned[4] << 32) | pinned[5]
+        require(
+            ((pinned[2] << 32) | pinned[3]) == before.st_ino and size == before.st_size,
+            "INPUT_CHANGED",
+        )
+        chunks: list[bytes] = []
+        remaining = size
+        while remaining:
+            requested = min(1024 * 1024, remaining)
+            buffer = ctypes.create_string_buffer(requested)
+            received = wintypes.DWORD()
+            require(
+                bool(kernel.ReadFile(handle, buffer, requested, ctypes.byref(received), None))
+                and 0 < received.value <= requested,
+                "WINDOWS_INPUT_READ_FAILED",
+            )
+            chunks.append(buffer.raw[: received.value])
+            remaining -= received.value
+        require(qualify(handle, path, False) == pinned, "INPUT_CHANGED")
+        require(file_identity(path.lstat()) == file_identity(before), "INPUT_CHANGED")
+        for parent, parent_handle in parents:
+            qualify(parent_handle, parent, True)
+        return b"".join(chunks)
+    raise Refusal("WINDOWS_PROTECTED_READ_FAILED")
+
+
 def read_regular(path: Path, limit: int = MAX_WHEEL) -> bytes:
+    if os.name == "nt":
+        return windows_read_regular(path, limit)
+    require(
+        os.name == "posix"
+        and bool(getattr(os, "O_NOFOLLOW", None))
+        and bool(getattr(os, "O_NONBLOCK", None)),
+        "SECURE_FILE_READER_UNAVAILABLE",
+    )
     require(not any(part.is_symlink() for part in (path, *path.parents)), "SYMLINK_INPUT")
     metadata = path.lstat()
     require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1, "NONREGULAR_INPUT")
     require(metadata.st_size <= limit, "INPUT_TOO_LARGE")
-    descriptor = os.open(
-        path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    )
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as stream:
         require(
             file_identity(os.fstat(stream.fileno())) == file_identity(metadata), "INPUT_CHANGED"
