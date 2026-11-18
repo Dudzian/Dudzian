@@ -1,5 +1,12 @@
 # Quality, security, and code-intelligence toolchain
 
+Remediacja bytecode V5d4 rozszerza istniejące zestawy dependencies,
+environment i ABI o pełny `RECORD` przed odmową/pominięciem, dokładne
+niezależne oczekiwania oraz przejście od wheel do katalogu docelowego.
+[Polityka i dowody](architecture/stage9_v5d4_wheel_bytecode_remediation.md)
+zachowują wszystkie dotychczasowe zakresy CI, progi i bramki; nie przyznają
+wyjątku instalacyjnego ani zwolnienia dla kolizji.
+
 V5d4 dodaje pięć samodzielnych narzędzi przygotowania offline do configured
 mypy Linux/Win32. Osobny job `stage9-v5d4-static-environment` na Ubuntu24.04
 z Python3.12 sprawdza Ruff/format, typy, testy V5d4 i regresje V5d2–V5d3,

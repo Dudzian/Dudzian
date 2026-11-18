@@ -50,7 +50,14 @@ def base_runtime_inventory(roots: list[Path]) -> dict[str, Any]:
     i dist-packages są poza zakresem startu -S. Łańcuch do 16 dowiązań do
     regularnego pliku jest zapisywany ogniwo po ogniwie; pętle i symlink dirs
     odmawiają. Każdy cel poza roots również wymaga niezależnej aprobaty.
+    To profil dowodowy POSIX; Windows wymaga osobnego projektu kontroli ACL
+    i punktów ponownej analizy. Brak flag no-follow nigdy nie włącza fallbacku.
     """
+    if os.name != "posix" or not all(
+        isinstance(getattr(os, flag, None), int) and getattr(os, flag) > 0
+        for flag in ("O_NOFOLLOW", "O_NONBLOCK")
+    ):
+        raise Refusal("BASE_RUNTIME_POSIX_CAPABILITY_REQUIRED")
     if not roots:
         raise Refusal("Brak korzeni bazowego runtime.")
     selected = sorted({Path(os.path.abspath(root)) for root in roots})
