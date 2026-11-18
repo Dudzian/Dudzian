@@ -366,6 +366,16 @@ message CloudAuthSignature {
   string key_id = 3;
 }
 
+message CloudChallengeRequest {
+  string fingerprint = 1;
+  string license_id = 2;
+}
+
+message CloudChallengeResponse {
+  string nonce = 1;
+  uint32 ttl_seconds = 2;
+}
+
 message CloudAuthRequest {
   string fingerprint = 1;
   string license_id = 2;
@@ -426,5 +436,6 @@ service MarketplaceService {
 }
 
 service CloudAuthService {
+  rpc IssueChallenge(CloudChallengeRequest) returns (CloudChallengeResponse);
   rpc AuthorizeClient(CloudAuthRequest) returns (CloudAuthResponse);
 }

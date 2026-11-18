@@ -112,9 +112,12 @@ class CloudRuntimeService:
 
         server: LocalRuntimeServer | None = None
         orchestrator: CloudOrchestrator | None = None
+        security_manager: CloudSecurityManager | None = None
         try:
             self._maybe_attach_license()
-            security_manager = self._ensure_security_manager()
+            with self._lock:
+                if self._context is context:
+                    security_manager = self._ensure_security_manager()
             interceptors: list[grpc.ServerInterceptor] = []
             if security_manager and security_manager.requires_handshake:
                 interceptors.append(CloudAuthInterceptor(security_manager))
@@ -137,6 +140,7 @@ class CloudRuntimeService:
                 is_current_context = self._context is context
                 registrars = list(self._registrars) if is_current_context else []
             if not is_current_context:
+                self._discard_security_manager(security_manager)
                 try:
                     server.stop(0.5)
                 except Exception:  # pragma: no cover - defensywne
@@ -163,6 +167,7 @@ class CloudRuntimeService:
             context.cloud_orchestrator = orchestrator
             orchestrator.start()
         except Exception:
+            self._discard_security_manager(security_manager)
             with self._lock:
                 if self._context is context:
                     self._context = None
@@ -194,6 +199,7 @@ class CloudRuntimeService:
                 address = None
             self._starting = False
         if not should_publish:
+            self._discard_security_manager(security_manager)
             if orchestrator is not None:
                 orchestrator.stop()
             if server is not None:
@@ -226,9 +232,13 @@ class CloudRuntimeService:
             self._address = None
             self._context_start_thread = None
             self._starting = False
+            security_manager = self._security_manager
+            self._security_manager = None
         with self._health_lock:
             self._cloud_health_headers = {}
 
+        if security_manager is not None:
+            security_manager.close()
         self._update_health(status="stopped", address=None)
         if server is not None:
             try:
@@ -248,6 +258,14 @@ class CloudRuntimeService:
         server.wait()
 
     # --- helpers -------------------------------------------------------------
+    def _discard_security_manager(self, security_manager: CloudSecurityManager | None) -> None:
+        if security_manager is None:
+            return
+        with self._lock:
+            if self._security_manager is security_manager:
+                self._security_manager = None
+        security_manager.close()
+
     def _maybe_attach_license(self) -> None:
         cfg = self._config.license
         if not cfg.enabled or cfg.bundle_path is None:
@@ -271,6 +289,8 @@ class CloudRuntimeService:
     def _ensure_security_manager(self) -> CloudSecurityManager | None:
         security_cfg = self._config.security
         if not security_cfg.allowed_clients:
+            if security_cfg.require_handshake:
+                raise CloudSecurityError("Wymagany handshake cloud ma pustą allowlistę klientów.")
             return None
         if self._license_service is None and any(
             entry.license_bundle_path is not None for entry in security_cfg.allowed_clients

@@ -8,7 +8,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import secrets
 from typing import Iterable, Mapping, Sequence
 
 import grpc
@@ -136,37 +135,6 @@ def perform_cloud_handshake(
             fingerprint=identity.fingerprint,
         )
 
-    payload = {
-        "license_id": identity.license_id,
-        "fingerprint": identity.fingerprint,
-        "nonce": secrets.token_hex(12),
-    }
-    try:
-        signature = sign_license_payload(
-            payload,
-            fingerprint=identity.fingerprint,
-            secret=license_secret,
-            secret_path=secret_path,
-        )
-    except FingerprintError as exc:
-        return CloudHandshakeResult(
-            status="missing_secret",
-            message=str(exc),
-            license_id=identity.license_id,
-            fingerprint=identity.fingerprint,
-        )
-
-    request = trading_pb2.CloudAuthRequest(
-        fingerprint=identity.fingerprint,
-        license_id=identity.license_id,
-        nonce=str(payload["nonce"]),
-        signature=trading_pb2.CloudAuthSignature(
-            algorithm=signature.get("algorithm", ""),
-            value=signature.get("value", ""),
-            key_id=signature.get("key_id", ""),
-        ),
-    )
-
     channel_options: list[tuple[str, str]] = []
     if options.authority_override:
         channel_options.append(("grpc.ssl_target_name_override", options.authority_override))
@@ -175,16 +143,50 @@ def perform_cloud_handshake(
 
     try:
         stub = trading_pb2_grpc.CloudAuthServiceStub(channel)
-        response = stub.AuthorizeClient(request, metadata=metadata_seq, timeout=timeout)
-    except grpc.RpcError as exc:
-        status_code = exc.code()
-        if status_code == grpc.StatusCode.UNIMPLEMENTED:
+        challenge = stub.IssueChallenge(
+            trading_pb2.CloudChallengeRequest(
+                license_id=identity.license_id, fingerprint=identity.fingerprint
+            ),
+            metadata=metadata_seq,
+            timeout=timeout,
+        )
+        if not challenge.nonce or len(challenge.nonce) > 128 or not 0 < challenge.ttl_seconds <= 60:
             return CloudHandshakeResult(
-                status="not_required",
-                message="CloudAuthService nie jest aktywny na serwerze",
+                status="error",
+                message="Serwer nie udostępnił poprawnego challenge cloud.",
                 license_id=identity.license_id,
                 fingerprint=identity.fingerprint,
             )
+        payload = {
+            "license_id": identity.license_id,
+            "fingerprint": identity.fingerprint,
+            "nonce": challenge.nonce,
+        }
+        signature = sign_license_payload(
+            payload,
+            fingerprint=identity.fingerprint,
+            secret=license_secret,
+            secret_path=secret_path,
+        )
+        request = trading_pb2.CloudAuthRequest(
+            fingerprint=identity.fingerprint,
+            license_id=identity.license_id,
+            nonce=challenge.nonce,
+            signature=trading_pb2.CloudAuthSignature(
+                algorithm=signature.get("algorithm", ""),
+                value=signature.get("value", ""),
+                key_id=signature.get("key_id", ""),
+            ),
+        )
+        response = stub.AuthorizeClient(request, metadata=metadata_seq, timeout=timeout)
+    except FingerprintError as exc:
+        return CloudHandshakeResult(
+            status="missing_secret",
+            message=str(exc),
+            license_id=identity.license_id,
+            fingerprint=identity.fingerprint,
+        )
+    except grpc.RpcError as exc:
         message = exc.details() or str(exc)
         return CloudHandshakeResult(
             status="error",
