@@ -43,7 +43,7 @@ niepowodzeń nie przedstawia się jako wyników zaliczonych.
 
 ## Pozostałe ryzyko i ograniczenia
 
-Pełny audyt z 2026-11-18 wskazuje 5 pakietów narzędziowych z poziomem high,
+Końcowy pełny audyt z 2026-11-18 wskazuje 4 pakiety narzędziowe z poziomem high,
 związanych z publicznym [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
 Zależność `picomatch` w dostępnej wersji 4.0.7 pozostaje objęta advisory.
 Nie zastosowano wyłączenia, obniżenia progu, nieudokumentowanego override
