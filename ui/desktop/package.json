@@ -4,25 +4,26 @@
   "private": true,
   "main": "dist/main/main.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "dev": "concurrently --kill-others-on-fail \"npm:dev:main\" \"npm:dev:renderer\"",
     "dev:main": "ts-node --project tsconfig.json -r tsconfig-paths/register src/main/main.ts",
     "dev:renderer": "vite",
     "build": "vite build && tsc -p tsconfig.main.json",
-    "preview": "vite preview --host --port 4173 --outDir dist/renderer",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
     "start": "electron dist/main/main.js",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test --config tests/e2e/playwright.config.ts",
+    "test:forms": "ts-node --project tsconfig.main.json tests/forms/presetSchema.test.ts"
   },
   "dependencies": {
-    "electron": "26.6.10",
+    "electron": "43.8.10",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hook-form": "7.91.0",
-    "zod": "3.25.76",
-    "@hookform/resolvers": "3.10.0"
+    "zod": "4.6.7",
+    "@hookform/resolvers": "5.9.2"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "2.0.0",
@@ -37,7 +38,7 @@
     "eslint-plugin-react": "7.37.5",
     "ts-node": "10.9.2",
     "typescript": "5.9.3",
-    "vite": "4.5.14",
+    "vite": "6.4.6",
     "tsconfig-paths": "4.2.0"
   }
 }
