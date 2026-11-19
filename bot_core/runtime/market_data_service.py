@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover - brak stubów trading
     trading_pb2_grpc = None  # type: ignore
 
 from bot_core.exchanges.manager import ExchangeManager
-from bot_core.runtime._grpc_support import GrpcServerLifecycleMixin
+from bot_core.runtime._grpc_support import GrpcServerLifecycleMixin, validate_plaintext_grpc_host
 
 _LOG = logging.getLogger(__name__)
 
@@ -345,6 +345,8 @@ class MarketDataServer(GrpcServerLifecycleMixin):
             raise RuntimeError(
                 "Uruchomienie MarketDataServer wymaga pakietów grpcio oraz trading_pb2*"
             )
+        if server_credentials is None:
+            host = validate_plaintext_grpc_host(host)
         self._servicer = MarketDataServiceServicer(manager_lookup, cache_ttl=cache_ttl)
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         trading_pb2_grpc.add_MarketDataServiceServicer_to_server(self._servicer, self._server)
