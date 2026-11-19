@@ -100,6 +100,10 @@ def test_perform_cloud_handshake_respects_metadata_override_contract(
         def __init__(self, channel) -> None:
             captured["channel"] = channel
 
+        def IssueChallenge(self, request, *, metadata, timeout):
+            captured["challenge_metadata"] = tuple(metadata)
+            return trading_pb2.CloudChallengeResponse(nonce="server-challenge", ttl_seconds=60)
+
         def AuthorizeClient(self, request, *, metadata, timeout):
             captured["metadata"] = tuple(metadata)
             captured["timeout"] = timeout
@@ -139,6 +143,8 @@ def test_perform_cloud_handshake_respects_metadata_override_contract(
 
     assert result.status == "ok"
     assert captured["metadata"] == expected_metadata
+    assert captured["challenge_metadata"] == expected_metadata
+    assert captured["request"].nonce == "server-challenge"
     assert captured.get("closed") is True
 
 
@@ -179,3 +185,57 @@ auto_connect: true
     assert result.status == "ok"
     assert result.session_token
     assert manager.requires_handshake
+
+
+@pytest.mark.parametrize(
+    "failure", ["unimplemented", "empty", "oversized", "bad_ttl", "missing_secret"]
+)
+def test_cloud_client_does_not_fall_back_without_valid_challenge(monkeypatch, failure: str) -> None:
+    from bot_core.runtime.cloud_client import LicenseIdentity
+    from bot_core.security.fingerprint import FingerprintError
+
+    calls = []
+
+    class Channel:
+        def close(self):
+            calls.append("closed")
+
+    class Unsupported(grpc.RpcError):
+        def code(self):
+            return grpc.StatusCode.UNIMPLEMENTED
+
+        def details(self):
+            return "challenge unsupported"
+
+    class Stub:
+        def __init__(self, channel):
+            pass
+
+        def IssueChallenge(self, request, **kwargs):
+            if failure == "unimplemented":
+                raise Unsupported()
+            return trading_pb2.CloudChallengeResponse(
+                nonce=""
+                if failure == "empty"
+                else "x" * 129
+                if failure == "oversized"
+                else "nonce",
+                ttl_seconds=0 if failure == "bad_ttl" else 60,
+            )
+
+        def AuthorizeClient(self, request, **kwargs):
+            calls.append("authorize")
+            raise AssertionError("Must not authorize without a signed server challenge")
+
+    def missing_secret(*args, **kwargs):
+        raise FingerprintError("synthetic missing secret")
+
+    options = CloudClientOptions(Path("unused"), SimpleNamespace(), [], None, None)
+    monkeypatch.setattr("bot_core.runtime.cloud_client._build_channel", lambda *_: Channel())
+    monkeypatch.setattr("bot_core.runtime.cloud_client.trading_pb2_grpc.CloudAuthServiceStub", Stub)
+    if failure == "missing_secret":
+        monkeypatch.setattr("bot_core.runtime.cloud_client.sign_license_payload", missing_secret)
+    result = perform_cloud_handshake(options, LicenseIdentity("LIC-TEST", "HW-TEST"))
+    assert result.status == ("missing_secret" if failure == "missing_secret" else "error")
+    assert result.session_token is None
+    assert calls == ["closed"]
