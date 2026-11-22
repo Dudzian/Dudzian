@@ -83,3 +83,16 @@ samej poprawki. Bramka S9-FV-01 ogranicza odczyt i dekoduje UTF-8 przed istniej�
 odmową DTD. Nie jest to deklaracja pełnego audytu wszystkich konsumentów XML
 w narzędziach, testach, archiwum ani zależnościach. Kwalifikacja natywna
 Windows/Linux i gotowość produkcji pozostają poza zakresem tej poprawki.
+
+
+## Uzupełnienie granicy JUnit
+
+Ten sam callback odmowy DTD obejmuje teraz dwa sąsiednie czytniki JUnit:
+`check_s9_fv_01_junit.validate_report` i `run_stage9_safe_validation.junit_result`.
+Odmowa nie zależy od wyszukiwania tekstu przed rozpoznaniem kodowania. Pomocniczy
+czytnik bezpiecznego zakresu również ogranicza rzeczywisty odczyt do 16 MiB + 1
+bajtu i zwraca FAIL przy błędzie odczytu, niepoprawnym dokumencie lub kodowaniu.
+Zachowano dotychczasowe przyjmowanie zwykłych raportów UTF-8 oraz obsługiwanych
+raportów UTF-16; nie wprowadzono globalnego zakazu poprawnego UTF-16. Brak raportu
+w pomocniczym czytniku nadal oznacza NOT_EXECUTED. Inwentarze przypadków,
+semantyka wyników, progi i status produkcyjny pozostają bez zmian.
