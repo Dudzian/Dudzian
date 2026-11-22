@@ -322,16 +322,26 @@ def import_offline_package(
             if target.exists() or target.is_symlink():
                 target.rename(previous)
             prepared.rename(target)
-        except BaseException:
+        except BaseException as failure:
             if previous.exists() or previous.is_symlink():
                 try:
+                    # An interrupt may arrive just after publication has completed.
+                    if not prepared.exists() and (target.exists() or target.is_symlink()):
+                        target.rename(prepared)
                     previous.rename(target)
-                except BaseException as exc:
+                except BaseException as restore_failure:
                     # Keep the last verified package available for operator recovery.
                     preserve_transaction = True
-                    raise OfflinePackageError(
+                    message = (
                         f"Nie można przywrócić poprzedniego pakietu; zachowano kopię: {previous}"
-                    ) from exc
+                    )
+                    if not isinstance(failure, Exception):
+                        failure.add_note(message)
+                        raise failure from restore_failure
+                    if not isinstance(restore_failure, Exception):
+                        restore_failure.add_note(message)
+                        raise
+                    raise OfflinePackageError(message) from restore_failure
             raise
 
         return ImportedOfflinePackage(

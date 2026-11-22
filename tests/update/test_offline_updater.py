@@ -285,3 +285,53 @@ def test_import_offline_package_fingerprint_mismatch(tmp_path: Path) -> None:
             expected_fingerprint="other",
             hmac_key=key,
         )
+
+
+@pytest.mark.parametrize("failure", [OSError, KeyboardInterrupt])
+def test_import_error_after_completed_publication_restores_previous_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure
+) -> None:
+    package_path = _build_test_package(tmp_path)
+    destination = tmp_path / "packages"
+    target = destination / "demo-1.2.3"
+    target.mkdir(parents=True)
+    (target / "previous.bin").write_bytes(b"previous-verified-package")
+    original_rename = Path.rename
+
+    def delivered_after_publication(source: Path, destination: Path) -> Path:
+        result = original_rename(source, destination)
+        if source.name == "prepared":
+            raise failure("delivered after publication")
+        return result
+
+    monkeypatch.setattr(Path, "rename", delivered_after_publication)
+    with pytest.raises(failure, match="delivered after publication"):
+        import_offline_package(package_path, destination, hmac_key=b"test-import-key")
+    assert {path.name for path in target.iterdir()} == {"previous.bin"}
+    assert (target / "previous.bin").read_bytes() == b"previous-verified-package"
+    assert not list(destination.glob(".offline-import-*"))
+
+
+def test_import_failed_restore_preserves_interrupt_and_recovery_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_path = _build_test_package(tmp_path)
+    destination = tmp_path / "packages"
+    target = destination / "demo-1.2.3"
+    target.mkdir(parents=True)
+    (target / "previous.bin").write_bytes(b"previous-verified-package")
+    original_rename = Path.rename
+
+    def fail_publish_and_restore(source: Path, destination: Path) -> Path:
+        if source.name == "prepared":
+            raise KeyboardInterrupt("publication interrupted")
+        if source.name == "previous":
+            raise OSError("restore unavailable")
+        return original_rename(source, destination)
+
+    monkeypatch.setattr(Path, "rename", fail_publish_and_restore)
+    with pytest.raises(KeyboardInterrupt, match="publication interrupted") as caught:
+        import_offline_package(package_path, destination, hmac_key=b"test-import-key")
+    previous = next(destination.glob(".offline-import-*/previous"))
+    assert (previous / "previous.bin").read_bytes() == b"previous-verified-package"
+    assert any(str(previous) in note for note in caught.value.__notes__)

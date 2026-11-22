@@ -60,3 +60,14 @@ bezpieczeństwa całego procesu aktualizacji.
 Nie zmieniono konfiguracji CI, progów pokrycia, wyłączeń skanerów ani
 bramek sprzętowych i manualnych. Stage 9, Stage 10 i dotychczasowy status
 produkcyjny NO-GO pozostają bez zmian.
+
+
+## Przerwanie po zakończonym rename
+
+Obsługa obejmuje również błąd lub przerwanie dostarczone tuż po zakończeniu
+publikującego `rename`: ukończony nowy katalog wraca do katalogu roboczego przed
+przywróceniem poprzedniego pakietu. Przy nieudanym przywróceniu kopia pozostaje
+zachowana. `KeyboardInterrupt` i inne przerwania sterujące propagują swój typ,
+a informacja o zachowanej kopii trafia do notatki wyjątku; nie są zastępowane
+zwykłym błędem domenowym. Nie zmienia to ograniczeń dotyczących utraty zasilania,
+SIGKILL, równoległych importów ani innych instalatorów.
