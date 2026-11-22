@@ -11,6 +11,10 @@ roboczym. Rozpoznaje dodanie, modyfikację, rename jako nowy cel oraz zmianę ty
 Usunięcie nie wprowadza nowej zawartości do commita. Blob dowiązania jest
 skanowany jako tekst jego celu; hook nie tworzy ani nie śledzi dowiązania.
 
+Ustawienia `diff.ignoreSubmodules` i konfiguracja submodułów nie mogą ukryć
+gitlinku: odczyt indeksu jawnie wymusza `--ignore-submodules=none`, a nieobsługiwany
+typ nadal kończy się odmową. Hook nie zmienia zawartości indeksu ani working tree.
+
 Nierozstrzygnięty indeks, brak obiektu, niekompletny odczyt, niebezpieczna
 ścieżka, awaria materializacji lub zmiana indeksu podczas skanu powodują odmowę.
 Brak kopii w working tree nie pomija bloba z indeksu. Testy korzystają z

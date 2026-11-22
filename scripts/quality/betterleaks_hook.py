@@ -50,6 +50,7 @@ def _staged_entries(repository: Path) -> list[tuple[str, str, str]] | None:
             "--no-renames",
             "--no-ext-diff",
             "--no-relative",
+            "--ignore-submodules=none",
             "--diff-filter=d",
             "-z",
             "--",

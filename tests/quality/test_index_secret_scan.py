@@ -390,3 +390,58 @@ def test_scanner_incomplete_diagnostics_refuse_zero_exit(
     assert (
         betterleaks_hook._run_scan(repository, ["fixture.txt"], repository / "baseline.json") == 2
     )
+
+
+@pytest.mark.parametrize(
+    "configuration", ["diff.ignoreSubmodules", "submodule.module.ignore", "gitmodules"]
+)
+def test_local_configuration_cannot_hide_staged_gitlink(
+    repository: Path, monkeypatch, configuration: str
+) -> None:
+    if configuration == "gitmodules":
+        (repository / ".gitmodules").write_text(
+            '[submodule "module"]\n'
+            "\tpath = module\n"
+            "\turl = https://example.invalid/synthetic-module\n"
+            "\tignore = all\n",
+            encoding="utf-8",
+        )
+        _git(repository, "add", ".gitmodules")
+        _git(repository, "commit", "-qm", "synthetic submodule configuration")
+    else:
+        _git(repository, "config", configuration, "all")
+    commit = _git(repository, "rev-parse", "HEAD").strip().decode("ascii")
+    _git(repository, "update-index", "--add", "--cacheinfo", "160000", commit, "module")
+    captured = _scanner(monkeypatch)
+
+    assert betterleaks_hook.main([]) == 2
+    assert captured == []
+
+
+def test_type_change_to_gitlink_refuses_without_modifying_index(
+    repository: Path, monkeypatch
+) -> None:
+    commit = _git(repository, "rev-parse", "HEAD").strip().decode("ascii")
+    _git(repository, "update-index", "--cacheinfo", "160000", commit, "fixture.txt")
+    index = repository / _git(repository, "rev-parse", "--git-path", "index").decode().strip()
+    before = index.read_bytes()
+    captured = _scanner(monkeypatch)
+
+    assert betterleaks_hook.main([]) == 2
+    assert captured == []
+    assert index.read_bytes() == before
+
+
+def test_staged_scan_does_not_modify_git_index(repository: Path, monkeypatch) -> None:
+    candidate = repository / "candidate.txt"
+    candidate.write_bytes(MARKER)
+    _git(repository, "add", candidate.name)
+    candidate.write_bytes(b"different synthetic working copy")
+    index = repository / _git(repository, "rev-parse", "--git-path", "index").decode().strip()
+    before = index.read_bytes()
+    captured = _scanner(monkeypatch)
+
+    assert betterleaks_hook.main([]) == 1
+    assert captured == [(candidate.name, MARKER)]
+    assert index.read_bytes() == before
+    assert candidate.read_bytes() == b"different synthetic working copy"
