@@ -7,6 +7,7 @@ import pytest
 
 from bot_core.api import server as api_server
 from bot_core.runtime import _grpc_support, market_data_service, metrics_service, risk_service
+from scripts import run_local_bot
 
 
 KINDS = ("local", "market-data", "metrics", "risk")
@@ -138,3 +139,21 @@ def test_plaintext_guard_normalizes_only_explicit_loopback(host: str, expected: 
 def test_plaintext_guard_refuses_nonlocal_or_ambiguous_input(host: object) -> None:
     with pytest.raises(ValueError, match="loopback"):
         _grpc_support.validate_plaintext_grpc_host(host)
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "example.invalid"])
+def test_cli_refuses_exposed_plaintext_before_runtime_or_state_allocation(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    config = tmp_path / "runtime.yaml"
+    config.write_text("{}\n", encoding="utf-8")
+    allocations = []
+
+    def allocate(*args, **kwargs):
+        allocations.append(True)
+        raise AssertionError("Unsafe plaintext must refuse before runtime/state allocation")
+
+    monkeypatch.setattr(run_local_bot, "RuntimeStateManager", allocate)
+    monkeypatch.setattr(run_local_bot, "build_local_runtime_context", allocate)
+    assert run_local_bot.main(["--config", str(config), "--host", host]) == 2
+    assert allocations == []

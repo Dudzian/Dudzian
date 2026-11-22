@@ -18,6 +18,11 @@ pozostaje oddzielna. `LocalRuntimeServer` udostępnia wyłącznie lokalny plaint
 Zmiana zawęża obsługiwane konfiguracje: zdalny plaintext oraz scoped IPv6 nie
 są obsługiwane. Loopback nie zastępuje uwierzytelniania lokalnych klientów.
 
+CLI `run_local_bot.py` stosuje ten sam guard przed utworzeniem stanu i kontekstu
+runtime. Nieprawidłowy host kończy się kodem 2, również w trybie planu. Regresje
+sprawdzają odmowę bez alokacji; rzeczywista próba loopback pozostaje oddzielna
+od kwalifikacji TLS i środowiska produkcyjnego.
+
 Regresje w `tests/security/test_grpc_bind_boundary.py` sprawdzają odmowę przed
 alokacją dla wszystkich czterech konstruktorów, rzeczywiste efemeryczne
 nasłuchy IPv4/IPv6 oraz normalizację hosta. Testy gałęzi TLS rejestrują wybór
