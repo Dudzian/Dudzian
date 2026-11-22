@@ -41,18 +41,50 @@ zestaw dał 4 PASS / 1 FAIL z powodu braku nawigacji w fixture kolejnego pliku.
 Po naprawie fixture wszystkie 5 przypadków przeszło. Tych wcześniejszych
 niepowodzeń nie przedstawia się jako wyników zaliczonych.
 
-## Pozostałe ryzyko i ograniczenia
+## Wynik historyczny z 2026-11-18
 
-Końcowy pełny audyt z 2026-11-18 wskazuje 4 pakiety narzędziowe z poziomem high,
+Końcowy pełny audyt z 2026-11-18 wskazywał 4 pakiety narzędziowe z poziomem high,
 związanych z publicznym [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
-Zależność `picomatch` w dostępnej wersji 4.0.7 pozostaje objęta advisory.
+Zależność `picomatch` w dostępnej wtedy wersji 4.0.7 była objęta advisory.
 Nie zastosowano wyłączenia, obniżenia progu, nieudokumentowanego override
-ani własnej kopii biblioteki. Pełne `npm audit` pozostaje **FAIL**.
+ani własnej kopii biblioteki. Pełne `npm audit` miało wtedy wynik **FAIL**.
 Wynik `--omit=dev` dotyczy wyłącznie zależności produkcyjnych i nie zastępuje
 kontroli narzędzi budowania ani testów bezpieczeństwa wykonania aplikacji.
 
-Kod main ustawia `contextIsolation: true` i `nodeIntegration: false`.
-Nie uruchamiano natywnego Electron, systemowego sandboxu ani instalatora.
+## Rewalidacja z 2026-11-22
+
+Na aktualnym lockfile PR #3289 pełne `npm audit --json` zwróciło exit 0:
+0 zgłoszonych podatności dla wszystkich zależności, w tym dev
+(394 zależności w inwentarzu).
+Nie zmieniono lockfile, nie zastosowano override ani wyłączeń; to bieżący
+wynik rejestru, który należy powtórzyć przed merge. Wersja Electron 43.8.10
+spełnia wymaganie Node >=22.12 i korzysta z utrzymywanego ekstraktora.
+
+Ponowny build ujawnił istniejącą także na main niezgodność wejścia aplikacji:
+`package.main` wskazywał nieistniejący `dist/main/main.js`, kompilacja
+zostawiała nierozwiązywany alias `@perf/profiler`, a ścieżka renderera
+odnosiła się do innego katalogu. Ustalono jawny `rootDir`, wskazano rzeczywisty
+plik main, uruchamianie przez `electron .` oraz względne ścieżki do modułu
+profilera i renderera. Test `npm run test:desktop-build` wykonuje prawdziwy
+build, ładuje emitowany main i jego zależności, sprawdza preload, renderer
+oraz zachowanie `contextIsolation` i `nodeIntegration`. Zastępuje wyłącznie
+API Electron; nie jest natywnym uruchomieniem. Na niezmienionym HEAD PR
+test odmawiał z powodu brakującego wejścia, a po poprawce przechodzi.
+Zestaw E2E wywołuje ten test przed uruchomieniem Playwright.
+
+Ponowiono także pełny TypeScript main/renderera, 18 testów schematu/resolvera
+i 5 E2E w Chromium, w tym odmowy błędnych danych. Wszystkie przeszły.
+Oficjalny plik wykonywalny Electron pobrano, lecz próby uruchomienia zakończyły się
+odmową konfiguracji systemowego sandboxu jeszcze przed wejściem aplikacji;
+środowisko nie udostępnia też DISPLAY/Xvfb. Nie dodano flag wyłączających
+sandbox. Natywny Electron ma status **NOT_TESTED**, a testy systemowe
+Windows/macOS oraz instalatora wymagają odpowiedniego środowiska.
+
+Istniejące `npm run lint` nadal odmawia, ponieważ repozytorium nie zawiera
+konfiguracji ESLint dla tego polecenia. Nie zaliczono tego wyniku jako PASS;
+migracja konfiguracji lint nie jest częścią naprawy układu buildu.
+
+Kod main zachowuje `contextIsolation: true` i `nodeIntegration: false`.
 IPC, nawigacja okna i natywne zachowanie wymagają osobnej kwalifikacji.
 Przejście renderera w Chromium nie jest dowodem **Electron native PASS**.
 Zmiana głównej wersji Electron wymaga natywnych regresji przed wdrożeniem.

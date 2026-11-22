@@ -2,7 +2,7 @@
   "name": "dudzian-desktop",
   "version": "0.1.0",
   "private": true,
-  "main": "dist/main/main.js",
+  "main": "dist/main/src/main/main.js",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -12,10 +12,11 @@
     "dev:renderer": "vite",
     "build": "vite build && tsc -p tsconfig.main.json",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
-    "start": "electron dist/main/main.js",
+    "start": "electron .",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "test:e2e": "npm run build && playwright test --config tests/e2e/playwright.config.ts",
-    "test:forms": "ts-node --project tsconfig.main.json tests/forms/presetSchema.test.ts"
+    "test:e2e": "npm run test:desktop-build && playwright test --config tests/e2e/playwright.config.ts",
+    "test:forms": "ts-node --project tsconfig.main.json tests/forms/presetSchema.test.ts",
+    "test:desktop-build": "npm run build && node --test tests/build-layout.test.cjs"
   },
   "dependencies": {
     "electron": "43.8.10",
