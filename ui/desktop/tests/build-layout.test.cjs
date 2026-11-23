@@ -9,7 +9,7 @@ test('built entry resolves its real dependencies, preload and renderer', async (
   const projectRoot = path.resolve(__dirname, '..');
   const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
   const entry = path.resolve(projectRoot, packageJson.main);
-  assert.ok(fs.statSync(entry).isFile(), 'package.main must name an emitted file');
+  const entryCode = fs.readFileSync(entry, 'utf8');
 
   const windows = [];
   class BrowserWindow {
@@ -29,7 +29,7 @@ test('built entry resolves its real dependencies, preload and renderer', async (
   const actualRequire = Module.createRequire(entry);
   const requireWithElectronStub = (name) => name === 'electron' ? electron : actualRequire(name);
   const compiled = vm.runInNewContext(
-    Module.wrap(fs.readFileSync(entry, 'utf8')),
+    Module.wrap(entryCode),
     { process: { env: { NODE_ENV: 'production' }, platform: process.platform } },
     { filename: entry }
   );
