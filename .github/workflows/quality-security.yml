@@ -1601,6 +1601,7 @@ jobs:
           --exclude ccxt
           bot_core core deployment scripts
       - name: Semgrep CryptoHunter blocking rules
+        if: ${{ !cancelled() }}
         run: >-
           python scripts/quality/semgrep_gate.py
           --report "$RUNNER_TEMP/semgrep-blocking.json"
@@ -1608,11 +1609,13 @@ jobs:
           --blocking
           bot_core core deployment scripts
       - name: Semgrep CryptoHunter rule fixtures
+        if: ${{ !cancelled() }}
         run: >-
           semgrep scan --test
           --config .semgrep/cryptohunter.yml .semgrep/cryptohunter.py
           --metrics=off --disable-version-check --jobs 1
       - name: Install verified Betterleaks stable
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           install_dir="$RUNNER_TEMP/betterleaks"
@@ -1634,6 +1637,7 @@ jobs:
           echo "$install_dir" >> "$GITHUB_PATH"
           "$install_dir/betterleaks" version
       - name: Betterleaks working tree (offline, blocking)
+        if: ${{ !cancelled() }}
         run: >-
           betterleaks dir
           --baseline-path .betterleaks-baseline.json

@@ -158,6 +158,11 @@ def main(argv: list[str] | None = None) -> int:
         "--metrics=off",
         "--disable-version-check",
         "--max-target-bytes=0",
+        # Large first-party modules exceed Semgrep's default five-second budget.
+        # Keep a finite per-rule budget, but never abandon a file after a few errors.
+        "--timeout=60",
+        "--timeout-threshold=0",
+        "--jobs=2",
         "--json",
         "--output",
         str(args.report),

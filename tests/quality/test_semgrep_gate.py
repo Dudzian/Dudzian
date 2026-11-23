@@ -38,6 +38,23 @@ def test_ci_checks_both_scan_reports_and_preserves_failure_artifacts() -> None:
     assert "semgrep-blocking.json" not in upload["with"]["path"]
 
 
+def test_independent_scanners_still_run_after_an_incomplete_community_scan() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/quality-security.yml").read_text())
+    job = workflow["jobs"]["security-static"]
+    assert job["timeout-minutes"] == 30
+    expected = {
+        "Semgrep CryptoHunter blocking rules",
+        "Semgrep CryptoHunter rule fixtures",
+        "Install verified Betterleaks stable",
+        "Betterleaks working tree (offline, blocking)",
+    }
+    independent = {step["name"]: step for step in job["steps"] if step.get("name") in expected}
+    assert set(independent) == expected
+    for step in independent.values():
+        assert step["if"] == "${{ !cancelled() }}"
+        assert not step.get("continue-on-error", False)
+
+
 def _complete_report() -> dict[str, object]:
     return {
         "version": "1.179.0",
@@ -199,6 +216,9 @@ def test_scanner_exit_cannot_be_replaced_by_clean_report(
     path = tmp_path / "report.json"
 
     def fake_run(command, **kwargs):
+        assert "--timeout=60" in command
+        assert "--timeout-threshold=0" in command
+        assert "--jobs=2" in command
         _write_report(tmp_path, _complete_report())
         return subprocess.CompletedProcess(command, returncode)
 
