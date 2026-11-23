@@ -26,19 +26,23 @@ class CorePlanError(RuntimeError):
 MAX_CORE_XML_REPORT_BYTES = 16 * 1024 * 1024
 
 
+class _ReportTreeBuilder(ET.TreeBuilder):
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        # Parser events follow encoding detection and precede entity expansion.
+        raise CorePlanError("unsafe XML declaration in core report")
+
+
 def _parse_core_xml_report(path: Path) -> ET.Element:
     try:
-        if path.stat().st_size > MAX_CORE_XML_REPORT_BYTES:
-            raise CorePlanError("core XML report exceeds size limit")
-        raw = path.read_bytes()
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_CORE_XML_REPORT_BYTES + 1)
     except OSError as exc:
         raise CorePlanError("unable to read core XML report") from exc
-    upper = raw.upper()
-    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
-        raise CorePlanError("unsafe XML declaration in core report")
+    if len(raw) > MAX_CORE_XML_REPORT_BYTES:
+        raise CorePlanError("core XML report exceeds size limit")
     try:
-        return ET.fromstring(raw)  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
-    except ET.ParseError as exc:
+        return ET.fromstring(raw, parser=ET.XMLParser(target=_ReportTreeBuilder()))  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
+    except (ET.ParseError, LookupError, ValueError) as exc:
         raise CorePlanError("invalid core XML report") from exc
 
 
