@@ -17,21 +17,25 @@ class CoverageValidationError(RuntimeError):
 MAX_COVERAGE_XML_BYTES = 16 * 1024 * 1024
 
 
+class _ReportTreeBuilder(ET.TreeBuilder):
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        # Parser events follow encoding detection and precede entity expansion.
+        raise CoverageValidationError("Raport coverage zawiera niedozwoloną deklarację XML")
+
+
 def _parse_coverage_xml(path: Path) -> ET.Element:
     try:
-        if path.stat().st_size > MAX_COVERAGE_XML_BYTES:
-            raise CoverageValidationError("Raport coverage przekracza limit rozmiaru")
-        raw = path.read_bytes()
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_COVERAGE_XML_BYTES + 1)
     except OSError as exc:
         raise CoverageValidationError(f"Nie udało się odczytać XML z {path}") from exc
-    upper = raw.upper()
-    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
-        raise CoverageValidationError("Raport coverage zawiera niedozwoloną deklarację XML")
+    if len(raw) > MAX_COVERAGE_XML_BYTES:
+        raise CoverageValidationError("Raport coverage przekracza limit rozmiaru")
     try:
         return ET.fromstring(
-            raw
+            raw, parser=ET.XMLParser(target=_ReportTreeBuilder())
         )  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
-    except ET.ParseError as exc:
+    except (ET.ParseError, LookupError, ValueError) as exc:
         raise CoverageValidationError(f"Nie udało się odczytać XML z {path}") from exc
 
 

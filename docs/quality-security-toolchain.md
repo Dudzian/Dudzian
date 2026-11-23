@@ -1,5 +1,16 @@
 # Quality, security, and code-intelligence toolchain
 
+V5d5 dodaje kontrakt dokładnie wskazanych współdzielonych członków wheels do
+skonfigurowanego mypy Linux/Win32 i istniejących zakresów Ruff/format. Osobny
+job `stage9-v5d5-shared-wheel-members` sprawdza syntetyczne pozytywne i negatywne
+przypadki na Ubuntu, Windows i macOS z Python 3.12, pełne regresje V5d4/V5d3
+oraz inventory V5d2. Zachowuje JUnit i branch coverage. Osobna bramka wymaga
+sukcesu wszystkich trzech platform oraz kompletnych danych ich pokrycia,
+łączy je i egzekwuje próg pokrycia zmienionego kodu 70%. Dotychczasowy job
+V5d4 i pozostałe bramki pozostają w mocy.
+Testy nie instalują rzeczywistych wheels i nie nadają niezależnej aprobaty,
+autoryzacji native load ani kwalifikacji Stage 9.
+
 Remediacja bytecode V5d4 rozszerza istniejące zestawy dependencies,
 environment i ABI o pełny `RECORD` przed odmową/pominięciem, dokładne
 niezależne oczekiwania oraz przejście od wheel do katalogu docelowego.

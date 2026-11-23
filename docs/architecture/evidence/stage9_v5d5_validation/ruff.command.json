@@ -1,0 +1,13 @@
+[
+  "python",
+  "-m",
+  "ruff",
+  "check",
+  "bot_core",
+  "core",
+  "scripts",
+  "tests",
+  "deploy",
+  "stage6_samples",
+  "ui"
+]

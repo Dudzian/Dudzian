@@ -90,10 +90,10 @@ static int seal(void) {
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_write, 0, 5),
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
-                 offsetof(struct seccomp_data, args[0]) + 4),
+                 offsetof(struct seccomp_data, args) + 4),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 3),
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
-                 offsetof(struct seccomp_data, args[0])),
+                 offsetof(struct seccomp_data, args)),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 1, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_STMT(BPF_RET | BPF_K, deny)

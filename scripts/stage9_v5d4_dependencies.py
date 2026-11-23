@@ -18,12 +18,13 @@ import itertools
 import json
 import os
 import re
+import runpy
 import stat
 import sys
 import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 TARGET = {
     "implementation_name": "cpython",
@@ -553,6 +554,18 @@ def validate_materialization(packages: list[dict[str, Any]]) -> None:
             directories.update(parents)
 
 
+def shared_tools() -> dict[str, Any]:
+    """Trusted adjacent code, never wheel or candidate-provided Python."""
+    return runpy.run_path(str(Path(__file__).with_name("stage9_v5d5_shared.py")))
+
+
+def shared_inventory(packages: list[dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return cast(dict[str, Any], shared_tools()["collision_inventory"](packages))
+    except ValueError as exc:
+        raise Refusal(str(exc)) from exc
+
+
 def inspect_wheel(path: Path, origin: Any) -> dict[str, Any]:
     return inspect_wheel_bytes(read_regular(path), path.name, origin)
 
@@ -787,10 +800,24 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
             "native_members": native,
             "omitted_members": omitted,
             "materialized_members": materialized,
+            "member_metadata": {
+                item.filename: {
+                    "mode": item.external_attr >> 16,
+                    "type": "regular",
+                    "size": item.file_size,
+                }
+                for item in members
+                if not item.is_dir()
+            },
         }
 
 
-def propose(pyproject: Path, wheelhouse: Path, origins: dict[str, Any]) -> dict[str, Any]:
+def propose(
+    pyproject: Path,
+    wheelhouse: Path,
+    origins: dict[str, Any],
+    allow_shared_candidates: bool = False,
+) -> dict[str, Any]:
     raw = read_regular(pyproject, 8 * 1024 * 1024)
     project = tomllib.loads(raw.decode())["project"]
     require(
@@ -832,14 +859,22 @@ def propose(pyproject: Path, wheelhouse: Path, origins: dict[str, Any]) -> dict[
         selected[name] = package
         pending.extend((item, next_extras, name) for item in package["requires_dist"])
     require(set(selected) == set(candidates), "UNREACHABLE_WHEEL")
-    validate_materialization([selected[name] for name in sorted(selected)])
-    return {
-        "profile": "stage9-v5d4-dependency-proposal-v1",
+    packages = [selected[name] for name in sorted(selected)]
+    if allow_shared_candidates:
+        sharing = shared_inventory(packages)
+    else:
+        validate_materialization(packages)
+    result = {
+        "profile": (
+            "stage9-v5d5-dependency-proposal-v1"
+            if allow_shared_candidates
+            else "stage9-v5d4-dependency-proposal-v1"
+        ),
         "status": "PROPOSAL_REQUIRES_INDEPENDENT_APPROVAL",
         "target": TARGET,
         "pyproject_sha256": digest(raw),
         "root_requirements": roots,
-        "packages": [selected[name] for name in sorted(selected)],
+        "packages": packages,
         "edges": [list(item) for item in sorted(edges)],
         "system_binding": "SEPARATE_REVIEW_REQUIRED:python3-libvirt/libvirtmod/ELF",
         "bytecode_policy": BYTECODE_POLICY_ID,
@@ -850,6 +885,9 @@ def propose(pyproject: Path, wheelhouse: Path, origins: dict[str, Any]) -> dict[
         ),
         "authorization": "NOT_AUTHORIZED",
     }
+    if allow_shared_candidates:
+        result["shared_wheel_members"] = sharing
+    return result
 
 
 def omission_expectation(proposal: dict[str, Any]) -> dict[str, Any]:
@@ -871,6 +909,7 @@ def verify(
     expected_sha256: str,
     approved_native: dict[str, str],
     approved_omissions: dict[str, Any] | None = None,
+    approved_shared: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Oczekiwany digest i native inventory muszą przyjść od odrębnego recenzenta.
 
@@ -882,7 +921,8 @@ def verify(
         "INDEPENDENT_EXPECTATION_MISSING",
     )
     require(digest(canonical(proposal)) == expected_sha256, "PROPOSAL_SHA256_MISMATCH")
-    rebuilt = propose(pyproject, wheelhouse, origins)
+    uses_shared_contract = proposal.get("profile") == "stage9-v5d5-dependency-proposal-v1"
+    rebuilt = propose(pyproject, wheelhouse, origins, allow_shared_candidates=uses_shared_contract)
     require(canonical(proposal) == canonical(rebuilt), "PROPOSAL_CONTENT_MISMATCH")
     native = {
         package["filename"] + ":" + member: sha
@@ -893,8 +933,18 @@ def verify(
     omissions = omission_expectation(rebuilt)
     if omissions["members"] or approved_omissions is not None:
         require(approved_omissions == omissions, "UNAPPROVED_WHEEL_OMISSIONS")
-    return {
-        "profile": "stage9-v5d4-dependency-verification-v1",
+    sharing: dict[str, Any] | None = None
+    if uses_shared_contract or approved_shared is not None:
+        try:
+            sharing = shared_tools()["verify_shared"](rebuilt["packages"], approved_shared)
+        except ValueError as exc:
+            raise Refusal(str(exc)) from exc
+    result = {
+        "profile": (
+            "stage9-v5d5-dependency-verification-v1"
+            if uses_shared_contract
+            else "stage9-v5d4-dependency-verification-v1"
+        ),
         "status": "LOCAL_CONSISTENCY_VERIFIED",
         "proposal_sha256": expected_sha256,
         "packages": len(rebuilt["packages"]),
@@ -906,6 +956,15 @@ def verify(
         "authority": "CALLER_SUPPLIED_EXPECTATIONS_NOT_AUTHENTICATED",
         "authorization": "NOT_AUTHORIZED",
     }
+    if sharing is not None:
+        result.update(
+            {
+                "shared_wheel_members": sharing,
+                "shared_wheel_expectations": approved_shared,
+                "shared_wheel_policy": sharing["policy"],
+            }
+        )
+    return result
 
 
 def main() -> int:
@@ -918,12 +977,19 @@ def main() -> int:
     parser.add_argument("--expected-sha256")
     parser.add_argument("--approved-native", type=Path)
     parser.add_argument("--approved-omissions", type=Path)
+    parser.add_argument("--approved-shared", type=Path)
+    parser.add_argument("--allow-shared-candidates", action="store_true")
     args = parser.parse_args()
     try:
         origins = json_data(args.origins)
         require(type(origins) is dict, "ORIGIN_SCHEMA")
         if args.mode == "propose":
-            result = propose(args.pyproject, args.wheelhouse, origins)
+            result = propose(
+                args.pyproject,
+                args.wheelhouse,
+                origins,
+                allow_shared_candidates=args.allow_shared_candidates,
+            )
         else:
             require(
                 args.proposal is not None and args.approved_native is not None,
@@ -937,6 +1003,7 @@ def main() -> int:
                 args.expected_sha256,
                 json_data(args.approved_native),
                 json_data(args.approved_omissions) if args.approved_omissions else None,
+                json_data(args.approved_shared) if args.approved_shared else None,
             )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
