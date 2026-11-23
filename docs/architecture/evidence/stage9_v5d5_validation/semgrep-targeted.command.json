@@ -1,0 +1,18 @@
+[
+  "/workspace/work/security-venv/bin/semgrep",
+  "scan",
+  "--config",
+  ".semgrep/cryptohunter.yml",
+  "--metrics=off",
+  "--disable-version-check",
+  "--error",
+  "--timeout",
+  "60",
+  "--jobs",
+  "1",
+  "bot_core/auto_trader/app.py",
+  "scripts/stage9_v5d5_shared.py",
+  "scripts/stage9_v5d4_dependencies.py",
+  "scripts/stage9_v5d4_environment.py",
+  "scripts/stage9_v5d4_launch.py"
+]

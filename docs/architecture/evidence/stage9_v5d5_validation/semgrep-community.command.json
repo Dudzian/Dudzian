@@ -1,0 +1,23 @@
+[
+  "/workspace/work/security-venv/bin/semgrep",
+  "scan",
+  "--config",
+  "p/python",
+  "--config",
+  "p/security-audit",
+  "--metrics=off",
+  "--disable-version-check",
+  "--json",
+  "--output",
+  "/workspace/work/security-logs/semgrep-community.json",
+  "--exclude",
+  "tests",
+  "--exclude",
+  "archive",
+  "--exclude",
+  "ccxt",
+  "bot_core",
+  "core",
+  "deployment",
+  "scripts"
+]

@@ -1,0 +1,8 @@
+[
+  "python",
+  "-m",
+  "diff_cover.diff_cover_tool",
+  "/workspace/work/v5d5-validation/v5d5-coverage.xml",
+  "--compare-branch=origin/main",
+  "--fail-under=70"
+]
