@@ -125,12 +125,82 @@ def check_startup(path: Path) -> None:
 
 
 def write_new(root: Path, name: str, data: bytes) -> None:
-    path = root / relative(name)
+    member = relative(name)
+    path = root / member
     check_startup(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as stream:
-        stream.write(data)
-    path.chmod(0o600)
+    require(not any(p.is_symlink() for p in (root, *root.parents)), "MATERIALIZATION_SYMLINK")
+    if os.name == "posix":
+        fchmod = getattr(os, "fchmod", None)
+        if not callable(fchmod):
+            raise Refusal("SECURE_FILE_WRITER_UNAVAILABLE")
+        require(
+            bool(getattr(os, "O_NOFOLLOW", None)) and bool(getattr(os, "O_DIRECTORY", None)),
+            "SECURE_FILE_WRITER_UNAVAILABLE",
+        )
+        absolute_root = root.absolute()
+        before = absolute_root.lstat()
+        require(stat.S_ISDIR(before.st_mode), "MATERIALIZATION_SYMLINK")
+        descriptor = os.open(absolute_root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            # Opening an absolute final component with O_NOFOLLOW still follows
+            # ancestor links. Traverse every component relative to held handles.
+            for component in absolute_root.parts[1:]:
+                child = os.open(
+                    component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                )
+                os.close(descriptor)
+                descriptor = child
+            require(
+                file_identity(os.fstat(descriptor)) == file_identity(before),
+                "MATERIALIZATION_ROOT_CHANGED",
+            )
+        except OSError as exc:
+            os.close(descriptor)
+            raise Refusal("MATERIALIZATION_SYMLINK") from exc
+        except ValueError:
+            os.close(descriptor)
+            raise
+        try:
+            for component in member.parts[:-1]:
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                metadata = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+                require(stat.S_ISDIR(metadata.st_mode), "MATERIALIZATION_SYMLINK")
+                child = os.open(
+                    component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                )
+                if file_identity(os.fstat(child)) != file_identity(metadata):
+                    os.close(child)
+                    raise Refusal("MATERIALIZATION_DIRECTORY_CHANGED")
+                os.close(descriptor)
+                descriptor = child
+            try:
+                target = os.open(
+                    member.name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=descriptor,
+                )
+            except FileExistsError as exc:
+                raise Refusal("MATERIALIZATION_COLLISION") from exc
+            with os.fdopen(target, "wb") as stream:
+                stream.write(data)
+                fchmod(stream.fileno(), 0o600)
+        finally:
+            os.close(descriptor)
+    else:
+        # Budowa Linux odmawia na Windows; przenośny ekstraktor nadal nie
+        # może nadpisać celu ani świadomie przejść przez dowiązany katalog.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        require(not any(p.is_symlink() for p in path.parents), "MATERIALIZATION_SYMLINK")
+        try:
+            with path.open("xb") as stream:
+                stream.write(data)
+        except FileExistsError as exc:
+            raise Refusal("MATERIALIZATION_COLLISION") from exc
+        path.chmod(0o600)
 
 
 def reserve_path(files: dict[str, str], directories: set[str], name: str, digest: str) -> None:
@@ -206,16 +276,92 @@ def extract_wheel(data: bytes, destination: Path, package: dict[str, Any] | None
             write_new(destination, member["path"], content)
 
 
+def prepare_wheel_set(
+    packages: list[dict[str, Any]], wheelhouse: Path, approved_shared: dict[str, Any] | None
+) -> tuple[
+    list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]], dict[str, str], dict[str, Any]
+]:
+    """Capture immutable archives and validate every declaration before writing.
+
+    Only the separate exact contract can identify a shared target. The ordinary
+    reservation guard is retained for every other target and its ancestors.
+    """
+    shared_tools = runpy.run_path(str(Path(__file__).with_name("stage9_v5d5_shared.py")))
+    shared = shared_tools["verify_shared"](packages, approved_shared)
+    shared_paths = {row["path"] for row in shared["members"]}
+    snapshots: list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]] = []
+    planned: dict[str, str] = {}
+    directories: set[str] = set()
+    for package in sorted(packages, key=lambda item: (item["name"], item["filename"])):
+        data = read(wheelhouse / relative(package["filename"]))
+        require(sha(data) == package["sha256"], "WHEEL_CHANGED_AFTER_VERIFICATION")
+        plan = wheel_plan(data, package)
+        snapshots.append((package, data, plan))
+        for member in plan.values():
+            target = member["path"]
+            if target in planned:
+                require(
+                    target in shared_paths and planned[target] == member["sha256"],
+                    "MATERIALIZATION_COLLISION",
+                )
+            else:
+                reserve_path(planned, directories, target, member["sha256"])
+    return snapshots, planned, shared
+
+
+def materialize_wheel_set(
+    snapshots: list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]],
+    destination: Path,
+    shared: dict[str, Any],
+) -> None:
+    """Use retained immutable bytes; write each approved shared target once."""
+    for _, _, plan in snapshots:
+        for member in plan.values():
+            target_path = destination / relative(member["path"])
+            require(
+                not target_path.exists() and not target_path.is_symlink(),
+                "MATERIALIZATION_COLLISION",
+            )
+            for parent in target_path.parents:
+                require(not parent.is_symlink(), "MATERIALIZATION_SYMLINK")
+                require(not parent.exists() or parent.is_dir(), "MATERIALIZATION_COLLISION")
+    shared_paths = {row["path"] for row in shared["members"]}
+    written: set[str] = set()
+    for _, data, plan in snapshots:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            for name, member in sorted(plan.items()):
+                target = member["path"]
+                if target in written:
+                    require(target in shared_paths, "MATERIALIZATION_COLLISION")
+                    continue
+                content = archive.read(name)
+                require(sha(content) == member["sha256"], "WHEEL_MEMBER_PLAN_MISMATCH")
+                write_new(destination, target, content)
+                written.add(target)
+
+
 def verify_materialized(root: Path, expected: dict[str, str]) -> None:
     actual: dict[str, str] = {}
+    directories: set[str] = set()
     for path in root.rglob("*"):
         require(not path.is_symlink(), "MATERIALIZATION_SYMLINK")
         check_startup(path)
         if path.is_dir():
+            directories.add(path.relative_to(root).as_posix())
             continue
         require(stat.S_ISREG(path.lstat().st_mode), "MATERIALIZATION_SPECIAL")
         actual[path.relative_to(root).as_posix()] = sha(read(path))
     require(actual == expected, "MATERIALIZED_INVENTORY_MISMATCH")
+    require(
+        directories
+        == {
+            parent.as_posix()
+            for name in expected
+            for parent in relative(name).parents
+            if parent != Path(".")
+        },
+        "MATERIALIZED_DIRECTORY_MISMATCH",
+    )
 
 
 def helper(name: str) -> dict[str, Any]:
@@ -257,7 +403,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         "INPUT_SCHEMA_REJECTED",
     )
     require(
-        set(approval) - {"wheel_omissions"}
+        set(approval) - {"wheel_omissions", "wheel_shared_members"}
         == {
             "host",
             "proposal_sha256",
@@ -319,6 +465,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         approval["proposal_sha256"],
         approval["wheel_native"],
         approval.get("wheel_omissions"),
+        approval.get("wheel_shared_members"),
     )
     closure_tools = helper("stage9_v5d4_closure.py")
     closure = closure_tools["inventory"](repository)
@@ -375,13 +522,15 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         "libvirt.py": abi_request["libvirt_module"],
         "libvirtmod.cpython-312-x86_64-linux-gnu.so": abi_request["libvirt_extension"],
     }
-    planned: dict[str, str] = {}
-    planned_directories: set[str] = set()
-    for package in proposal["packages"]:
-        data = read(Path(inputs["wheelhouse"]) / relative(package["filename"]))
-        require(sha(data) == package["sha256"], "WHEEL_CHANGED_AFTER_VERIFICATION")
-        for member in wheel_plan(data, package).values():
-            reserve_path(planned, planned_directories, member["path"], member["sha256"])
+    snapshots, planned, shared = prepare_wheel_set(
+        proposal["packages"], Path(inputs["wheelhouse"]), approval.get("wheel_shared_members")
+    )
+    planned_directories = {
+        parent.as_posix()
+        for name in planned
+        for parent in relative(name).parents
+        if parent != Path(".")
+    }
     for name, digest in code.items():
         require(sha(read(repository / relative(name))) == digest, "SOURCE_CHANGED_AFTER_REVIEW")
         reserve_path(planned, planned_directories, name, digest)
@@ -425,10 +574,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     if lib64.is_symlink() and lib64.readlink() == Path("lib"):
         lib64.unlink()
     packages.mkdir(mode=0o700)
-    for package in proposal["packages"]:
-        data = read(Path(inputs["wheelhouse"]) / package["filename"])
-        require(sha(data) == package["sha256"], "WHEEL_CHANGED_AFTER_VERIFICATION")
-        extract_wheel(data, packages, package)
+    materialize_wheel_set(snapshots, packages, shared)
     for name, digest in code.items():
         data = read(repository / relative(name))
         require(sha(data) == digest, "SOURCE_CHANGED_AFTER_REVIEW")
@@ -448,6 +594,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     launcher = read(Path(__file__).with_name("stage9_v5d4_launch.py"))
     write_new(output, "launch.py", launcher)
     write_new(output, "runtime-audit.py", read(Path(__file__).with_name("stage9_v5d4_closure.py")))
+    write_new(output, "shared-audit.py", read(Path(__file__).with_name("stage9_v5d5_shared.py")))
     files = {
         p.relative_to(output).as_posix(): sha(read(p))
         for p in sorted(output.rglob("*"))
@@ -464,14 +611,38 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     )
     verify_materialized(packages, planned)
     receipt = {
-        "profile": "stage9-v5d4-prepared-environment-v1",
+        "profile": "stage9-v5d5-prepared-environment-v1",
         "files": files,
+        "directories": sorted(
+            path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_dir()
+        ),
         "host": expected_host,
         "root": str(output),
         "dependency_verification": verification,
         "wheel_archives": [
             {key: package[key] for key in ("name", "version", "filename", "sha256", "origin")}
             for package in proposal["packages"]
+        ],
+        "wheel_materialization": [
+            {
+                key: package[key]
+                for key in (
+                    "name",
+                    "version",
+                    "filename",
+                    "sha256",
+                    "materialized_members",
+                    "member_metadata",
+                )
+            }
+            for package, _, _ in snapshots
+        ],
+        "shared_wheel_members": shared,
+        "shared_wheel_expectations": approval.get("wheel_shared_members"),
+        "shared_wheel_policy": shared["policy"],
+        "shared_wheel_output": [
+            {"path": row["path"], "sha256": planned[row["path"]], "mode": 0o600, "type": "regular"}
+            for row in shared["members"]
         ],
         "wheel_omissions": [
             member for package in proposal["packages"] for member in package["omitted_members"]
@@ -500,6 +671,14 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
             "Production": "NO-GO",
         },
     }
+    for row in receipt["shared_wheel_output"]:
+        metadata = (packages / row["path"]).lstat()
+        require(
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_nlink == 1
+            and stat.S_IMODE(metadata.st_mode) == row["mode"],
+            "SHARED_WHEEL_OUTPUT_MODE_CHANGED_BEFORE_RECEIPT",
+        )
     write_new(output, "ENVIRONMENT.json", deps["canonical"](receipt) + b"\n")
     return receipt
 

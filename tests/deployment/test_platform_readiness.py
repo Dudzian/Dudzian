@@ -597,6 +597,8 @@ def _workflow_condition(condition: str, context: dict[str, object]) -> bool:
     malformed text values to check that neither is mistaken for boolean opt-in.
     Dependency success is outside this model; the existing preflight contract
     separately requires successful current Core jobs and reviewed evidence.
+    The only status call in these explicit job conditions is always(), which
+    remains true even when a dependency failed, was cancelled or was skipped.
     """
     for name, value in context.items():
         condition = condition.replace(name, repr(value))
@@ -607,6 +609,14 @@ def _workflow_condition(condition: str, context: dict[str, object]) -> bool:
             return node.value
         if isinstance(node, ast.Name) and node.id in {"true", "false"}:
             return node.id == "true"
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "always"
+            and not node.args
+            and not node.keywords
+        ):
+            return True
         if isinstance(node, ast.BoolOp):
             values = (bool(interpret(value)) for value in node.values)
             return all(values) if isinstance(node.op, ast.And) else any(values)
@@ -618,7 +628,61 @@ def _workflow_condition(condition: str, context: dict[str, object]) -> bool:
                 return left != right
         raise AssertionError(f"Unsupported workflow condition: {ast.dump(node)}")
 
+    # Validate calls even in branches that boolean short-circuiting will skip.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            interpret(node)
     return bool(interpret(tree.body))
+
+
+@pytest.mark.parametrize("dependency_result", ["success", "failure", "cancelled", "skipped"])
+def test_workflow_always_is_true_independent_of_dependency_result(dependency_result: str) -> None:
+    assert _workflow_condition("always()", {"needs.prerequisite.result": dependency_result})
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "always(true)",
+        "always(flag=true)",
+        "status.always()",
+        "success()",
+        "failure()",
+        "cancelled()",
+        "other()",
+        "true || other()",
+        "false && always(true)",
+    ],
+)
+def test_workflow_condition_rejects_calls_outside_required_grammar(condition: str) -> None:
+    with pytest.raises(AssertionError, match="Unsupported workflow condition"):
+        _workflow_condition(condition, {})
+
+
+@pytest.mark.parametrize("dependency_result", ["success", "failure", "cancelled", "skipped"])
+@pytest.mark.parametrize("scope", ["full", "stage9-safe"])
+def test_real_always_job_conditions_retain_scope_guard_despite_dependency_results(
+    dependency_result: str, scope: str
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    jobs = yaml.safe_load(
+        (root / ".github/workflows/platform-deployment.yml").read_text(encoding="utf-8")
+    )["jobs"]
+    for name in (
+        "stage9-v5d5-shared-wheel-coverage",
+        "linux-deployment-integration",
+        "windows-release-gate",
+    ):
+        dependencies = jobs[name]["needs"]
+        if isinstance(dependencies, str):
+            dependencies = [dependencies]
+        context = {
+            "github.event_name": "workflow_dispatch",
+            "inputs.validation_scope": scope,
+            "inputs.run_stage10": True,
+            **{f"needs.{dependency}.result": dependency_result for dependency in dependencies},
+        }
+        assert _workflow_condition(jobs[name]["if"], context) is (scope == "full"), name
 
 
 @pytest.mark.parametrize("event", ["pull_request", "push", "workflow_dispatch"])
