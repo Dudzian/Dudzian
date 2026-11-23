@@ -1,0 +1,8 @@
+[
+  "python",
+  "-m",
+  "pre_commit",
+  "run",
+  "ruff-format",
+  "--all-files"
+]
