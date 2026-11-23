@@ -516,6 +516,7 @@ jobs:
         run: >-
           python -m pytest -ra -p asyncio -p pytest_cov -p xdist.plugin -n 4
           tests/property
+          tests/quality/test_semgrep_gate.py
           tests/deployment/test_linux_physical_evidence.py
           tests/deployment/test_linux_physical_remediation.py
           tests/deployment/test_linux_physical_ipc.py
@@ -733,6 +734,7 @@ jobs:
           --cov=deployment.stage9_vm_performance
           --cov=scripts.prepare_stage9_vm_bundle
           --cov=scripts.prepare_stage9_protected_tree
+          --cov=scripts.quality.semgrep_gate
           --cov=scripts.stage9_runtime_provenance
           --cov=deployment.production_local_installer
           --cov=deployment.production_local_installer_host
@@ -1589,33 +1591,31 @@ jobs:
       - name: Install Semgrep CE
         run: python -m pip install "semgrep==1.179.0"
       - name: Semgrep maintained community baseline (advisory)
-        continue-on-error: true
         run: >-
-          semgrep scan
+          python scripts/quality/semgrep_gate.py
+          --report "$RUNNER_TEMP/semgrep-community.json"
           --config p/python
           --config p/security-audit
-          --metrics=off
-          --disable-version-check
-          --json
-          --output "$RUNNER_TEMP/semgrep-community.json"
           --exclude tests
           --exclude archive
           --exclude ccxt
           bot_core core deployment scripts
       - name: Semgrep CryptoHunter blocking rules
+        if: ${{ !cancelled() }}
         run: >-
-          semgrep scan
+          python scripts/quality/semgrep_gate.py
+          --report "$RUNNER_TEMP/semgrep-blocking.json"
           --config .semgrep/cryptohunter.yml
-          --metrics=off
-          --disable-version-check
-          --error
+          --blocking
           bot_core core deployment scripts
       - name: Semgrep CryptoHunter rule fixtures
+        if: ${{ !cancelled() }}
         run: >-
           semgrep scan --test
           --config .semgrep/cryptohunter.yml .semgrep/cryptohunter.py
           --metrics=off --disable-version-check --jobs 1
       - name: Install verified Betterleaks stable
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           install_dir="$RUNNER_TEMP/betterleaks"
@@ -1637,6 +1637,7 @@ jobs:
           echo "$install_dir" >> "$GITHUB_PATH"
           "$install_dir/betterleaks" version
       - name: Betterleaks working tree (offline, blocking)
+        if: ${{ !cancelled() }}
         run: >-
           betterleaks dir
           --baseline-path .betterleaks-baseline.json
@@ -1652,7 +1653,8 @@ jobs:
         with:
           name: quality-security-reports
           path: |
-            ${{ runner.temp }}/semgrep-community.json
+            ${{ runner.temp }}/semgrep-community.summary.json
+            ${{ runner.temp }}/semgrep-blocking.summary.json
             ${{ runner.temp }}/betterleaks-working-tree.json
           if-no-files-found: warn
           retention-days: 7
