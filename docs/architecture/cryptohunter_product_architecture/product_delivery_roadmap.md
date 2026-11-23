@@ -153,6 +153,18 @@ local signing on an enrolling device, automatic production enrollment, enabling
 Stage 10, or claiming physical TPM/PDSA qualification. Current Stage 9 readiness
 and its canonical status file remain unchanged.
 
+## Post-Stage 9 unattended-operations alerting — OPS-ALERT-01
+
+**Status: PLANNED; documentation-only.** Schedule this capability **after Stage 9 closure**, during subsequent platform stabilization and **before unattended operation or guarded LIVE canary**. It is an unnumbered cross-cutting workstream, not a new Windows Stage or a shortcut around Stage 10, native/physical qualification, M0–M6 evidence gates, or operator authorization.
+
+- Reuse and audit the existing `TelegramChannel`, alert router, runtime telemetry and secret-management paths rather than claim the historical successful Telegram smoke proves current runtime delivery.
+- Add an **independent out-of-process watchdog** with authenticated periodic heartbeat and explicit loss-of-process, loss-of-host/network reachability, stale telemetry, delivery failure, recovery and escalation semantics. Host/power outages require a watcher deployed in a separate failure domain.
+- Deliver actionable, redacted Telegram alerts with severity, affected runtime/environment, incident ID, timestamp, deduplication, bounded retries/backoff, acknowledgement/escalation and recovery notices. Keep bot tokens and chat IDs out of logs and committed examples.
+- Qualification requires controlled end-to-end fault injection, real delivery evidence to the operator's configured Telegram destination, negative-path checks, an audit trail and a runbook. A green unit test or the presence of a Telegram module is not an operational PASS.
+- Notification loss must not grant LIVE permissions or bypass independent risk, execution, kill-switch or recovery gates. Do not automatically liquidate positions solely because Telegram is unavailable; define and validate the appropriate safe state separately.
+
+**Detailed scope, phased delivery and acceptance:** [OPS-ALERT-01 roadmap](../../roadmap/post_stage9_unattended_alerting.md).
+
 ## Numbered capabilities after Stage 10 — Stage 11 and Stage 12
 
 **Status: PLANNED; numbering formalized, implementation not started.** These are product capability stages ordered after the Windows Stage 10 live lifecycle qualification. They do **not** renumber or extend frozen Windows Stage 0–14 acceptance items, or replace the canonical M0–M6 product milestone taxonomy. Neither stage may claim readiness solely from design documents, existing preview code or the presence of a workflow.
@@ -714,6 +726,7 @@ Once these criteria are met, beta begins. Further pre-beta redesign or polish is
 
 ## Hardening matrix
 
+- independently monitored heartbeat, external-watchdog host/process failure detection, Telegram incident delivery, acknowledgement and recovery (OPS-ALERT-01)
 - process crash during order lifecycle
 - abrupt machine restart
 - corrupted persistence

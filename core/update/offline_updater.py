@@ -71,6 +71,9 @@ def _extract_package(package_path: Path) -> Path:
     except (FileNotFoundError, tarfile.TarError) as exc:  # pragma: no cover - defensywne
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise OfflinePackageError(f"Nie można rozpakować pakietu {package_path}: {exc}") from exc
+    except BaseException:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
     return staging_dir
 
 
@@ -234,7 +237,7 @@ def verify_offline_package(
 
         artifacts = _verify_artifacts(manifest, staging_dir)
         return manifest, signature_payload, staging_dir, artifacts
-    except Exception:
+    except BaseException:
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise
 
@@ -277,16 +280,18 @@ def import_offline_package(
         hmac_key=hmac_key,
     )
 
-    destination_dir = Path(destination_dir).expanduser()
-    if not destination_dir.exists():
-        destination_dir.mkdir(parents=True, exist_ok=True)
-
-    target = destination_dir / f"{manifest.package_id}-{manifest.version}"
-    if target.exists():
-        shutil.rmtree(target)
-    target.mkdir(parents=True, exist_ok=True)
-
+    transaction_dir: Path | None = None
+    preserve_transaction = False
     try:
+        destination_dir = Path(destination_dir).expanduser()
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        target = destination_dir / f"{manifest.package_id}-{manifest.version}"
+        # Prepare on the destination filesystem before changing any visible package.
+        transaction_dir = Path(tempfile.mkdtemp(prefix=".offline-import-", dir=destination_dir))
+        prepared = transaction_dir / "prepared"
+        prepared.mkdir()
+        previous = transaction_dir / "previous"
+
         manifest_to_write: MutableMapping[str, object] = dict(manifest.raw)
         manifest_to_write["signature"] = _signature_string(manifest, signature_payload, artifacts)
         if manifest_to_write.get("created_at") is None:
@@ -294,24 +299,50 @@ def import_offline_package(
                 datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             )
 
-        manifest_path = target / "manifest.json"
+        manifest_path = prepared / "manifest.json"
         manifest_path.write_text(
             json.dumps(manifest_to_write, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
         if signature_payload is not None:
-            (target / "manifest.sig").write_text(
+            (prepared / "manifest.sig").write_text(
                 json.dumps(signature_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
 
         copied: dict[str, Path] = {}
         for artifact, source_path in artifacts.items():
-            destination_path = target / artifact
+            destination_path = prepared / artifact
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_path, destination_path)
-            copied[artifact] = destination_path
+            copied[artifact] = target / artifact
+
+        try:
+            if target.exists() or target.is_symlink():
+                target.rename(previous)
+            prepared.rename(target)
+        except BaseException as failure:
+            if previous.exists() or previous.is_symlink():
+                try:
+                    # An interrupt may arrive just after publication has completed.
+                    if not prepared.exists() and (target.exists() or target.is_symlink()):
+                        target.rename(prepared)
+                    previous.rename(target)
+                except BaseException as restore_failure:
+                    # Keep the last verified package available for operator recovery.
+                    preserve_transaction = True
+                    message = (
+                        f"Nie można przywrócić poprzedniego pakietu; zachowano kopię: {previous}"
+                    )
+                    if not isinstance(failure, Exception):
+                        failure.add_note(message)
+                        raise failure from restore_failure
+                    if not isinstance(restore_failure, Exception):
+                        restore_failure.add_note(message)
+                        raise
+                    raise OfflinePackageError(message) from restore_failure
+            raise
 
         return ImportedOfflinePackage(
             manifest=manifest,
@@ -320,6 +351,8 @@ def import_offline_package(
             signature=signature_payload,
         )
     finally:
+        if transaction_dir is not None and not preserve_transaction:
+            shutil.rmtree(transaction_dir, ignore_errors=True)
         shutil.rmtree(staging_dir, ignore_errors=True)
 
 

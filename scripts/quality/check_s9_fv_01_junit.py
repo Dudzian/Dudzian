@@ -95,6 +95,12 @@ def _counter_issues(root: ElementTree.Element) -> list[str]:
     return issues
 
 
+class _ReportTreeBuilder(ElementTree.TreeBuilder):
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        # Encoding detection must precede the refusal, as in the coverage/core readers.
+        raise ValueError("Deklaracje DTD/ENTITY nie należą do raportu JUnit")
+
+
 def validate_report(
     report: Path, required: frozenset[CaseID], *, pytest_exit_code: int = 0
 ) -> GateResult:
@@ -110,12 +116,12 @@ def validate_report(
         if len(raw) > _MAX_REPORT_BYTES:
             raise ValueError("Raport JUnit przekracza limit rozmiaru")
         xml = raw.decode("utf-8")
-        if "<!DOCTYPE" in xml.upper() or "<!ENTITY" in xml.upper():
-            raise ValueError("Deklaracje DTD/ENTITY nie należą do raportu JUnit")
-        root = ElementTree.fromstring(xml)
+        root = ElementTree.fromstring(
+            xml, parser=ElementTree.XMLParser(target=_ReportTreeBuilder())
+        )
         if root.tag not in {"testsuite", "testsuites"}:
             raise ValueError("Niepoprawny element główny JUnit")
-    except (OSError, ValueError, ElementTree.ParseError) as exc:
+    except (OSError, LookupError, ValueError, ElementTree.ParseError) as exc:
         issues.append(f"Nie można ocenić raportu JUnit: {exc}")
         return GateResult(tuple(issues), len(required))
 
