@@ -1,0 +1,364 @@
+{
+  "base_main": "c6dbd5acaa87edd5c6b823bfb013764e5c5be6a8",
+  "date_utc": "2026-11-18",
+  "authority": "LOCAL_VALIDATION_EVIDENCE_NOT_INDEPENDENT_APPROVAL",
+  "investigated_wheels_installed_or_executed": false,
+  "remaining_67_wheels_verified": false,
+  "real_wheel_inspection_sha256": "6bdb040ee0008b6e39525399201d677116fe9059c9996bccd6c52e7383b0078d",
+  "source_files_sha256": {
+    ".github/workflows/platform-deployment.yml": "5c6b2a03b8ba99a5aee0038da2e39654521bfd86aafe3d4871614ca8c32cb452",
+    "pyproject.toml": "0a69247c9710ffaf4e67ad647cbfee2cf62cc5380e41e56895ed5707c060e128",
+    "scripts/stage9_v5d4_dependencies.py": "7f1aa7e3fa53b98e25a0f18d68bc22c611d5593aff71e2886fc3ae81fd605818",
+    "scripts/stage9_v5d4_environment.py": "0e37c936c3b511d2b274ff8da5592860b8f871de3f582b8313b55e67038e9599",
+    "scripts/stage9_v5d4_launch.py": "35b05bbc7e01c1fe7da158bfb811bb55287784a93c91a7238ba6f3039ac6dbe6",
+    "scripts/stage9_v5d4_abi.py": "d684845d3802624e13356b55a47b301e46b6bdd7db9c56c8235948224d7fd89a",
+    "scripts/stage9_v5d4_closure.py": "28f421e2bb5151f436cd0c26f71cc59b4c1f1aa5a4a8e5263cee97ff1c744b6f",
+    "scripts/stage9_v5d5_shared.py": "68218d499f17d50fa8c5e94432dd208f4b8f2f31de1944ab5c6f7ebbd7ed35af",
+    "tests/deployment/test_stage9_v5d5_shared.py": "d51d1835ab3b25245adc40995df18b4e5f8464463ca30addb1da466d21b91789",
+    "tests/deployment/test_stage9_v5d5_environment.py": "b4edcd2a4109370dd70c2498cca477e2f64beadabfb270e293afaabdd2861fe9",
+    "tests/deployment/test_stage9_v5d5_adversarial.py": "d68d1643b6cf08c4fefc1943382d6a86ccc2f079f1825669232d51a86e171cee",
+    "tests/scripts/test_stage9_v5d5_ci_contract.py": "431d29c0293db4d83855f839b7834a3bf078df0fe72723408c5584f6ba160d9e"
+  },
+  "checks": {
+    "earlier-regressions": {
+      "exit_code": 0,
+      "artifacts": [
+        "earlier-regressions.command.json",
+        "earlier-regressions.stdout.gz",
+        "earlier-regressions.xml.gz"
+      ],
+      "tests": {
+        "passed": 2517,
+        "skipped": 32
+      },
+      "modules": {
+        "tests.deployment.test_stage9_observer_offline": {
+          "passed": 109
+        },
+        "tests.deployment.test_stage9_observer_zstd": {
+          "passed": 118
+        },
+        "tests.deployment.test_stage9_observer_tar_v3": {
+          "passed": 132
+        },
+        "tests.deployment.test_stage9_observer_package_v3": {
+          "passed": 104
+        },
+        "tests.deployment.test_stage9_observer_apt_v4a": {
+          "passed": 193
+        },
+        "tests.deployment.test_stage9_observer_apt_v4b": {
+          "passed": 86,
+          "skipped": 8
+        },
+        "tests.deployment.test_stage9_observer_apt_v4b_crypto": {
+          "passed": 6,
+          "skipped": 11
+        },
+        "tests.deployment.test_stage9_observer_gpgv_v4b": {
+          "passed": 102
+        },
+        "tests.deployment.test_stage9_observer_trust_v4c": {
+          "passed": 71
+        },
+        "tests.deployment.test_stage9_observer_checkpoint_v4c": {
+          "passed": 89
+        },
+        "tests.deployment.test_stage9_observer_apt_v4c": {
+          "passed": 213,
+          "skipped": 12
+        },
+        "tests.deployment.test_stage9_observer_image_v5a": {
+          "passed": 153
+        },
+        "tests.deployment.test_stage9_observer_member_source_v5b": {
+          "passed": 32
+        },
+        "tests.deployment.test_stage9_observer_materialization_v5b": {
+          "passed": 114
+        },
+        "tests.deployment.test_stage9_observer_pyc_v5c1": {
+          "passed": 120
+        },
+        "tests.deployment.test_stage9_observer_pyc_source_hash_v5c2": {
+          "passed": 108
+        },
+        "tests.deployment.test_stage9_observer_source_hash_algorithm_v5c2": {
+          "passed": 53
+        },
+        "tests.deployment.test_stage9_observer_pyc_reconstruction_v5c2": {
+          "passed": 55
+        },
+        "tests.deployment.test_stage9_observer_pyc_execution_v5c3": {
+          "passed": 100
+        },
+        "tests.deployment.test_stage9_observer_runtime_identity_v5c3": {
+          "passed": 61
+        },
+        "tests.deployment.test_stage9_observer_compile_worker_v5c3": {
+          "passed": 40
+        },
+        "tests.deployment.test_stage9_observer_collector_identity_v5d1": {
+          "passed": 37,
+          "skipped": 1
+        },
+        "tests.deployment.test_stage9_observer_kvm_domain_v5d1": {
+          "passed": 292
+        },
+        "tests.deployment.test_stage9_observer_kvm_image_v5d1": {
+          "passed": 67
+        },
+        "tests.deployment.test_stage9_observer_kvm_preflight_v5d1": {
+          "passed": 62
+        }
+      }
+    },
+    "v5d5-v5d4-v5d3": {
+      "exit_code": 0,
+      "artifacts": [
+        "v5d5-v5d4-v5d3.command.json",
+        "v5d5-v5d4-v5d3.stdout.gz",
+        "v5d5-v5d4-v5d3.xml.gz"
+      ],
+      "tests": {
+        "passed": 728,
+        "skipped": 22
+      },
+      "modules": {
+        "tests.deployment.test_stage9_v5d5_shared": {
+          "passed": 21
+        },
+        "tests.deployment.test_stage9_v5d5_environment": {
+          "passed": 14
+        },
+        "tests.deployment.test_stage9_v5d5_adversarial": {
+          "passed": 59
+        },
+        "tests.deployment.test_stage9_v5d4_dependencies": {
+          "passed": 140,
+          "skipped": 19
+        },
+        "tests.deployment.test_stage9_v5d4_abi": {
+          "passed": 57
+        },
+        "tests.deployment.test_stage9_v5d4_closure": {
+          "passed": 109,
+          "skipped": 1
+        },
+        "tests.deployment.test_stage9_v5d4_environment": {
+          "passed": 73,
+          "skipped": 2
+        },
+        "tests.deployment.test_stage9_v5d3_release": {
+          "passed": 255
+        }
+      }
+    },
+    "v5d5-v5d4-final": {
+      "exit_code": 0,
+      "artifacts": [
+        "v5d5-v5d4-final.command.json",
+        "v5d5-v5d4-final.stdout.gz",
+        "v5d5-v5d4-final.xml.gz"
+      ],
+      "tests": {
+        "passed": 474,
+        "skipped": 22
+      },
+      "modules": {
+        "tests.deployment.test_stage9_v5d5_shared": {
+          "passed": 21
+        },
+        "tests.deployment.test_stage9_v5d5_environment": {
+          "passed": 14
+        },
+        "tests.deployment.test_stage9_v5d5_adversarial": {
+          "passed": 60
+        },
+        "tests.deployment.test_stage9_v5d4_dependencies": {
+          "passed": 140,
+          "skipped": 19
+        },
+        "tests.deployment.test_stage9_v5d4_abi": {
+          "passed": 57
+        },
+        "tests.deployment.test_stage9_v5d4_closure": {
+          "passed": 109,
+          "skipped": 1
+        },
+        "tests.deployment.test_stage9_v5d4_environment": {
+          "passed": 73,
+          "skipped": 2
+        }
+      }
+    },
+    "v5d5-ci-inventory-final": {
+      "exit_code": 0,
+      "artifacts": [
+        "v5d5-ci-inventory-final.command.json",
+        "v5d5-ci-inventory-final.environment.json.gz",
+        "v5d5-ci-inventory-final.log.gz",
+        "v5d5-ci-inventory-final.xml.gz"
+      ],
+      "tests": {
+        "passed": 67
+      },
+      "modules": {
+        "tests.scripts.test_stage9_operator_v5d2_inventory": {
+          "passed": 63
+        },
+        "tests.scripts.test_stage9_v5d4_ci_history": {
+          "passed": 2
+        },
+        "tests.scripts.test_stage9_v5d5_ci_contract": {
+          "passed": 2
+        }
+      }
+    },
+    "mypy-linux": {
+      "exit_code": 0,
+      "artifacts": [
+        "mypy-linux.command.json",
+        "mypy-linux.stdout.gz"
+      ]
+    },
+    "mypy-win32": {
+      "exit_code": 0,
+      "artifacts": [
+        "mypy-win32.command.json",
+        "mypy-win32.stdout.gz"
+      ]
+    },
+    "ruff": {
+      "exit_code": 0,
+      "artifacts": [
+        "ruff.command.json",
+        "ruff.stdout.gz"
+      ]
+    },
+    "format": {
+      "exit_code": 0,
+      "artifacts": [
+        "format.command.json",
+        "format.stdout.gz"
+      ]
+    },
+    "precommit": {
+      "exit_code": 0,
+      "artifacts": [
+        "precommit.command.json",
+        "precommit.stdout.gz"
+      ]
+    },
+    "diff-coverage": {
+      "exit_code": 0,
+      "artifacts": [
+        "diff-coverage.command.json",
+        "diff-coverage.stdout.gz"
+      ]
+    },
+    "pip-audit": {
+      "exit_code": 0,
+      "artifacts": [
+        "pip-audit.command.json",
+        "pip-audit.environment.json.gz",
+        "pip-audit.log.gz"
+      ]
+    },
+    "semgrep-blocking": {
+      "exit_code": 0,
+      "artifacts": [
+        "semgrep-blocking.command.json",
+        "semgrep-blocking.environment.json.gz",
+        "semgrep-blocking.log.gz"
+      ]
+    },
+    "semgrep-targeted": {
+      "exit_code": 0,
+      "artifacts": [
+        "semgrep-targeted.command.json",
+        "semgrep-targeted.environment.json.gz",
+        "semgrep-targeted.log.gz"
+      ]
+    },
+    "semgrep-final-stage9": {
+      "exit_code": 0,
+      "artifacts": [
+        "semgrep-final-stage9.command.json",
+        "semgrep-final-stage9.environment.json.gz",
+        "semgrep-final-stage9.log.gz"
+      ]
+    },
+    "semgrep-fixtures": {
+      "exit_code": 0,
+      "artifacts": [
+        "semgrep-fixtures.command.json",
+        "semgrep-fixtures.environment.json.gz",
+        "semgrep-fixtures.log.gz"
+      ]
+    },
+    "semgrep-community": {
+      "exit_code": 0,
+      "artifacts": [
+        "semgrep-community.command.json",
+        "semgrep-community.environment.json.gz",
+        "semgrep-community.json.gz",
+        "semgrep-community.log.gz"
+      ]
+    },
+    "betterleaks-final": {
+      "exit_code": 0,
+      "artifacts": [
+        "betterleaks-final.command.json",
+        "betterleaks-final.json.gz",
+        "betterleaks-final.stderr.gz"
+      ]
+    },
+    "v5d5-ci-aggregation": {
+      "exit_code": 0,
+      "artifacts": [
+        "v5d5-ci-aggregation.command.json",
+        "v5d5-ci-aggregation.environment.json.gz",
+        "v5d5-ci-aggregation.log.gz",
+        "v5d5-ci-aggregation.xml.gz"
+      ],
+      "tests": {
+        "passed": 13
+      },
+      "modules": {
+        "tests.scripts.test_stage9_v5d4_ci_history": {
+          "passed": 2
+        },
+        "tests.scripts.test_stage9_v5d5_ci_contract": {
+          "passed": 11
+        }
+      }
+    }
+  },
+  "superseded_attempts": {
+    "v5d5-ci-inventory": {
+      "exit_code": 2,
+      "status": "SUPERSEDED_INTERRUPTED_CPU_CONTENTION_TIMEOUTS",
+      "artifacts": [
+        "v5d5-ci-inventory.command.json.gz",
+        "v5d5-ci-inventory.log.gz",
+        "v5d5-ci-inventory.xml.gz"
+      ]
+    },
+    "v5d5-ci-inventory-retry": {
+      "exit_code": 2,
+      "status": "SUPERSEDED_INTERRUPTED_CPU_CONTENTION_TIMEOUTS",
+      "artifacts": [
+        "v5d5-ci-inventory-retry.command.json.gz",
+        "v5d5-ci-inventory-retry.log.gz",
+        "v5d5-ci-inventory-retry.xml.gz"
+      ]
+    }
+  },
+  "safety": {
+    "STAGE_9": "IN_PROGRESS",
+    "OBSERVER_3A": "BLOCKED",
+    "STAGE_3B": "NOT_AUTHORIZED",
+    "PRODUCTION": "NO-GO"
+  }
+}

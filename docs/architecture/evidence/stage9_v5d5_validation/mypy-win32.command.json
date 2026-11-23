@@ -1,0 +1,9 @@
+[
+  "python",
+  "-m",
+  "mypy",
+  "--platform",
+  "win32",
+  "--cache-dir",
+  "/workspace/work/mypy-win32-final"
+]

@@ -1,0 +1,14 @@
+[
+  "/workspace/work/security-tools/betterleaks",
+  "dir",
+  "--baseline-path",
+  ".betterleaks-baseline.json",
+  "--redact=100",
+  "--no-banner",
+  "--no-color",
+  "--report-format",
+  "json",
+  "--report-path",
+  "/workspace/work/v5d5-validation/betterleaks-final.json",
+  "."
+]
