@@ -68,4 +68,7 @@ jobs:
       - name: Build the actual desktop application
         run: npm run build
       - name: Verify the native window renderer preload IPC and sandbox
+        env:
+          DEBUG: pw:browser
+          ELECTRON_ENABLE_LOGGING: '1'
         run: xvfb-run -a node --test tests/native-electron.test.cjs
