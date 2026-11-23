@@ -1,0 +1,12 @@
+[
+  "/workspace/work/security-venv/bin/semgrep",
+  "scan",
+  "--test",
+  "--config",
+  ".semgrep/cryptohunter.yml",
+  ".semgrep/cryptohunter.py",
+  "--metrics=off",
+  "--disable-version-check",
+  "--jobs",
+  "1"
+]

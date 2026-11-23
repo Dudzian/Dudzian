@@ -1,0 +1,7 @@
+[
+  "python",
+  "-m",
+  "mypy",
+  "--cache-dir",
+  "/workspace/work/mypy-linux-final"
+]
