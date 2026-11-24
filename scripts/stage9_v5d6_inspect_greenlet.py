@@ -184,10 +184,17 @@ def main() -> int:
     args = parser.parse_args()
     try:
         report = inspect_original(args.wheel)
+        encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
+        # Exclusive creation preserves the original wheel even when --output
+        # names the input archive, an alias, or an existing report.
+        with args.output.open("x", encoding="utf-8") as stream:
+            stream.write(encoded)
+    except FileExistsError:
+        print(json.dumps({"status": "REFUSED", "reason": "INSPECTION_OUTPUT_EXISTS"}))
+        return 2
     except (ValueError, OSError, KeyError, zipfile.BadZipFile) as exc:
         print(json.dumps({"status": "REFUSED", "reason": str(exc)}))
         return 2
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
 
 

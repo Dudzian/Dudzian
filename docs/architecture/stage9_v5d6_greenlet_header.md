@@ -38,7 +38,8 @@ greenlet-3.5.6.data/headers/greenlet.h,sha256=sz5pYRSQqedgOt2AMgxLZdTjO-qcr_JMvg
 ```
 
 Statyczny inspektor `scripts/stage9_v5d6_inspect_greenlet.py` odtwarza pełny
-inwentarz bez ekstrakcji. Potwierdza tekst nagłówka, brak ELF i bitów
+inwentarz bez ekstrakcji. Plik raportu tworzy wyłącznie pod nieużytą ścieżką,
+co chroni oryginalny wheel przed nadpisaniem. Potwierdza tekst nagłówka, brak ELF i bitów
 wykonywalności. Trzy członki ELF pozostają w osobnym zakresie native/ABI.
 
 ## Polityka i odrębna aprobata

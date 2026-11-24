@@ -9,7 +9,7 @@ Zachowano wskazaną bazę commita. Zmiany, które weszły w międzyczasie na
 | Zakres | Zaobserwowany wynik |
 | --- | --- |
 | V5d6, pełne V5d5, V5d4 i V5d3, Linux CPython 3.11.16 | 798 PASS, 42 SKIP, exit 0. Obejmuje regresje dwóch pominięć PYC i pełnego zbioru 62 ścieżek PySide6. |
-| Wszystkie nowe przypadki V5d6, Linux CPython 3.12.14 | 89 PASS, exit 0. |
+| Wszystkie nowe przypadki V5d6, Linux CPython 3.12.14 | 91 PASS, exit 0. Dwa dodatkowe przypadki sprawdzają ochronę wheel przed nadpisaniem przez wyjście inspektora. |
 | Przypadki składni parsera V5d4 i V5d3, CPython 3.12.14 | 20 PASS, exit 0. |
 | V5d2 inventory | 59 PASS, 4 timeouty po 20 s w pierwszym przebiegu. Powtórzenie dokładnie tych czterech przypadków po zakończeniu innych przebiegów dało 4 PASS z tym samym limitem. |
 | Kontrakty CI | V5d4 history 2 PASS, V5d5/V5d6 inventory i agregacja 14 PASS. |

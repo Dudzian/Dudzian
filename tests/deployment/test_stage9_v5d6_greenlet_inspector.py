@@ -110,3 +110,23 @@ def test_cli_success_is_observation_without_approval(
     )
     assert inspector.main() == 0
     assert json.loads(output.read_text())["approval"] == "NOT_GRANTED"
+
+
+@pytest.mark.parametrize("target", ["input", "symlink"])
+def test_evidence_output_cannot_overwrite_original_wheel(
+    inert_wheel: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, target: str
+) -> None:
+    output = inert_wheel
+    if target == "symlink":
+        output = tmp_path / "report.json"
+        try:
+            output.symlink_to(inert_wheel)
+        except (OSError, NotImplementedError):
+            pytest.skip("Host cannot create an unprivileged symlink")
+    before = inert_wheel.read_bytes()
+    monkeypatch.setattr(
+        "sys.argv", ["inspect", "--wheel", str(inert_wheel), "--output", str(output)]
+    )
+    assert inspector.main() == 2
+    assert json.loads(capsys.readouterr().out)["reason"] == "INSPECTION_OUTPUT_EXISTS"
+    assert inert_wheel.read_bytes() == before
