@@ -133,6 +133,100 @@ def verify_shared_receipt(root: Path, receipt: dict[str, Any]) -> None:
             raise ValueError("SHARED_WHEEL_OUTPUT_CHANGED")
 
 
+def verify_header_receipt(root: Path, receipt: dict[str, Any]) -> None:
+    """Bind the separate omission approval and prove absence from runtime."""
+    if type(receipt) is not dict or type(receipt.get("files")) is not dict:
+        raise ValueError("HEADER_OMISSION_RECEIPT_SCHEMA")
+    fields = {
+        "header_omissions",
+        "header_omission_expectations",
+        "header_omission_policy",
+        "header_runtime_inclusion",
+    }
+    archives = receipt.get("wheel_archives", [])
+    packages = receipt.get("wheel_materialization", [])
+    candidate = any(
+        type(package) is dict
+        and (
+            package.get("header_omissions")
+            or (package.get("name") == "greenlet" and package.get("version") == "3.5.6")
+        )
+        for package in (
+            (archives if type(archives) is list else [])
+            + (packages if type(packages) is list else [])
+        )
+    )
+    if (
+        not candidate
+        and not fields.intersection(receipt)
+        and "header-audit.py" not in receipt["files"]
+    ):
+        return
+    if (
+        not fields <= set(receipt)
+        or "header-audit.py" not in receipt["files"]
+        or type(packages) is not list
+        or type(archives) is not list
+        or type(receipt.get("package_files")) is not dict
+    ):
+        raise ValueError("HEADER_OMISSION_RECEIPT_INCOMPLETE")
+    if any(path.is_symlink() for path in (root, *root.parents)):
+        raise ValueError("SYMLINK_RUNTIME")
+    tools = runpy.run_path(str(root / "header-audit.py"))
+    inventory = tools["verify_headers"](packages, receipt["header_omission_expectations"])
+    if (
+        receipt["header_omission_policy"] != tools["POLICY_ID"]
+        or receipt["header_runtime_inclusion"] != "EXCLUDED"
+        or not tools["exact"](receipt["header_omissions"], inventory)
+    ):
+        raise ValueError("HEADER_OMISSION_RECEIPT_MISMATCH")
+    verification = receipt.get("dependency_verification")
+    if (
+        type(verification) is not dict
+        or not tools["exact"](verification.get("header_omissions"), inventory)
+        or not tools["exact"](
+            verification.get("header_expectations"), receipt["header_omission_expectations"]
+        )
+        or verification.get("header_policy") != tools["POLICY_ID"]
+    ):
+        raise ValueError("HEADER_OMISSION_VERIFICATION_MISMATCH")
+    for row in inventory["members"]:
+        identity = {
+            "name": row["distribution"],
+            "version": row["version"],
+            "filename": row["wheel_filename"],
+            "sha256": row["wheel_sha256"],
+        }
+        if (
+            sum(
+                type(package) is dict
+                and all(package.get(key) == value for key, value in identity.items())
+                for package in archives
+            )
+            != 1
+        ):
+            raise ValueError("HEADER_OMISSION_ARCHIVE_IDENTITY_MISMATCH")
+        forbidden = {row["member"], Path(row["member"]).name}
+        if any(
+            name in forbidden or digest == row["sha256"]
+            for name, digest in receipt["package_files"].items()
+        ) or any(
+            name.removeprefix("packages/") in forbidden or digest == row["sha256"]
+            for name, digest in receipt["files"].items()
+        ):
+            raise ValueError("HEADER_OMISSION_MATERIALIZED")
+        # A changed receipt must not hide a copied header under an alias or a
+        # symlink. The complete tree check remains mandatory in main().
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                raise ValueError("SYMLINK_RUNTIME")
+            if path.is_file() and (
+                path.relative_to(root).as_posix().removeprefix("packages/") in forbidden
+                or hashlib.sha256(path.read_bytes()).hexdigest() == row["sha256"]
+            ):
+                raise ValueError("HEADER_OMISSION_MATERIALIZED")
+
+
 class FixedRootFinder(importlib.abc.MetaPathFinder):
     def __init__(self, root: Path) -> None:
         self.root = str(root)
@@ -183,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("RUNTIME_LOCATION_CHANGED")
         verify_tree(root, receipt["files"], receipt.get("directories"))
         verify_shared_receipt(root, receipt)
+        verify_header_receipt(root, receipt)
         auditor = runpy.run_path(str(root / "runtime-audit.py"))
         if (
             auditor["base_runtime_inventory"]([Path(p) for p in receipt["base_runtime"]["roots"]])

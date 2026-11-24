@@ -1,4 +1,4 @@
-"""V5d5 CI exercises portable contracts without authorizing native operations."""
+"""V5d5/V5d6 CI checks contracts without authorizing native operations."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+V5D6_MODULES = ("headers", "inspect_greenlet", "inspect_wheelhouse")
 
 
 def workflow_job(name: str) -> str:
@@ -32,6 +33,8 @@ def test_shared_contract_enters_configured_mypy_scope() -> None:
     configuration = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     files = configuration["tool"]["mypy"]["files"]
     assert files.count("scripts/stage9_v5d5_shared.py") == 1
+    for module in V5D6_MODULES:
+        assert files.count(f"scripts/stage9_v5d6_{module}.py") == 1
     for module in ("dependencies", "environment", "launch", "abi", "closure"):
         assert f"scripts/stage9_v5d4_{module}.py" in files
 
@@ -50,6 +53,7 @@ def test_shared_contract_matrix_keeps_regressions_and_nonprivileged_scope() -> N
     assert "python -m mypy --platform win32" in job
     for inventory in (
         "tests/deployment/test_stage9_v5d5_*.py",
+        "tests/deployment/test_stage9_v5d6_*.py",
         "tests/deployment/test_stage9_v5d4_*.py",
         "tests/deployment/test_stage9_v5d3_release.py",
         "tests/scripts/test_stage9_operator_v5d2_inventory.py",
@@ -60,6 +64,11 @@ def test_shared_contract_matrix_keeps_regressions_and_nonprivileged_scope() -> N
     guard = "git cat-file -e '17e03a9cb42a84302401415f96ac90e756926915^{commit}'"
     assert job.index(guard) < job.index("python -m pytest")
     assert "--cov=scripts.stage9_v5d5_shared" in job
+    for module in V5D6_MODULES:
+        assert f"--cov=scripts.stage9_v5d6_{module}" in job
+    for command in ("ruff check", "ruff format --check", "mypy", "mypy --platform win32"):
+        line = next(line for line in job.splitlines() if f"python -m {command} " in line)
+        assert "scripts/stage9_v5d6_*.py" in line
     assert "--cov-branch" in job
     assert "COVERAGE_FILE: stage9-v5d5.coverage" in job
     assert "--fail-under" not in job
@@ -106,6 +115,7 @@ def run_aggregation(
             for name in ("abi", "closure", "dependencies", "environment", "launch")
         ),
         "scripts/stage9_v5d5_shared.py",
+        *(f"scripts/stage9_v5d6_{module}.py" for module in V5D6_MODULES),
     ]
     revision = "a" * 40
     paths = [
@@ -119,6 +129,8 @@ def run_aggregation(
         path.parent.mkdir(parents=True)
         data = CoverageData(basename=str(path))
         members = required[:1] if change == "incomplete" and index == 1 else required
+        if change in V5D6_MODULES and index == 1:
+            members = [name for name in members if name != f"scripts/stage9_v5d6_{change}.py"]
         if windows_paths and index == 1:
             members = [member.replace("/", "\\") for member in members]
         if change == "branchless" and index == 1:
@@ -173,10 +185,19 @@ def test_coverage_gate_combines_all_three_real_data_files(
     ]
     assert len(shared) == 1
     assert set(combined.lines(shared[0]) or ()) == {1, 2, 3}
+    for module in V5D6_MODULES:
+        matches = [
+            name
+            for name in combined.measured_files()
+            if name.replace("\\", "/") == f"scripts/stage9_v5d6_{module}.py"
+        ]
+        assert len(matches) == 1
+        assert set(combined.lines(matches[0]) or ()) == {1, 2, 3}
 
 
 @pytest.mark.parametrize(
-    "change", ["missing", "empty", "unexpected", "incomplete", "branchless", "failed_matrix"]
+    "change",
+    ["missing", "empty", "unexpected", "incomplete", "branchless", "failed_matrix", *V5D6_MODULES],
 )
 def test_coverage_gate_refuses_partial_or_failed_matrix(tmp_path: Path, change: str) -> None:
     result = run_aggregation(tmp_path, change)

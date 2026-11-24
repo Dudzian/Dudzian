@@ -258,9 +258,29 @@ def wheel_plan(data: bytes, package: dict[str, Any] | None = None) -> dict[str, 
     return plan
 
 
-def extract_wheel(data: bytes, destination: Path, package: dict[str, Any] | None = None) -> None:
+def header_contract(
+    packages: list[dict[str, Any]], approved_headers: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Header candidate pins and reviewer expectations remain separate inputs."""
+    if approved_headers is None and not any(
+        package.get("header_omissions")
+        or (package.get("name") == "greenlet" and package.get("version") == "3.5.6")
+        for package in packages
+    ):
+        return None
+    tools = runpy.run_path(str(Path(__file__).with_name("stage9_v5d6_headers.py")))
+    return cast(dict[str, Any], tools["verify_headers"](packages, approved_headers))
+
+
+def extract_wheel(
+    data: bytes,
+    destination: Path,
+    package: dict[str, Any] | None = None,
+    approved_headers: dict[str, Any] | None = None,
+) -> None:
     """Materializuj dokładny plan; oryginalny wheel i RECORD pozostają niezmienione."""
     plan = wheel_plan(data, package)
+    header_contract([package] if package is not None else [], approved_headers)
     # Sprawdź wszystkie istniejące cele przed jakimkolwiek zapisem tego wheel.
     for member in plan.values():
         target = destination / relative(member["path"])
@@ -277,7 +297,10 @@ def extract_wheel(data: bytes, destination: Path, package: dict[str, Any] | None
 
 
 def prepare_wheel_set(
-    packages: list[dict[str, Any]], wheelhouse: Path, approved_shared: dict[str, Any] | None
+    packages: list[dict[str, Any]],
+    wheelhouse: Path,
+    approved_shared: dict[str, Any] | None,
+    approved_headers: dict[str, Any] | None = None,
 ) -> tuple[
     list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]], dict[str, str], dict[str, Any]
 ]:
@@ -288,6 +311,7 @@ def prepare_wheel_set(
     """
     shared_tools = runpy.run_path(str(Path(__file__).with_name("stage9_v5d5_shared.py")))
     shared = shared_tools["verify_shared"](packages, approved_shared)
+    header_contract(packages, approved_headers)
     shared_paths = {row["path"] for row in shared["members"]}
     snapshots: list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]] = []
     planned: dict[str, str] = {}
@@ -313,8 +337,15 @@ def materialize_wheel_set(
     snapshots: list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]],
     destination: Path,
     shared: dict[str, Any],
+    approved_headers: dict[str, Any] | None = None,
 ) -> None:
     """Use retained immutable bytes; write each approved shared target once."""
+    # Reinspect every snapshot before trusting its candidate declarations. A
+    # caller must not erase the header identity to disable the omission checks.
+    # The omitted bytes are remeasured although runtime never receives them.
+    for package, data, plan in snapshots:
+        require(wheel_plan(data, package) == plan, "WHEEL_HEADER_MATERIALIZATION_PLAN_CHANGED")
+    header_contract([package for package, _, _ in snapshots], approved_headers)
     for _, _, plan in snapshots:
         for member in plan.values():
             target_path = destination / relative(member["path"])
@@ -403,7 +434,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         "INPUT_SCHEMA_REJECTED",
     )
     require(
-        set(approval) - {"wheel_omissions", "wheel_shared_members"}
+        set(approval) - {"wheel_omissions", "wheel_shared_members", "wheel_header_omissions"}
         == {
             "host",
             "proposal_sha256",
@@ -466,6 +497,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         approval["wheel_native"],
         approval.get("wheel_omissions"),
         approval.get("wheel_shared_members"),
+        approval.get("wheel_header_omissions"),
     )
     closure_tools = helper("stage9_v5d4_closure.py")
     closure = closure_tools["inventory"](repository)
@@ -523,8 +555,12 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         "libvirtmod.cpython-312-x86_64-linux-gnu.so": abi_request["libvirt_extension"],
     }
     snapshots, planned, shared = prepare_wheel_set(
-        proposal["packages"], Path(inputs["wheelhouse"]), approval.get("wheel_shared_members")
+        proposal["packages"],
+        Path(inputs["wheelhouse"]),
+        approval.get("wheel_shared_members"),
+        approval.get("wheel_header_omissions"),
     )
+    headers = header_contract(proposal["packages"], approval.get("wheel_header_omissions"))
     planned_directories = {
         parent.as_posix()
         for name in planned
@@ -574,7 +610,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     if lib64.is_symlink() and lib64.readlink() == Path("lib"):
         lib64.unlink()
     packages.mkdir(mode=0o700)
-    materialize_wheel_set(snapshots, packages, shared)
+    materialize_wheel_set(snapshots, packages, shared, approval.get("wheel_header_omissions"))
     for name, digest in code.items():
         data = read(repository / relative(name))
         require(sha(data) == digest, "SOURCE_CHANGED_AFTER_REVIEW")
@@ -595,6 +631,10 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     write_new(output, "launch.py", launcher)
     write_new(output, "runtime-audit.py", read(Path(__file__).with_name("stage9_v5d4_closure.py")))
     write_new(output, "shared-audit.py", read(Path(__file__).with_name("stage9_v5d5_shared.py")))
+    if headers is not None:
+        write_new(
+            output, "header-audit.py", read(Path(__file__).with_name("stage9_v5d6_headers.py"))
+        )
     files = {
         p.relative_to(output).as_posix(): sha(read(p))
         for p in sorted(output.rglob("*"))
@@ -635,6 +675,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
                     "member_metadata",
                 )
             }
+            | {"header_omissions": package.get("header_omissions", [])}
             for package, _, _ in snapshots
         ],
         "shared_wheel_members": shared,
@@ -671,6 +712,24 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
             "Production": "NO-GO",
         },
     }
+    if headers is not None:
+        for row in headers["members"]:
+            forbidden = {row["member"], Path(row["member"]).name}
+            require(
+                not any(
+                    name.removeprefix("packages/") in forbidden or digest == row["sha256"]
+                    for name, digest in files.items()
+                ),
+                "HEADER_RUNTIME_INCLUSION_FORBIDDEN",
+            )
+        receipt.update(
+            {
+                "header_omissions": headers,
+                "header_omission_expectations": approval.get("wheel_header_omissions"),
+                "header_omission_policy": headers["policy"],
+                "header_runtime_inclusion": "EXCLUDED",
+            }
+        )
     for row in receipt["shared_wheel_output"]:
         metadata = (packages / row["path"]).lstat()
         require(

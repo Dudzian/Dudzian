@@ -1,0 +1,94 @@
+{
+  "OBSERVER_3A": "BLOCKED",
+  "PRODUCTION": "NO-GO",
+  "STAGE_3B": "NOT_AUTHORIZED",
+  "STAGE_9": "IN_PROGRESS",
+  "archive_scan": {
+    "bytes_read": 621404,
+    "entries_listed": 1,
+    "wheels_fully_inspected": 0,
+    "wheels_read": 1
+  },
+  "archives": [
+    {
+      "filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+      "materialization_map_status": "MEASURED",
+      "observations": {
+        "foreign_pyc_omissions": [],
+        "header_omissions": [
+          {
+            "distribution": "greenlet",
+            "member": "greenlet-3.5.6.data/headers/greenlet.h",
+            "mode": 33188,
+            "policy": "stage9-v5d6-greenlet-3.5.6-non-runtime-header-v1",
+            "runtime_inclusion": "EXCLUDED",
+            "sha256": "b33e69611490a9e7603add80320c4b65d4e33bea9caff24cbe0884251f48009f",
+            "size": 4755,
+            "type": "regular",
+            "version": "3.5.6",
+            "wheel_filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+            "wheel_sha256": "975736b002ed080d124cf81a79cb7e05cb26d6b3f5c7a7b651c0fcce70353aa1"
+          }
+        ]
+      },
+      "reason": "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
+      "sha256": "975736b002ed080d124cf81a79cb7e05cb26d6b3f5c7a7b651c0fcce70353aa1",
+      "size": 621404,
+      "status": "REFUSED"
+    }
+  ],
+  "authorization": "NOT_AUTHORIZED",
+  "closure_status": "NOT_TESTED",
+  "expected_counts": {
+    "EXPECTED_FOREIGN_PYC_OMISSIONS": 2,
+    "EXPECTED_HEADER_OMISSIONS": 1,
+    "EXPECTED_SHARED_PATHS": 62,
+    "WHEELS_CHECKED": 69
+  },
+  "header_omissions": null,
+  "independent_approvals": "NOT_SUPPLIED_NOT_GENERATED",
+  "measurements": {
+    "FOREIGN_PYC_OMISSIONS": {
+      "status": "PARTIAL",
+      "value": 0,
+      "wheels_evaluated": 1
+    },
+    "HEADER_OMISSIONS": {
+      "status": "PARTIAL",
+      "value": 1,
+      "wheels_evaluated": 1
+    },
+    "SHARED_PATHS": {
+      "status": "PARTIAL",
+      "value": 0,
+      "wheels_evaluated": 1
+    },
+    "WHEELS_CHECKED": {
+      "status": "PARTIAL",
+      "value": 1,
+      "wheels_evaluated": 1
+    }
+  },
+  "profile": "stage9-v5d6-wheelhouse-static-inspection-v2",
+  "refusals": [
+    {
+      "filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+      "reason": "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED"
+    },
+    {
+      "check": "header_inventory",
+      "reason": "HEADER_RUNTIME_INCLUSION_FORBIDDEN"
+    },
+    {
+      "reason": "WHEELHOUSE_MEMBER_REFUSALS_RETAINED"
+    }
+  ],
+  "shared_wheel_members": {
+    "members": [],
+    "policy": "stage9-v5d5-pyside6-6.10.3-shared-members-v1",
+    "required_source_reviews": [],
+    "status": "NO_SHARED_WHEEL_MEMBERS"
+  },
+  "shared_wheel_members_scope": "AVAILABLE_MATERIALIZATION_MAPS",
+  "status": "REFUSED"
+}

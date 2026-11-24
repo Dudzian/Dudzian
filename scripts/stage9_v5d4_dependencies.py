@@ -566,12 +566,30 @@ def shared_inventory(packages: list[dict[str, Any]]) -> dict[str, Any]:
         raise Refusal(str(exc)) from exc
 
 
+def header_tools() -> dict[str, Any]:
+    """Separate trusted V5d6 policy; never a header materialization mapper."""
+    return runpy.run_path(str(Path(__file__).with_name("stage9_v5d6_headers.py")))
+
+
+def header_inventory(packages: list[dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return cast(dict[str, Any], header_tools()["header_inventory"](packages))
+    except ValueError as exc:
+        raise Refusal(str(exc)) from exc
+
+
 def inspect_wheel(path: Path, origin: Any) -> dict[str, Any]:
     return inspect_wheel_bytes(read_regular(path), path.name, origin)
 
 
-def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, Any]:
-    """Wspólny kontrakt inspektora i buildera; nigdy import/marshal badanego kodu."""
+def inspect_wheel_bytes(
+    data: bytes, filename: str, origin: Any, *, observations: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Check the original wheel and optionally record completed diagnostic checkpoints.
+
+    Observations are output only. They survive a later refusal, but are never
+    used as input to the enforced inspection or returned as a verified wheel.
+    """
     require(len(data) <= MAX_WHEEL, "INPUT_TOO_LARGE")
     path = Path(filename)
     require(path.name == filename, "WHEEL_FILENAME")
@@ -737,13 +755,70 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
                         "policy": BYTECODE_POLICY_ID,
                     }
                 )
+        if observations is not None:
+            observations["foreign_pyc_omissions"] = omitted
+        headers = {
+            member
+            for member in files
+            if len(PurePosixPath(member).parts) > 1
+            and PurePosixPath(member).parts[0].endswith(".data")
+            and PurePosixPath(member).parts[1] == "headers"
+        }
+        header_omissions = []
+        if headers or (normalized(name) == "greenlet" and selected == "3.5.6"):
+            header_policy = header_tools()
+            pinned_header_wheel = header_policy["WHEEL"]
+            if (
+                normalized(name) == pinned_header_wheel["distribution"]
+                and selected == pinned_header_wheel["version"]
+                and filename == pinned_header_wheel["wheel_filename"]
+            ):
+                # Removing the header must not make a changed pinned wheel escape
+                # the exception contract. Full RECORD validation still ran first.
+                require(headers == {header_policy["HEADER"]["member"]}, "UNSUPPORTED_WHEEL_DATA")
+            for member in sorted(headers):
+                try:
+                    header_omissions.append(
+                        header_policy["inspect_header"](
+                            normalized(name),
+                            selected,
+                            filename,
+                            digest(data),
+                            member,
+                            archive.read(member),
+                            archive.getinfo(member).external_attr >> 16,
+                        )
+                    )
+                except ValueError as exc:
+                    raise Refusal(str(exc)) from exc
+        if observations is not None:
+            observations["header_omissions"] = header_omissions
         materialized: dict[str, dict[str, str]] = {}
-        for member in sorted(files - bytecode):
+        for member in sorted(files - bytecode - headers):
             destination = materialized_path(member, dist_info)
             check_startup(member)
             check_startup(destination)
             materialized[member] = {"path": destination, "sha256": digest(archive.read(member))}
         validate_materialization([{"materialized_members": materialized}])
+        mapped_members = {
+            "name": normalized(name),
+            "version": selected,
+            "filename": path.name,
+            "sha256": digest(data),
+            "header_omissions": header_omissions,
+            "materialized_members": materialized,
+            "member_metadata": {
+                item.filename: {
+                    "mode": item.external_attr >> 16,
+                    "type": "regular",
+                    "size": item.file_size,
+                }
+                for item in members
+                if not item.is_dir()
+            },
+        }
+        if observations is not None:
+            observations["materialization_input"] = mapped_members
         native: dict[str, str] = {}
         for item in members:
             if item.is_dir():
@@ -786,10 +861,7 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
             "NATIVE_DATA_RELOCATION_REQUIRES_REVIEW",
         )
         return {
-            "name": normalized(name),
-            "version": selected,
-            "filename": path.name,
-            "sha256": digest(data),
+            **mapped_members,
             "origin": origin,
             "tags": tags,
             "requires_python": requires_python,
@@ -799,16 +871,6 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
             ),
             "native_members": native,
             "omitted_members": omitted,
-            "materialized_members": materialized,
-            "member_metadata": {
-                item.filename: {
-                    "mode": item.external_attr >> 16,
-                    "type": "regular",
-                    "size": item.file_size,
-                }
-                for item in members
-                if not item.is_dir()
-            },
         }
 
 
@@ -887,6 +949,7 @@ def propose(
     }
     if allow_shared_candidates:
         result["shared_wheel_members"] = sharing
+    result["header_omissions"] = header_inventory(packages)
     return result
 
 
@@ -910,6 +973,7 @@ def verify(
     approved_native: dict[str, str],
     approved_omissions: dict[str, Any] | None = None,
     approved_shared: dict[str, Any] | None = None,
+    approved_headers: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Oczekiwany digest i native inventory muszą przyjść od odrębnego recenzenta.
 
@@ -939,6 +1003,10 @@ def verify(
             sharing = shared_tools()["verify_shared"](rebuilt["packages"], approved_shared)
         except ValueError as exc:
             raise Refusal(str(exc)) from exc
+    try:
+        headers = header_tools()["verify_headers"](rebuilt["packages"], approved_headers)
+    except ValueError as exc:
+        raise Refusal(str(exc)) from exc
     result = {
         "profile": (
             "stage9-v5d5-dependency-verification-v1"
@@ -950,6 +1018,9 @@ def verify(
         "packages": len(rebuilt["packages"]),
         "native_members": len(native),
         "omitted_members": omissions["members"],
+        "header_omissions": headers,
+        "header_expectations": approved_headers,
+        "header_policy": headers["policy"],
         "installation_contract_exception": (
             omissions["installation_contract_exception"] if omissions["members"] else "NONE"
         ),
@@ -978,6 +1049,7 @@ def main() -> int:
     parser.add_argument("--approved-native", type=Path)
     parser.add_argument("--approved-omissions", type=Path)
     parser.add_argument("--approved-shared", type=Path)
+    parser.add_argument("--approved-headers", type=Path)
     parser.add_argument("--allow-shared-candidates", action="store_true")
     args = parser.parse_args()
     try:
@@ -1004,6 +1076,7 @@ def main() -> int:
                 json_data(args.approved_native),
                 json_data(args.approved_omissions) if args.approved_omissions else None,
                 json_data(args.approved_shared) if args.approved_shared else None,
+                json_data(args.approved_headers) if args.approved_headers else None,
             )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
