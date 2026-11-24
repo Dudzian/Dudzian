@@ -64,6 +64,9 @@ jobs:
               os.fchmod(output.fileno(), 0o4755)
               os.fsync(output.fileno())
           PY
+          # Chromium tries the adjacent helper before CHROME_DEVEL_SANDBOX.
+          # Keep the verified root-owned helper outside the runner-writable checkout.
+          rm -- node_modules/electron/dist/chrome-sandbox
           echo 'CHROME_DEVEL_SANDBOX=/usr/local/lib/dudzian-electron-native/chrome-sandbox' >> "$GITHUB_ENV"
       - name: Build the actual desktop application
         run: npm run build

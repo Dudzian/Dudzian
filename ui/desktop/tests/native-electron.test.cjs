@@ -12,6 +12,11 @@ test('compiled desktop loads with the real Linux sandbox and preload IPC', { tim
   assert.notEqual(process.getuid(), 0, 'Electron must run as the normal CI user');
   assert.ok(process.env.DISPLAY, 'an actual X display or Xvfb is required');
   const projectRoot = path.resolve(__dirname, '..');
+  const executablePath = fs.realpathSync(require('electron'));
+  assert.equal(fs.statSync(executablePath).uid, process.getuid(),
+    'Chromium uses CHROME_DEVEL_SANDBOX for a user-owned executable');
+  assert.throws(() => fs.lstatSync(path.join(path.dirname(executablePath), 'chrome-sandbox')),
+    { code: 'ENOENT' }, 'an adjacent helper would take precedence over CHROME_DEVEL_SANDBOX');
   const sandbox = '/usr/local/lib/dudzian-electron-native/chrome-sandbox';
   assert.equal(process.env.CHROME_DEVEL_SANDBOX, sandbox);
   const descriptor = fs.openSync(sandbox, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -29,7 +34,7 @@ test('compiled desktop loads with the real Linux sandbox and preload IPC', { tim
   const application = await electron.launch({
     // Both are intentional: Playwright's defaults add no-sandbox on Linux and
     // inject a loader that appends additional Chromium switches.
-    executablePath: require('electron'),
+    executablePath,
     chromiumSandbox: true,
     args: [projectRoot],
     cwd: projectRoot,
