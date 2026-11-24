@@ -1,0 +1,642 @@
+{
+  "archive": {
+    "directory_entries": [
+      "greenlet/",
+      "greenlet/platform/",
+      "greenlet/tests/",
+      "greenlet-3.5.6.data/",
+      "greenlet-3.5.6.data/headers/",
+      "greenlet-3.5.6.dist-info/",
+      "greenlet-3.5.6.dist-info/licenses/"
+    ],
+    "expanded_bytes": 2052432,
+    "filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+    "files": 99,
+    "metadata_requires_dist": [
+      "Sphinx; extra == \"docs\"",
+      "furo; extra == \"docs\"",
+      "objgraph; extra == \"test\"",
+      "psutil; extra == \"test\"",
+      "setuptools; extra == \"test\""
+    ],
+    "metadata_requires_python": ">=3.10",
+    "record_hash_and_size_checks": 98,
+    "record_self_entry": "EMPTY_HASH_AND_SIZE",
+    "record_sha256": "5971269a77a3a3465d9f9e23a9a20841ce2a9d771658e5d57f65be2f0953a016",
+    "sha256": "975736b002ed080d124cf81a79cb7e05cb26d6b3f5c7a7b651c0fcce70353aa1",
+    "size": 621404,
+    "wheel_tags": [
+      "cp312-cp312-manylinux_2_24_x86_64",
+      "cp312-cp312-manylinux_2_28_x86_64"
+    ],
+    "zip_integrity": "PASS"
+  },
+  "authorization": "NOT_AUTHORIZED",
+  "build_context_members": {
+    "greenlet/__init__.py": {
+      "member": "greenlet/__init__.py",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "record": [
+        "greenlet/__init__.py",
+        "sha256=AmL4wf6Jc9PA1vVZgm7pFc5ez3iPO-H8MegzjtJKOtI",
+        "1442"
+      ],
+      "sha256": "0262f8c1fe8973d3c0d6f559826ee915ce5ecf788f3be1fc31e8338ed24a3ad2",
+      "size": 1442,
+      "type": "regular",
+      "zip_crc32": "1d883ff3"
+    },
+    "greenlet/platform/__init__.py": {
+      "member": "greenlet/platform/__init__.py",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "record": [
+        "greenlet/platform/__init__.py",
+        "sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+        "0"
+      ],
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "type": "regular",
+      "zip_crc32": "00000000"
+    },
+    "greenlet/platform/switch_arm64_masm.asm": {
+      "member": "greenlet/platform/switch_arm64_masm.asm",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "record": [
+        "greenlet/platform/switch_arm64_masm.asm",
+        "sha256=4kpTtfy7rfcr8j1CpJLAK21EtZpGDAJXWRU68HEy5A8",
+        "1245"
+      ],
+      "sha256": "e24a53b5fcbbadf72bf23d42a492c02b6d44b59a460c025759153af07132e40f",
+      "size": 1245,
+      "type": "regular",
+      "zip_crc32": "3a7b2b62"
+    },
+    "greenlet/platform/switch_x64_masm.asm": {
+      "member": "greenlet/platform/switch_x64_masm.asm",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "record": [
+        "greenlet/platform/switch_x64_masm.asm",
+        "sha256=nu6n2sWyXuXfpPx40d9YmLfHXUc1sHgeTvX1kUzuvEM",
+        "1841"
+      ],
+      "sha256": "9eeea7dac5b25ee5dfa4fc78d1df5898b7c75d4735b0781e4ef5f5914ceebc43",
+      "size": 1841,
+      "type": "regular",
+      "zip_crc32": "e246fc31"
+    },
+    "greenlet/platform/switch_x64_msvc.h": {
+      "member": "greenlet/platform/switch_x64_msvc.h",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "record": [
+        "greenlet/platform/switch_x64_msvc.h",
+        "sha256=LIeasyKo_vHzspdMzMHbosRhrBfKI4BkQOh4qcTHyJw",
+        "1805"
+      ],
+      "sha256": "2c879ab322a8fef1f3b2974cccc1dba2c461ac17ca23806440e878a9c4c7c89c",
+      "size": 1805,
+      "type": "regular",
+      "zip_crc32": "dd2e0485"
+    },
+    "greenlet/slp_platformselect.h": {
+      "member": "greenlet/slp_platformselect.h",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "record": [
+        "greenlet/slp_platformselect.h",
+        "sha256=hTb3GFdcPUYJTuu1MY93js7MZEax1_e5E-gflpi0RzI",
+        "3959"
+      ],
+      "sha256": "8536f718575c3d46094eebb5318f778ececc6446b1d7f7b913e81f9698b44732",
+      "size": 3959,
+      "type": "regular",
+      "zip_crc32": "02a10324"
+    }
+  },
+  "cmd_member": {
+    "extension": ".cmd",
+    "filename_stem_mentions_in_archive": [
+      "greenlet-3.5.6.dist-info/RECORD"
+    ],
+    "first_four_bytes_hex": "63616c6c",
+    "lines_as_data": [
+      "call \"C:\\Program Files (x86)\\Microsoft Visual Studio 9.0\\VC\\vcvarsall.bat\" amd64",
+      "ml64 /nologo /c /Fo switch_x64_masm.obj switch_x64_masm.asm"
+    ],
+    "linux_execute_bits": false,
+    "member": "greenlet/platform/setup_switch_x64_masm.cmd",
+    "mode": 33188,
+    "mode_octal": "0o100644",
+    "omission": "NOT_APPROVED",
+    "purpose": "WINDOWS_X64_BUILD_ASSEMBLE_MASM_OBJECT_STATIC_EVIDENCE",
+    "reason": "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
+    "record": [
+      "greenlet/platform/setup_switch_x64_masm.cmd",
+      "sha256=ZpClUJeU0ujEPSTWNSepP0W2f9XiYQKA8QKSoVou8EU",
+      "143"
+    ],
+    "runtime_nonuse": "NOT_PROVEN_OUTSIDE_STATIC_OBSERVATION",
+    "sha256": "6690a5509794d2e8c43d24d63527a93f45b67fd5e2610280f10292a15a2ef045",
+    "size": 143,
+    "text_format": "ASCII_2_CRLF_LINES",
+    "type": "regular",
+    "zip_crc32": "0c16b380"
+  },
+  "current_fail_closed_result": {
+    "member": "greenlet/platform/setup_switch_x64_masm.cmd",
+    "reason": "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
+    "status": "REFUSED"
+  },
+  "execution": "NOT_EXECUTED",
+  "files_partitioned_into_rule_outcomes": {
+    "executable_format_refusals": [
+      "greenlet/platform/setup_switch_x64_masm.cmd"
+    ],
+    "mapped_header_alias": [
+      "greenlet/greenlet.h"
+    ],
+    "native_elf_members": [
+      "greenlet/_greenlet.cpython-312-x86_64-linux-gnu.so",
+      "greenlet/tests/_test_extension.cpython-312-x86_64-linux-gnu.so",
+      "greenlet/tests/_test_extension_cpp.cpython-312-x86_64-linux-gnu.so"
+    ],
+    "ordinary_mapped_members": [
+      "greenlet/CObjects.cpp",
+      "greenlet/PyGreenlet.cpp",
+      "greenlet/PyGreenlet.hpp",
+      "greenlet/PyGreenletUnswitchable.cpp",
+      "greenlet/PyModule.cpp",
+      "greenlet/TBrokenGreenlet.cpp",
+      "greenlet/TExceptionState.cpp",
+      "greenlet/TGreenlet.cpp",
+      "greenlet/TGreenlet.hpp",
+      "greenlet/TGreenletGlobals.cpp",
+      "greenlet/TMainGreenlet.cpp",
+      "greenlet/TPythonState.cpp",
+      "greenlet/TStackState.cpp",
+      "greenlet/TThreadState.hpp",
+      "greenlet/TThreadStateCreator.hpp",
+      "greenlet/TThreadStateDestroy.cpp",
+      "greenlet/TUserGreenlet.cpp",
+      "greenlet/__init__.py",
+      "greenlet/greenlet.cpp",
+      "greenlet/greenlet_allocator.hpp",
+      "greenlet/greenlet_compiler_compat.hpp",
+      "greenlet/greenlet_cpython_compat.hpp",
+      "greenlet/greenlet_exceptions.hpp",
+      "greenlet/greenlet_internal.hpp",
+      "greenlet/greenlet_msvc_compat.hpp",
+      "greenlet/greenlet_refs.hpp",
+      "greenlet/greenlet_slp_switch.hpp",
+      "greenlet/greenlet_thread_support.hpp",
+      "greenlet/slp_platformselect.h",
+      "greenlet/platform/__init__.py",
+      "greenlet/platform/switch_aarch64_gcc.h",
+      "greenlet/platform/switch_alpha_unix.h",
+      "greenlet/platform/switch_amd64_unix.h",
+      "greenlet/platform/switch_arm32_gcc.h",
+      "greenlet/platform/switch_arm32_ios.h",
+      "greenlet/platform/switch_arm64_masm.asm",
+      "greenlet/platform/switch_arm64_msvc.h",
+      "greenlet/platform/switch_csky_gcc.h",
+      "greenlet/platform/switch_loongarch64_linux.h",
+      "greenlet/platform/switch_m68k_gcc.h",
+      "greenlet/platform/switch_mips_unix.h",
+      "greenlet/platform/switch_ppc64_aix.h",
+      "greenlet/platform/switch_ppc64_linux.h",
+      "greenlet/platform/switch_ppc_aix.h",
+      "greenlet/platform/switch_ppc_linux.h",
+      "greenlet/platform/switch_ppc_macosx.h",
+      "greenlet/platform/switch_ppc_unix.h",
+      "greenlet/platform/switch_riscv_unix.h",
+      "greenlet/platform/switch_s390_unix.h",
+      "greenlet/platform/switch_sh_gcc.h",
+      "greenlet/platform/switch_sparc_sun_gcc.h",
+      "greenlet/platform/switch_x32_unix.h",
+      "greenlet/platform/switch_x64_masm.asm",
+      "greenlet/platform/switch_x64_msvc.h",
+      "greenlet/platform/switch_x86_msvc.h",
+      "greenlet/platform/switch_x86_unix.h",
+      "greenlet/tests/__init__.py",
+      "greenlet/tests/_test_extension.c",
+      "greenlet/tests/_test_extension_cpp.cpp",
+      "greenlet/tests/fail_c_stack_refs_suspended_gc.py",
+      "greenlet/tests/fail_clearing_run_switches.py",
+      "greenlet/tests/fail_cpp_exception.py",
+      "greenlet/tests/fail_initialstub_already_started.py",
+      "greenlet/tests/fail_issue_515_freethread_gc.py",
+      "greenlet/tests/fail_slp_switch.py",
+      "greenlet/tests/fail_switch_critical_section.py",
+      "greenlet/tests/fail_switch_three_greenlets.py",
+      "greenlet/tests/fail_switch_three_greenlets2.py",
+      "greenlet/tests/fail_switch_two_greenlets.py",
+      "greenlet/tests/leakcheck.py",
+      "greenlet/tests/test_contextvars.py",
+      "greenlet/tests/test_cpp.py",
+      "greenlet/tests/test_extension_interface.py",
+      "greenlet/tests/test_gc.py",
+      "greenlet/tests/test_generator.py",
+      "greenlet/tests/test_generator_nested.py",
+      "greenlet/tests/test_greenlet.py",
+      "greenlet/tests/test_greenlet_trash.py",
+      "greenlet/tests/test_interpreter_shutdown.py",
+      "greenlet/tests/test_leaks.py",
+      "greenlet/tests/test_stack_saved.py",
+      "greenlet/tests/test_throw.py",
+      "greenlet/tests/test_tracing.py",
+      "greenlet/tests/test_version.py",
+      "greenlet/tests/test_weakref.py",
+      "greenlet-3.5.6.dist-info/METADATA",
+      "greenlet-3.5.6.dist-info/WHEEL",
+      "greenlet-3.5.6.dist-info/top_level.txt",
+      "greenlet-3.5.6.dist-info/RECORD",
+      "greenlet-3.5.6.dist-info/licenses/LICENSE",
+      "greenlet-3.5.6.dist-info/licenses/LICENSE.PSF"
+    ],
+    "pinned_header_candidate": [
+      "greenlet-3.5.6.data/headers/greenlet.h"
+    ],
+    "unclassified_coff_build_objects": [
+      "greenlet/platform/switch_arm64_masm.obj",
+      "greenlet/platform/switch_x64_masm.obj"
+    ]
+  },
+  "foreign_coff_members": {
+    "greenlet/platform/switch_arm64_masm.obj": {
+      "current_wheel_native_classifier": "NOT_RECOGNIZED",
+      "format": "PE_COFF_OBJECT",
+      "image_executable_flag": false,
+      "machine": "ARM64",
+      "machine_code": "0xaa64",
+      "member": "greenlet/platform/switch_arm64_masm.obj",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "optional_header_size": 0,
+      "record": [
+        "greenlet/platform/switch_arm64_masm.obj",
+        "sha256=DmLnIB_icoEHAz1naue_pJPTZgR9ElM7-Nmztr-o9_U",
+        "746"
+      ],
+      "section_count": 2,
+      "sha256": "0e62e7201fe2728107033d676ae7bfa493d366047d12533bf8d9b3b6bfa8f7f5",
+      "size": 746,
+      "status": "REQUIRES_SEPARATE_REVIEW_NOT_CURRENT_REFUSAL",
+      "type": "regular",
+      "zip_crc32": "e562835a"
+    },
+    "greenlet/platform/switch_x64_masm.obj": {
+      "current_wheel_native_classifier": "NOT_RECOGNIZED",
+      "format": "PE_COFF_OBJECT",
+      "image_executable_flag": false,
+      "machine": "AMD64",
+      "machine_code": "0x8664",
+      "member": "greenlet/platform/switch_x64_masm.obj",
+      "mode": 33188,
+      "mode_octal": "0o100644",
+      "optional_header_size": 0,
+      "record": [
+        "greenlet/platform/switch_x64_masm.obj",
+        "sha256=GNtTNxYdo7idFUYsQv-mrXWgyT5EJ93-9q90lN6svtQ",
+        "1078"
+      ],
+      "section_count": 5,
+      "sha256": "18db5337161da3b89d15462c42ffa6ad75a0c93e4427ddfef6af7494deacbed4",
+      "size": 1078,
+      "status": "REQUIRES_SEPARATE_REVIEW_NOT_CURRENT_REFUSAL",
+      "type": "regular",
+      "zip_crc32": "ce0b1b37"
+    }
+  },
+  "header_alias": {
+    "member": "greenlet/greenlet.h",
+    "mode": 33188,
+    "mode_octal": "0o100644",
+    "prospective_runtime_mapping": "greenlet/greenlet.h",
+    "record": [
+      "greenlet/greenlet.h",
+      "sha256=sz5pYRSQqedgOt2AMgxLZdTjO-qcr_JMvgiEJR9IAJ8",
+      "4755"
+    ],
+    "same_bytes_as": "greenlet-3.5.6.data/headers/greenlet.h",
+    "sha256": "b33e69611490a9e7603add80320c4b65d4e33bea9caff24cbe0884251f48009f",
+    "size": 4755,
+    "status": "PROHIBITED_BY_HEADER_RUNTIME_INCLUSION_FORBIDDEN",
+    "type": "regular",
+    "zip_crc32": "51b6cf55"
+  },
+  "header_candidate": {
+    "distribution": "greenlet",
+    "member": "greenlet-3.5.6.data/headers/greenlet.h",
+    "mode": 33188,
+    "observation": "PIN_MATCH_AFTER_COMPLETE_RECORD_NOT_APPROVAL",
+    "policy": "stage9-v5d6-greenlet-3.5.6-non-runtime-header-v1",
+    "runtime_inclusion": "EXCLUDED",
+    "sha256": "b33e69611490a9e7603add80320c4b65d4e33bea9caff24cbe0884251f48009f",
+    "size": 4755,
+    "type": "regular",
+    "version": "3.5.6",
+    "wheel_filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+    "wheel_sha256": "975736b002ed080d124cf81a79cb7e05cb26d6b3f5c7a7b651c0fcce70353aa1"
+  },
+  "materialization": "NOT_TESTED_NOT_PERFORMED",
+  "native_elf_members": {
+    "greenlet/_greenlet.cpython-312-x86_64-linux-gnu.so": {
+      "elf": {
+        "class": "ELF64",
+        "data": "2's complement, little endian",
+        "dependency_resolution": "NOT_TESTED_REQUIRES_OPERATOR_ABI_INPUT",
+        "expected_initializer_found": "PyInit__greenlet",
+        "interpreter": null,
+        "kind": "DYN",
+        "machine": "Advanced Micro Devices X86-64",
+        "needed": [
+          "libstdc++.so.6",
+          "libm.so.6",
+          "libgcc_s.so.1",
+          "libpthread.so.0",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ],
+        "search_paths": [],
+        "soname": null,
+        "undefined_python_symbols": [
+          "PyArg_UnpackTuple",
+          "PyBaseObject_Type",
+          "PyBool_FromLong",
+          "PyCFunction_GetFunction",
+          "PyCFunction_Type",
+          "PyCapsule_New",
+          "PyContext_Type",
+          "PyDict_New",
+          "PyDict_SetItem",
+          "PyDict_SetItemString",
+          "PyDict_Size",
+          "PyErr_BadArgument",
+          "PyErr_Clear",
+          "PyErr_ExceptionMatches",
+          "PyErr_Fetch",
+          "PyErr_Format",
+          "PyErr_NewException",
+          "PyErr_NoMemory",
+          "PyErr_NormalizeException",
+          "PyErr_Occurred",
+          "PyErr_Restore",
+          "PyErr_SetString",
+          "PyErr_WriteUnraisable",
+          "PyExc_AttributeError",
+          "PyExc_BaseException",
+          "PyExc_MemoryError",
+          "PyExc_RuntimeError",
+          "PyExc_SystemError",
+          "PyExc_TypeError",
+          "PyExc_ValueError",
+          "PyFile_WriteObject",
+          "PyFile_WriteString",
+          "PyFrame_GetBack",
+          "PyGC_Disable",
+          "PyGC_Enable",
+          "PyImport_ImportModule",
+          "PyInterpreterState_Head",
+          "PyList_SetSlice",
+          "PyLong_FromLong",
+          "PyLong_FromSize_t",
+          "PyLong_FromSsize_t",
+          "PyMem_Free",
+          "PyMem_Realloc",
+          "PyModule_AddIntConstant",
+          "PyModule_AddObjectRef",
+          "PyModule_Create2",
+          "PyObject_Call",
+          "PyObject_CallFunctionObjArgs",
+          "PyObject_ClearWeakRefs",
+          "PyObject_Free",
+          "PyObject_GC_Del",
+          "PyObject_GC_Track",
+          "PyObject_GC_UnTrack",
+          "PyObject_GetArenaAllocator",
+          "PyObject_GetAttr",
+          "PyObject_GetAttrString",
+          "PyObject_IsTrue",
+          "PyObject_Malloc",
+          "PySequence_Size",
+          "PySys_GetObject",
+          "PyThreadState_EnterTracing",
+          "PyThreadState_Get",
+          "PyThreadState_GetDict",
+          "PyThreadState_GetFrame",
+          "PyThreadState_LeaveTracing",
+          "PyTraceBack_Type",
+          "PyTuple_New",
+          "PyTuple_Pack",
+          "PyType_GenericAlloc",
+          "PyType_IsSubtype",
+          "PyType_Ready",
+          "PyUnicode_FromFormat",
+          "PyUnicode_InternFromString",
+          "Py_AddPendingCall",
+          "_PyArg_ParseTupleAndKeywords_SizeT",
+          "_PyArg_ParseTuple_SizeT",
+          "_PyObject_CallFunction_SizeT",
+          "_Py_Dealloc",
+          "_Py_FalseStruct",
+          "_Py_FatalErrorFunc",
+          "_Py_IsFinalizing",
+          "_Py_NewReference",
+          "_Py_NoneStruct",
+          "_Py_TrueStruct"
+        ],
+        "version_needs": {
+          "ld-linux-x86-64.so.2": [
+            "GLIBC_2.3"
+          ],
+          "libc.so.6": [
+            "GLIBC_2.14",
+            "GLIBC_2.2.5"
+          ],
+          "libgcc_s.so.1": [
+            "GCC_3.0"
+          ],
+          "libpthread.so.0": [
+            "GLIBC_2.2.5"
+          ],
+          "libstdc++.so.6": [
+            "CXXABI_1.3.7",
+            "CXXABI_1.3.9",
+            "GLIBCXX_3.4.11",
+            "CXXABI_1.3",
+            "GLIBCXX_3.4.21",
+            "GLIBCXX_3.4"
+          ]
+        }
+      },
+      "member": "greenlet/_greenlet.cpython-312-x86_64-linux-gnu.so",
+      "mode": 33261,
+      "mode_octal": "0o100755",
+      "record": [
+        "greenlet/_greenlet.cpython-312-x86_64-linux-gnu.so",
+        "sha256=o51mk8Ou6I12thVuL-kVY5vUewEGyIZ276lsy2LfTmU",
+        "1383880"
+      ],
+      "sha256": "a39d6693c3aee88d76b6156e2fe915639bd47b0106c88676efa96ccb62df4e65",
+      "size": 1383880,
+      "type": "regular",
+      "zip_crc32": "55340892"
+    },
+    "greenlet/tests/_test_extension.cpython-312-x86_64-linux-gnu.so": {
+      "elf": {
+        "class": "ELF64",
+        "data": "2's complement, little endian",
+        "dependency_resolution": "NOT_TESTED_REQUIRES_OPERATOR_ABI_INPUT",
+        "expected_initializer_found": "PyInit__test_extension",
+        "interpreter": null,
+        "kind": "DYN",
+        "machine": "Advanced Micro Devices X86-64",
+        "needed": [
+          "libpthread.so.0",
+          "libc.so.6"
+        ],
+        "search_paths": [],
+        "soname": null,
+        "undefined_python_symbols": [
+          "PyArg_ParseTuple",
+          "PyCapsule_Import",
+          "PyErr_BadArgument",
+          "PyErr_Occurred",
+          "PyErr_SetString",
+          "PyExc_AssertionError",
+          "PyExc_ValueError",
+          "PyModule_Create2",
+          "PyType_IsSubtype",
+          "Py_BuildValue",
+          "_Py_Dealloc",
+          "_Py_NoneStruct"
+        ],
+        "version_needs": {
+          "libc.so.6": [
+            "GLIBC_2.2.5"
+          ]
+        }
+      },
+      "member": "greenlet/tests/_test_extension.cpython-312-x86_64-linux-gnu.so",
+      "mode": 33261,
+      "mode_octal": "0o100755",
+      "record": [
+        "greenlet/tests/_test_extension.cpython-312-x86_64-linux-gnu.so",
+        "sha256=2GaslinKMWh9MalWN98TrS64QA21LabHKTQdS-ENdPk",
+        "17328"
+      ],
+      "sha256": "d866ac9629ca31687d31a95637df13ad2eb8400db52da6c729341d4be10d74f9",
+      "size": 17328,
+      "type": "regular",
+      "zip_crc32": "46f7cdd8"
+    },
+    "greenlet/tests/_test_extension_cpp.cpython-312-x86_64-linux-gnu.so": {
+      "elf": {
+        "class": "ELF64",
+        "data": "2's complement, little endian",
+        "dependency_resolution": "NOT_TESTED_REQUIRES_OPERATOR_ABI_INPUT",
+        "expected_initializer_found": "PyInit__test_extension_cpp",
+        "interpreter": null,
+        "kind": "DYN",
+        "machine": "Advanced Micro Devices X86-64",
+        "needed": [
+          "libstdc++.so.6",
+          "libm.so.6",
+          "libgcc_s.so.1",
+          "libpthread.so.0",
+          "libc.so.6"
+        ],
+        "search_paths": [],
+        "soname": null,
+        "undefined_python_symbols": [
+          "PyArg_ParseTuple",
+          "PyCapsule_Import",
+          "PyErr_SetString",
+          "PyExc_AssertionError",
+          "PyExc_RuntimeError",
+          "PyLong_FromLong",
+          "PyModule_Create2",
+          "PyObject_Call",
+          "PyTuple_New",
+          "_Py_Dealloc",
+          "_Py_NoneStruct"
+        ],
+        "version_needs": {
+          "libc.so.6": [
+            "GLIBC_2.2.5"
+          ],
+          "libgcc_s.so.1": [
+            "GCC_3.0"
+          ],
+          "libstdc++.so.6": [
+            "GLIBCXX_3.4",
+            "CXXABI_1.3",
+            "GLIBCXX_3.4.21"
+          ]
+        }
+      },
+      "member": "greenlet/tests/_test_extension_cpp.cpython-312-x86_64-linux-gnu.so",
+      "mode": 33261,
+      "mode_octal": "0o100755",
+      "record": [
+        "greenlet/tests/_test_extension_cpp.cpython-312-x86_64-linux-gnu.so",
+        "sha256=Y62ggf7jvUAez8JTrW3jw1Ox244TTZY_Gu-bQuoNnEA",
+        "58728"
+      ],
+      "sha256": "63ada081fee3bd401ecfc253ad6de3c353b1db8e134d963f1aef9b42ea0d9c40",
+      "size": 58728,
+      "type": "regular",
+      "zip_crc32": "8f386683"
+    }
+  },
+  "observed_refusals_all_applicable_archive_local_rules": [
+    {
+      "member": "greenlet/platform/setup_switch_x64_masm.cmd",
+      "reason": "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
+      "stage": "wheel_inspection",
+      "status": "OBSERVED_IN_UNCHANGED_INSPECTOR"
+    },
+    {
+      "member": "greenlet/greenlet.h",
+      "precondition": "The earlier executable-format refusal prevents reaching this guard in a normal proposal.",
+      "reason": "HEADER_RUNTIME_INCLUSION_FORBIDDEN",
+      "stage": "prospective_header_inventory",
+      "status": "OBSERVED_ISOLATED_LATER_GUARD"
+    }
+  ],
+  "profile": "stage9-v5d6-original-greenlet-complete-static-inventory-v1",
+  "requiring_external_operator_input": {
+    "abi_note": "ELF identities, headers, DT_NEEDED, search paths, initializers and version needs measured. Target resolution, exports and approved hashes are not inferred.",
+    "abi_possible_refusal_classes": [
+      "UNAPPROVED_NATIVE_LIBRARY",
+      "NATIVE_ABI_INVENTORY_INCOMPLETE",
+      "ELF_DEPENDENCY_MISSING",
+      "ELF_SONAME_MISMATCH",
+      "ELF_SYMBOL_VERSION_MISMATCH",
+      "PYTHON_SYMBOL_MISSING",
+      "NATIVE_ABI_MEASUREMENT_INCOMPLETE"
+    ],
+    "independent_header_native_and_other_approvals": "NOT_GRANTED",
+    "other_wheel_conflicts_and_dependency_closure": "NOT_TESTED_REQUIRES_ORIGINAL_WHEELHOUSE",
+    "target_abi": "NOT_TESTED_REQUIRES_TARGET_CPYTHON_LIBVIRT_LIBRARY_MAP_AND_HASH_PINS",
+    "wheelhouse_69": "NOT_TESTED_IN_CLOUD"
+  },
+  "source_policy": {
+    "full_member_hash_index": "stage9_v5d6_greenlet_inspection.json#original_members (same archive SHA-256)",
+    "ordinary_members_status": "NO_ADDITIONAL_INTRINSIC_REFUSAL_OBSERVED_IN_CHECKED_RULES",
+    "stage9_v5d4_abi.py": "Trusted readelf text parser and ELF conditions decidable from wheel members",
+    "stage9_v5d4_dependencies.py": "Reviewed ZIP/structure, metadata/tag, complete RECORD, per-member path/startup, executable formats, native classification/SOABI/relocation, and within-wheel collisions",
+    "stage9_v5d6_headers.py": "Exact pinned header candidate and runtime alias refusal"
+  },
+  "stage_status": {
+    "OBSERVER_3A": "BLOCKED",
+    "PRODUCTION": "NO-GO",
+    "STAGE_3B": "NOT_AUTHORIZED",
+    "STAGE_9": "IN_PROGRESS"
+  }
+}

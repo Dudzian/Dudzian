@@ -48,6 +48,51 @@ Odrębne aprobaty PYC, współdzielenia, nagłówka, pochodzenia i native/ABI
 pozostają wymagane. Wystawienie receipt do rzeczywistego środowiska wymaga
 również dowodu chronionego widoku runtime oraz niezależnego digestu receipt.
 
+## Powrót do przeglądu PR #3294
+
+Do gałęzi draftu włączono `origin/main` z commita
+`db927164b5203964538a3810a7c1c2e305857b11`, zachowując oba ciągi historii.
+Zmiany Security oraz inwentarz #3293 pochodzą wprost z `main`. Względem
+`main` konfiguracja mypy dodaje trzy moduły V5d6 do istniejącego zakresu.
+Próg 70% oraz trzyplatformowa agregacja pokrycia pozostają w mocy.
+
+Dla HEAD PR sprzed synchronizacji, `46228f346df4da735cbe428463053c884ed8e3a4`,
+zakończyło się osiem workflow. Siedem przeszło, w tym [dokładny hook
+formatowania](https://github.com/Dudzian/Dudzian/actions/runs/45384094569)
+i [pełne mypy Linux/Win32](https://github.com/Dudzian/Dudzian/actions/runs/45384094727)
+po 430 źródeł. [Job V5d1](https://github.com/Dudzian/Dudzian/actions/runs/45384094441/job/138410391409)
+wykonał oba wcześniej zablokowane zestawy, 292 PASS w `kvm_domain` i 62 PASS
+w `kvm_preflight`. Całe V5d1 dało 458 PASS i 1 SKIP.
+Syntetyczny V5d2 dał 63 PASS z dotychczasowym limitem 20 s na wywołanie.
+Macierz V5d5/V5d6 i agregacja pokrycia przeszły. Dwie blokady tego workflow
+wystąpiły na odrębnych bramkach dowodowych:
+
+- Linux zgłosił `MISSING_CURRENT_EVIDENCE` dla `SYSTEMD_INTEGRATION`,
+  `CLEAN_INSTALL` i `REBOOT_LIFECYCLE_UPDATE` oraz status
+  `LINUX_PRODUCTION_READY=NOT_READY`.
+  [Log zadania](https://github.com/Dudzian/Dudzian/actions/runs/45384094441/job/138449693512)
+- Windows zgłosił `WINDOWS_BETA_RELEASE_READY=NOT_READY`, w tym brak
+  aktualnych dowodów cyklu, restartu i aktualizacji.
+  [Log zadania](https://github.com/Dudzian/Dudzian/actions/runs/45384094441/job/138522382410)
+
+Wyniki te obowiązują wyłącznie dla powyższego SHA. W podsumowaniu draftu
+osobno zapisuje się stan [kontroli aktualnego HEAD](https://github.com/Dudzian/Dudzian/pull/3294/checks).
+Pełny wheelhouse i niezależne aprobaty nadal są odrębnymi warunkami.
+
+Po synchronizacji 108 lokalnych testów kontraktów CI i inwentarza platform
+przeszło. Na CPython 3.12 ukierunkowane regresje inspektora, zgodności
+schematów, budowy i V5d4/V5d5 dały 338 PASS i 19 SKIP dla testów
+wymagających Windows. Ruff oraz mypy dla dziewięciu modułów przeszły na
+skonfigurowanym Linux i Win32. Lokalny pełny mypy 430 źródeł oraz dwa
+zestawy V5d1 nadal wymagają brakującego `defusedxml`, a dokładny hook
+formatowania wymaga `pre_commit`. Wyniki Actions rozliczają te kontrole
+oddzielnie od lokalnych ograniczeń narzędzi.
+
+Przebieg diagnostyki z jednym oryginalnym greenlet zachował 1 przypiętego
+kandydata nagłówka jako `PARTIAL` i obie stwierdzone odmowy. Zbadano
+621404 bajty archiwum, a domknięcie pozostało `NOT_TESTED`. To pomiar
+pojedynczego wheel. [Surowy JSON v2](evidence/stage9_v5d6_greenlet_diagnostic_v2.json).
+
 ```text
 STAGE_9=IN_PROGRESS
 OBSERVER_3A=BLOCKED

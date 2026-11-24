@@ -105,6 +105,31 @@ lub przez symlink. Brak metadanych przy deklarowanym greenlet również odmawia.
 Zewnętrzny digest receipt i chroniony, niezmienny widok środowiska pozostają
 odrębnymi wymaganiami. Dotychczasowa jawna bramka native load jest niezmieniona.
 
+## Zgodność schematów i migracja propozycji
+
+| Dokument | Zgodność z formatem sprzed V5d6 |
+| --- | --- |
+| Proposal (`stage9-v5d4-dependency-proposal-v1` lub `stage9-v5d5-dependency-proposal-v1`) | Identyfikatory profili pozostały te same. V5d6 dodaje `header_omissions` na poziomie propozycji i każdego pakietu, również przy pustym zbiorze nagłówków. Starszy dokument z poprawnym dawnym SHA-256 różni się od propozycji odtworzonej z tych samych wejść. Przy udanej inspekcji archiwów weryfikator zgłasza `PROPOSAL_CONTENT_MISMATCH`. Nowa propozycja ze starym zatwierdzonym SHA-256 kończy się `PROPOSAL_SHA256_MISMATCH`. |
+| Dependency verification (`stage9-v5d4-dependency-verification-v1` lub `stage9-v5d5-dependency-verification-v1`) | Wynik V5d6 zawiera `header_omissions`, `header_expectations` i `header_policy`. Przy pustym zbiorze inwentarz ma status `NO_HEADER_OMISSIONS`, a oczekiwania mogą mieć wartość `null`. Wynik wylicza weryfikator. Builder nie przyjmuje wcześniejszego raportu jako zastępstwa weryfikacji propozycji. |
+| Receipt (`stage9-v5d5-prepared-environment-v1`) | Przy braku kandydata, pól kontraktu nagłówka i `header-audit.py` launcher akceptuje starszy format w części dotyczącej nagłówka. Nadal weryfikuje drzewo, kontrakt współdzielenia oraz pozostałe dowody. Receipt deklarujący greenlet 3.5.6 lub pominięcie nagłówka wymaga całego kontraktu V5d6 i zgodnej sekcji `dependency_verification`. Starszy receipt bez tego kontraktu lub z dawnym zagnieżdżonym wynikiem weryfikacji zostaje odrzucony. |
+
+Do nowej weryfikacji lub budowy należy wygenerować propozycję ponownie
+narzędziem `stage9_v5d4_dependencies.py propose` z aktualnej rewizji V5d6,
+używając oryginalnych archiwów, `pyproject.toml` i odpowiadającego
+`origins.json`. Dla profilu współdzielenia zachowuje się flagę
+`--allow-shared-candidates`. Odtworzenie jest możliwe dopiero po przejściu
+statycznych bramek archiwów. Odmowa inspekcji zatrzymuje procedurę.
+
+Niezależny recenzent ocenia nową propozycję i zatwierdza nowy SHA-256 jej
+kanonicznego JSON. Zatwierdzony digest jest używany w `verify --expected-sha256`
+oraz `approval.proposal_sha256` buildera. Ręczne dopisanie pustych pól albo
+wyliczenie nowego digestu przez operatora nie zastępuje tej aprobaty.
+Odrębne oczekiwania PYC, współdzielenia, nagłówka oraz native/ABI nadal
+podlegają swoim kontrolom. Pominięcie nagłówka wymaga `--approved-headers`
+w weryfikacji i `approval.wheel_header_omissions` w builderze. Receipt dla
+nowej budowy musi pochodzić z tej budowy, a jego digest i chroniony widok
+runtime podlegają osobnej weryfikacji.
+
 ## Następna rzeczywista odmowa — bez obejścia
 
 Inspekcja rzeczywistych bajtów potwierdziła kandydata nagłówka V5d6, ale
@@ -124,6 +149,14 @@ bramki wykonywalnych formatów. [Dowód następnej odmowy](evidence/stage9_v5d6_
 zachowuje dokładny hash archiwum i członka. Osobny test regresyjny wymaga
 tej odmowy także wtedy, gdy syntetyczny nagłówek spełnia wszystkie swoje piny.
 
+Rozszerzony przegląd wszystkich 99 plików potwierdził także odrębną,
+późniejszą odmowę `HEADER_RUNTIME_INCLUSION_FORBIDDEN`. Mapowany
+`greenlet/greenlet.h` ma bajty identyczne z nagłówkiem przypiętym do
+pominięcia. Kontrolę odtworzono na mapie z rzeczywistych bajtów bez
+obchodzenia odmowy `.cmd`. Inwentarz opisuje też dwa obiekty COFF i trzy
+biblioteki ELF oraz statyczne dowody, że `.cmd` służy budowie obiektu MASM
+dla Windows x64. [Inwentarz i ocena skryptu](stage9_v5d6_greenlet_build_member.md).
+
 ## Pełny wheelhouse — do walidacji na laptopie
 
 Operator potwierdził, że oryginalny zestaw znajduje się wyłącznie na fizycznym
@@ -140,20 +173,51 @@ nie oznaczono jako zweryfikowanego ani nie odtworzono go z nowych wersji.
 Do repozytorium nie dodano wheels. Pełna kontrola po scaleniu poprawki
 pozostaje zadaniem operatora; merge nie został wykonany przez agenta.
 
-Po uzyskaniu zatwierdzonej rewizji można zachować surowy raport poleceniem:
+Poniższe polecenie uruchom z checkoutu zatwierdzonej rewizji repozytorium na
+laptopie. Zapisuje pełny SHA, wersję interpretera, raport JSON, stderr i kod
+wyjścia w osobnym katalogu w katalogu domowym. Ścieżki wejściowe pozostają
+w oryginalnym katalogu operatora.
 
 ```bash
-python3 -I -S -B scripts/stage9_v5d6_inspect_wheelhouse.py \
-  --pyproject pyproject.toml \
-  --wheelhouse /home/dudzian/stage9-v5d4-wheelhouse-candidate-NTUwn8B7/wheelhouse/ \
-  --origins /home/dudzian/stage9-v5d4-wheelhouse-candidate-NTUwn8B7/origins.json \
-  > /home/dudzian/stage9-v5d6-wheelhouse-static.json
+(
+  set -eu
+  repo=$(git rev-parse --show-toplevel)
+  input=/home/dudzian/stage9-v5d4-wheelhouse-candidate-NTUwn8B7
+  umask 077
+  report=$(mktemp -d /home/dudzian/stage9-v5d6-wheelhouse-static.XXXXXXXX)
+  git -C "$repo" rev-parse HEAD > "$report/head.sha"
+  /usr/bin/python3 --version > "$report/python-version.txt" 2>&1
+  validator_exit=0
+  /usr/bin/python3 -I -S -B "$repo/scripts/stage9_v5d6_inspect_wheelhouse.py" \
+    --pyproject "$repo/pyproject.toml" \
+    --wheelhouse "$input/wheelhouse" \
+    --origins "$input/origins.json" \
+    > "$report/wheelhouse.json" 2> "$report/stderr.log" || validator_exit=$?
+  printf 'VALIDATOR_EXIT=%s\n' "$validator_exit" > "$report/exit.txt"
+  printf 'REPORT_DIR=%s\n' "$report"
+  cat "$report/exit.txt"
+  exit "$validator_exit"
+)
 ```
 
-Narzędzie odczytuje oryginalne wejścia, zachowuje kody odmów oraz SHA-256
-archiwów i nie generuje aprobat. Wymaga liczników 69/62/2/1 i pełnego domknięcia
-zależności. Kolejna odmowa, w tym zachowana `.cmd`, kończy je exit 2.
-Oczekiwane liczniki nie są wynikiem wykonania w Cloud:
+Narzędzie odczytuje oryginalne wejścia, zachowuje SHA-256 archiwów, wyniki
+poszczególnych inspekcji i kody odmów. Sumy kandydatów są liczone z faktycznie
+sprawdzonych danych. Ocenę pełnego domknięcia uruchamia jedynie po przejściu
+kontroli statycznych i liczników. Odmowa, w tym zachowana `.cmd`, pozostaje
+w raporcie z kodem wyjścia 2. Cały pomiar jest statyczny i nie tworzy aprobat.
+
+W JSON v2 `expected_counts` opisuje oczekiwany zestaw. W `measurements`
+każda wartość ma status `MEASURED` dla kompletnego zakresu danego licznika,
+`PARTIAL` dla zmierzonego podzbioru lub `NOT_TESTED` z `value: null`, gdy
+brakuje podstawy pomiaru. `wheels_evaluated` podaje rozmiar tej podstawy.
+`archive_scan` rozdziela odczyty archiwów, ich sumę bajtów i ukończone inspekcje.
+Przy późniejszej odmowie `archives[].observations` zachowuje kandydatów
+zmierzonych na zaliczonych etapach. Inwentarz współdzielenia podaje zakres
+sprawdzonych map. `closure_status` oddziela sprawdzenie domknięcia od samych
+pomiarów. Liczba kandydatów może być znana jednocześnie ze statusem `REFUSED`.
+[Przykład diagnostyki ograniczonej do oryginalnego greenlet](evidence/stage9_v5d6_greenlet_diagnostic_v2.json).
+
+Oczekiwania dla oryginalnego zestawu 69/62/2/1:
 
 ```text
 WHEELS_CHECKED=69

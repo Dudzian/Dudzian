@@ -582,8 +582,14 @@ def inspect_wheel(path: Path, origin: Any) -> dict[str, Any]:
     return inspect_wheel_bytes(read_regular(path), path.name, origin)
 
 
-def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, Any]:
-    """Wspólny kontrakt inspektora i buildera; nigdy import/marshal badanego kodu."""
+def inspect_wheel_bytes(
+    data: bytes, filename: str, origin: Any, *, observations: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Check the original wheel and optionally record completed diagnostic checkpoints.
+
+    Observations are output only. They survive a later refusal, but are never
+    used as input to the enforced inspection or returned as a verified wheel.
+    """
     require(len(data) <= MAX_WHEEL, "INPUT_TOO_LARGE")
     path = Path(filename)
     require(path.name == filename, "WHEEL_FILENAME")
@@ -749,6 +755,8 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
                         "policy": BYTECODE_POLICY_ID,
                     }
                 )
+        if observations is not None:
+            observations["foreign_pyc_omissions"] = omitted
         headers = {
             member
             for member in files
@@ -783,6 +791,8 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
                     )
                 except ValueError as exc:
                     raise Refusal(str(exc)) from exc
+        if observations is not None:
+            observations["header_omissions"] = header_omissions
         materialized: dict[str, dict[str, str]] = {}
         for member in sorted(files - bytecode - headers):
             destination = materialized_path(member, dist_info)
@@ -790,6 +800,25 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
             check_startup(destination)
             materialized[member] = {"path": destination, "sha256": digest(archive.read(member))}
         validate_materialization([{"materialized_members": materialized}])
+        mapped_members = {
+            "name": normalized(name),
+            "version": selected,
+            "filename": path.name,
+            "sha256": digest(data),
+            "header_omissions": header_omissions,
+            "materialized_members": materialized,
+            "member_metadata": {
+                item.filename: {
+                    "mode": item.external_attr >> 16,
+                    "type": "regular",
+                    "size": item.file_size,
+                }
+                for item in members
+                if not item.is_dir()
+            },
+        }
+        if observations is not None:
+            observations["materialization_input"] = mapped_members
         native: dict[str, str] = {}
         for item in members:
             if item.is_dir():
@@ -832,10 +861,7 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
             "NATIVE_DATA_RELOCATION_REQUIRES_REVIEW",
         )
         return {
-            "name": normalized(name),
-            "version": selected,
-            "filename": path.name,
-            "sha256": digest(data),
+            **mapped_members,
             "origin": origin,
             "tags": tags,
             "requires_python": requires_python,
@@ -845,17 +871,6 @@ def inspect_wheel_bytes(data: bytes, filename: str, origin: Any) -> dict[str, An
             ),
             "native_members": native,
             "omitted_members": omitted,
-            "header_omissions": header_omissions,
-            "materialized_members": materialized,
-            "member_metadata": {
-                item.filename: {
-                    "mode": item.external_attr >> 16,
-                    "type": "regular",
-                    "size": item.file_size,
-                }
-                for item in members
-                if not item.is_dir()
-            },
         }
 
 
