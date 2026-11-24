@@ -16,12 +16,14 @@ import hashlib
 import io
 import itertools
 import json
+import keyword
 import os
 import re
 import runpy
 import stat
 import sys
 import tomllib
+import unicodedata
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -42,7 +44,48 @@ TARGET = {
 MAX_WHEEL = 512 * 1024 * 1024
 MAX_EXPANDED = 2 * 1024 * 1024 * 1024
 SHA256 = re.compile(r"[0-9a-f]{64}")
+LEGACY_METADATA_VERSIONS = {"2.1", "2.2", "2.3", "2.4"}
+# PyPA Core Metadata 2.5. Repeatable headers are counted separately so fields
+# affecting dependency resolution never depend on which header was read first.
+METADATA_SINGLE_FIELDS = {
+    "name",
+    "version",
+    "metadata-version",
+    "summary",
+    "description",
+    "description-content-type",
+    "keywords",
+    "home-page",
+    "download-url",
+    "author",
+    "author-email",
+    "maintainer",
+    "maintainer-email",
+    "license",
+    "license-expression",
+    "requires-python",
+}
+METADATA_REPEATABLE_FIELDS = {
+    "dynamic",
+    "platform",
+    "supported-platform",
+    "license-file",
+    "classifier",
+    "requires-dist",
+    "requires-external",
+    "project-url",
+    "provides-extra",
+    "import-name",
+    "import-namespace",
+    "provides-dist",
+    "obsoletes-dist",
+    "requires",
+    "provides",
+    "obsoletes",
+}
 BYTECODE_POLICY_ID = "pyside6-essentials-6.10.3-cp311-cache-omission-v1"
+V5D7_PROPOSAL = "stage9-v5d7-dependency-proposal-v1"
+V5D7_VERIFICATION = "stage9-v5d7-dependency-verification-v1"
 # Wyłącznie zidentyfikowane bajty upstream. To kandydat wyjątku kontraktu,
 # nie aprobata instalacji ani zaufanie do dowolnego cache CPython 3.11.
 BYTECODE_POLICY: dict[str, Any] = {
@@ -554,14 +597,16 @@ def validate_materialization(packages: list[dict[str, Any]]) -> None:
             directories.update(parents)
 
 
-def shared_tools() -> dict[str, Any]:
+def shared_tools(*, v5d7: bool = False) -> dict[str, Any]:
     """Trusted adjacent code, never wheel or candidate-provided Python."""
-    return runpy.run_path(str(Path(__file__).with_name("stage9_v5d5_shared.py")))
+    filename = "stage9_v5d7_shared.py" if v5d7 else "stage9_v5d5_shared.py"
+    return runpy.run_path(str(Path(__file__).with_name(filename)))
 
 
-def shared_inventory(packages: list[dict[str, Any]]) -> dict[str, Any]:
+def shared_inventory(packages: list[dict[str, Any]], *, v5d7: bool = False) -> dict[str, Any]:
     try:
-        return cast(dict[str, Any], shared_tools()["collision_inventory"](packages))
+        tools = shared_tools(v5d7=True) if v5d7 else shared_tools()
+        return cast(dict[str, Any], tools["collision_inventory"](packages))
     except ValueError as exc:
         raise Refusal(str(exc)) from exc
 
@@ -571,6 +616,10 @@ def header_tools() -> dict[str, Any]:
     return runpy.run_path(str(Path(__file__).with_name("stage9_v5d6_headers.py")))
 
 
+def artifact_tools() -> dict[str, Any]:
+    return runpy.run_path(str(Path(__file__).with_name("stage9_v5d7_omissions.py")))
+
+
 def header_inventory(packages: list[dict[str, Any]]) -> dict[str, Any]:
     try:
         return cast(dict[str, Any], header_tools()["header_inventory"](packages))
@@ -578,18 +627,11 @@ def header_inventory(packages: list[dict[str, Any]]) -> dict[str, Any]:
         raise Refusal(str(exc)) from exc
 
 
-def inspect_wheel(path: Path, origin: Any) -> dict[str, Any]:
-    return inspect_wheel_bytes(read_regular(path), path.name, origin)
+def inspect_wheel(path: Path, origin: Any, *, v5d7: bool = False) -> dict[str, Any]:
+    return inspect_wheel_bytes(read_regular(path), path.name, origin, v5d7=v5d7)
 
 
-def inspect_wheel_bytes(
-    data: bytes, filename: str, origin: Any, *, observations: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    """Check the original wheel and optionally record completed diagnostic checkpoints.
-
-    Observations are output only. They survive a later refusal, but are never
-    used as input to the enforced inspection or returned as a verified wheel.
-    """
+def check_wheel_origin(data: bytes, filename: str, origin: Any) -> str:
     require(len(data) <= MAX_WHEEL, "INPUT_TOO_LARGE")
     path = Path(filename)
     require(path.name == filename, "WHEEL_FILENAME")
@@ -597,204 +639,467 @@ def inspect_wheel_bytes(
         isinstance(origin, dict) and set(origin) == {"url", "source", "sha256"}, "ORIGIN_MISSING"
     )
     require(all(isinstance(value, str) and value for value in origin.values()), "ORIGIN_SCHEMA")
+    wheel_sha256 = digest(data)
     require(
-        origin["url"].startswith("https://") and digest(data) == origin["sha256"], "ORIGIN_SHA256"
+        origin["url"].startswith("https://") and wheel_sha256 == origin["sha256"], "ORIGIN_SHA256"
     )
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        members = archive.infolist()
-        names = [item.filename for item in members]
-        require(len(names) <= 100000 and len(set(names)) == len(names), "WHEEL_MEMBER_SET")
-        require(sum(item.file_size for item in members) <= MAX_EXPANDED, "WHEEL_EXPANSION_LIMIT")
-        for item in members:
+    return wheel_sha256
+
+
+def wheel_archive_index(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    members = archive.infolist()
+    names = [item.filename for item in members]
+    require(len(names) <= 100000 and len(set(names)) == len(names), "WHEEL_MEMBER_SET")
+    require(sum(item.file_size for item in members) <= MAX_EXPANDED, "WHEEL_EXPANSION_LIMIT")
+    return members
+
+
+def check_wheel_archive_member(archive: zipfile.ZipFile, item: zipfile.ZipInfo) -> None:
+    require(item.orig_filename == item.filename, "WHEEL_MEMBER_PATH")
+    member_path(item.filename[:-1] if item.is_dir() else item.filename)
+    mode = item.external_attr >> 16
+    require(stat.S_IFMT(mode) in {0, stat.S_IFREG, stat.S_IFDIR}, "WHEEL_MEMBER_SPECIAL")
+    require(
+        stat.S_IFMT(mode) != (stat.S_IFREG if item.is_dir() else stat.S_IFDIR),
+        "WHEEL_MEMBER_SPECIAL",
+    )
+    require(
+        not item.flag_bits & 1 and item.compress_type in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED},
+        "WHEEL_ZIP_PROFILE",
+    )
+    if item.is_dir():
+        require(archive.read(item) == b"", "WHEEL_DIRECTORY_CONTENT")
+
+
+def wheel_archive_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    members = wheel_archive_index(archive)
+    for item in members:
+        check_wheel_archive_member(archive, item)
+    return members
+
+
+def wheel_dist_info(names: list[str]) -> str:
+    metadata_files = [name for name in names if name.endswith(".dist-info/METADATA")]
+    wheel_files = [name for name in names if name.endswith(".dist-info/WHEEL")]
+    require(len(metadata_files) == len(wheel_files) == 1, "WHEEL_METADATA")
+    require(
+        metadata_files[0].rsplit("/", 1)[0] == wheel_files[0].rsplit("/", 1)[0],
+        "WHEEL_METADATA",
+    )
+    return metadata_files[0].rsplit("/", 1)[0]
+
+
+def read_wheel_metadata(
+    archive: zipfile.ZipFile, dist_info: str
+) -> tuple[email.message.Message, email.message.Message]:
+    parser = email.parser.BytesParser()
+    raw = archive.read(dist_info + "/METADATA")
+    metadata = parser.parsebytes(raw)
+    if metadata["Metadata-Version"] == "2.5":
+        try:
+            metadata = email.parser.Parser().parsestr(raw.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise Refusal("WHEEL_METADATA_INVALID_UTF8") from exc
+    wheel = parser.parsebytes(archive.read(dist_info + "/WHEEL"))
+    return metadata, wheel
+
+
+def parse_import_declarations(metadata: email.message.Message, field: str) -> dict[str, bool]:
+    declarations: dict[str, bool] = {}
+    raw_values = metadata.get_all(field, [])
+    for value in raw_values:
+        raw_name, separator, modifier = value.partition(";")
+        name = raw_name.strip()
+        if not name:
             require(
-                item.orig_filename == item.filename,
-                "WHEEL_MEMBER_PATH",
+                field == "Import-Name" and not separator and len(raw_values) == 1,
+                "WHEEL_IMPORT_DECLARATION_INVALID:" + field,
             )
-            member_path(item.filename[:-1] if item.is_dir() else item.filename)
-            mode = item.external_attr >> 16
-            require(stat.S_IFMT(mode) in {0, stat.S_IFREG, stat.S_IFDIR}, "WHEEL_MEMBER_SPECIAL")
+        else:
             require(
-                stat.S_IFMT(mode) != (stat.S_IFREG if item.is_dir() else stat.S_IFDIR),
-                "WHEEL_MEMBER_SPECIAL",
+                name == unicodedata.normalize("NFKC", name)
+                and all(
+                    part.isidentifier() and not keyword.iskeyword(part) for part in name.split(".")
+                )
+                and (not separator or modifier.strip() == "private"),
+                "WHEEL_IMPORT_DECLARATION_INVALID:" + field,
             )
+        require(name not in declarations, "WHEEL_IMPORT_DECLARATION_DUPLICATE:" + field)
+        declarations[name] = bool(separator)
+    return declarations
+
+
+def metadata_import_declarations(metadata: email.message.Message) -> dict[str, Any]:
+    """Validate PEP 794 without treating an import declaration as file ownership."""
+    fields = {name.lower() for name in metadata.keys()}
+    require(
+        fields <= METADATA_SINGLE_FIELDS | METADATA_REPEATABLE_FIELDS,
+        "WHEEL_METADATA_FIELD_UNSUPPORTED",
+    )
+    require(
+        all(len(metadata.get_all(field, [])) <= 1 for field in METADATA_SINGLE_FIELDS),
+        "WHEEL_METADATA_DUPLICATE_OR_MISSING",
+    )
+    payload = metadata.get_payload()
+    if not isinstance(payload, str):
+        raise Refusal("WHEEL_METADATA")
+    require(
+        "description" not in fields or not payload.strip(),
+        "WHEEL_METADATA_DUPLICATE_OR_MISSING",
+    )
+    dynamic = [field.lower() for field in metadata.get_all("Dynamic", [])]
+    require(
+        len(dynamic) == len(set(dynamic))
+        and set(dynamic)
+        <= (METADATA_SINGLE_FIELDS | METADATA_REPEATABLE_FIELDS)
+        - {"dynamic", "metadata-version", "name", "version"},
+        "WHEEL_METADATA_INVALID_DYNAMIC",
+    )
+    import_names = parse_import_declarations(metadata, "Import-Name")
+    import_namespaces = parse_import_declarations(metadata, "Import-Namespace")
+    require(
+        not import_names.keys() & import_namespaces.keys()
+        and ("" not in import_names or not import_namespaces),
+        "WHEEL_IMPORT_DECLARATION_AMBIGUOUS",
+    )
+    return {
+        "metadata_version": "2.5",
+        "import_names": import_names,
+        "import_namespaces": import_namespaces,
+    }
+
+
+def validate_wheel_metadata(
+    filename: str,
+    dist_info: str,
+    metadata: email.message.Message,
+    wheel: email.message.Message,
+    *,
+    v5d7: bool = False,
+) -> dict[str, Any]:
+    require(not metadata.defects and not wheel.defects, "WHEEL_METADATA")
+    for header in ("Metadata-Version", "Name", "Version"):
+        require(len(metadata.get_all(header, [])) == 1, "WHEEL_METADATA_DUPLICATE_OR_MISSING")
+    metadata_version = metadata["Metadata-Version"]
+    require(
+        metadata_version in LEGACY_METADATA_VERSIONS or (v5d7 and metadata_version == "2.5"),
+        "WHEEL_METADATA_VERSION_UNSUPPORTED",
+    )
+    import_declarations = {}
+    if metadata_version == "2.5":
+        import_declarations = metadata_import_declarations(metadata)
+    elif v5d7:
+        require(
+            not metadata.get_all("Import-Name") and not metadata.get_all("Import-Namespace"),
+            "WHEEL_IMPORT_DECLARATION_VERSION",
+        )
+    require(
+        len(metadata.get_all("Requires-Python", [])) <= 1, "WHEEL_METADATA_DUPLICATE_OR_MISSING"
+    )
+    for header in ("Wheel-Version", "Root-Is-Purelib"):
+        require(len(wheel.get_all(header, [])) == 1, "WHEEL_HEADER_DUPLICATE_OR_MISSING")
+    require(
+        wheel["Wheel-Version"] == "1.0" and wheel["Root-Is-Purelib"] in {"true", "false"},
+        "WHEEL_FORMAT_UNSUPPORTED",
+    )
+    name, selected = metadata.get("Name", ""), metadata.get("Version", "")
+    version(selected)
+    tags = sorted(set(wheel.get_all("Tag", [])))
+    require(bool(tags) and any(compatible_tag(tag) for tag in tags), "WHEEL_ABI_MISMATCH")
+    filename_parts = filename.removesuffix(".whl").split("-")
+    require(filename.endswith(".whl") and len(filename_parts) in {5, 6}, "WHEEL_FILENAME")
+    require(
+        normalized(filename_parts[0]) == normalized(name)
+        and version(filename_parts[1]) == version(selected),
+        "WHEEL_FILENAME_METADATA_MISMATCH",
+    )
+    if len(filename_parts) == 6:
+        require(
+            re.fullmatch(r"[0-9][A-Za-z0-9_]*", filename_parts[2]) is not None,
+            "WHEEL_BUILD_TAG",
+        )
+    filename_tags = {
+        "-".join(parts)
+        for parts in itertools.product(*(part.split(".") for part in filename_parts[-3:]))
+    }
+    require(set(tags) == filename_tags, "WHEEL_FILENAME_TAG_MISMATCH")
+    dist_identity = dist_info.removesuffix(".dist-info").rsplit("-", 1)
+    require(
+        "/" not in dist_info
+        and len(dist_identity) == 2
+        and normalized(dist_identity[0]) == normalized(filename_parts[0])
+        and version(dist_identity[1]) == version(filename_parts[1]),
+        "WHEEL_DIST_INFO_MISMATCH",
+    )
+    return {"name": normalized(name), "version": selected, "tags": tags, **import_declarations}
+
+
+def wheel_record_entries(archive: zipfile.ZipFile, record_name: str) -> dict[str, tuple[str, str]]:
+    records: dict[str, tuple[str, str]] = {}
+    for row in csv.reader(io.StringIO(archive.read(record_name).decode("utf-8"))):
+        require(len(row) == 3 and row[0] not in records, "WHEEL_RECORD_SCHEMA")
+        records[row[0]] = row[1], row[2]
+    return records
+
+
+def check_wheel_record_member(
+    member: str, member_hash: str, size: str, record_name: str, content: bytes
+) -> str:
+    checksum = hashlib.sha256(content)
+    if member == record_name:
+        require(member_hash == size == "", "WHEEL_RECORD_SELF_HASH")
+    else:
+        expected = "sha256=" + base64.urlsafe_b64encode(checksum.digest()).rstrip(b"=").decode()
+        require(member_hash == expected and size == str(len(content)), "WHEEL_RECORD_INTEGRITY")
+    return checksum.hexdigest()
+
+
+def wheel_member_directories(members: list[zipfile.ZipInfo]) -> set[str]:
+    return {
+        parent.as_posix()
+        for item in members
+        for parent in PurePosixPath(item.filename).parents
+        if parent.parts
+    } | {item.filename[:-1] for item in members if item.is_dir()}
+
+
+def check_wheel_python(metadata: email.message.Message) -> str:
+    requires_python = metadata.get("Requires-Python", "")
+    require(satisfies(TARGET["python_full_version"], requires_python), "PYTHON_VERSION_MISMATCH")
+    return requires_python
+
+
+def metadata_dependency_fields(metadata: email.message.Message) -> dict[str, Any]:
+    requires_dist = sorted(metadata.get_all("Requires-Dist", []))
+    extras = metadata.get_all("Provides-Extra", [])
+    if metadata["Metadata-Version"] == "2.5":
+        require(
+            all(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", extra) for extra in extras)
+            and len(extras) == len(set(extras)),
+            "WHEEL_METADATA_INVALID_EXTRA",
+        )
+        # Check even optional requirements. The exact target and enabled extras
+        # still determine which dependency edges the closure will follow.
+        for raw in requires_dist:
+            _, _, specifier, expression = requirement(raw)
+            require(";" not in raw or bool(expression), "UNSUPPORTED_REQUIREMENT")
+            for part in specifier.strip().strip("()").split(","):
+                satisfies("0", part)
+            marker(expression, {**TARGET, "extra": ""})
+    return {
+        "requires_dist": requires_dist,
+        "provides_extra": sorted(normalized(value) for value in extras),
+    }
+
+
+def inspect_wheel_bytecode(
+    archive: zipfile.ZipFile,
+    files: set[str],
+    name: str,
+    selected: str,
+    filename: str,
+    wheel_sha256: str,
+) -> tuple[set[str], list[dict[str, str]]]:
+    bytecode = {member for member in files if member.endswith(".pyc")}
+    omitted: list[dict[str, str]] = []
+    if bytecode:
+        require(
+            normalized(name) == "pyside6-essentials"
+            and selected == "6.10.3"
+            and filename == BYTECODE_POLICY["filename"]
+            and wheel_sha256 == BYTECODE_POLICY["sha256"]
+            and bytecode == set(BYTECODE_POLICY["members"]),
+            "WHEEL_STARTUP_CODE",
+        )
+        for member in sorted(bytecode):
+            pin = BYTECODE_POLICY["members"][member]
+            content = archive.read(member)
+            require(pin["source"] in files, "WHEEL_BYTECODE_SOURCE_MISSING")
+            source = archive.read(pin["source"])
             require(
-                not item.flag_bits & 1
-                and item.compress_type in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED},
-                "WHEEL_ZIP_PROFILE",
+                digest(content) == pin["sha256"]
+                and digest(source) == pin["source_sha256"]
+                and len(content) > 16
+                and content[:16].hex() == pin["header"]
+                and content[:8] == bytes.fromhex("a70d0d0a00000000")
+                and int.from_bytes(content[12:16], "little") == len(source)
+                and TARGET["python_version"] == "3.12",
+                "WHEEL_BYTECODE_PIN_MISMATCH",
             )
-            if item.is_dir():
-                require(archive.read(item) == b"", "WHEEL_DIRECTORY_CONTENT")
-        metadata_files = [name for name in names if name.endswith(".dist-info/METADATA")]
-        wheel_files = [name for name in names if name.endswith(".dist-info/WHEEL")]
-        require(len(metadata_files) == len(wheel_files) == 1, "WHEEL_METADATA")
-        require(
-            metadata_files[0].rsplit("/", 1)[0] == wheel_files[0].rsplit("/", 1)[0],
-            "WHEEL_METADATA",
-        )
-        parser = email.parser.BytesParser()
-        metadata = parser.parsebytes(archive.read(metadata_files[0]))
-        wheel = parser.parsebytes(archive.read(wheel_files[0]))
-        require(not metadata.defects and not wheel.defects, "WHEEL_METADATA")
-        for header in ("Metadata-Version", "Name", "Version"):
-            require(len(metadata.get_all(header, [])) == 1, "WHEEL_METADATA_DUPLICATE_OR_MISSING")
-        require(
-            metadata["Metadata-Version"] in {"2.1", "2.2", "2.3", "2.4"},
-            "WHEEL_METADATA_VERSION_UNSUPPORTED",
-        )
-        require(
-            len(metadata.get_all("Requires-Python", [])) <= 1, "WHEEL_METADATA_DUPLICATE_OR_MISSING"
-        )
-        for header in ("Wheel-Version", "Root-Is-Purelib"):
-            require(len(wheel.get_all(header, [])) == 1, "WHEEL_HEADER_DUPLICATE_OR_MISSING")
-        require(
-            wheel["Wheel-Version"] == "1.0" and wheel["Root-Is-Purelib"] in {"true", "false"},
-            "WHEEL_FORMAT_UNSUPPORTED",
-        )
-        name, selected = metadata.get("Name", ""), metadata.get("Version", "")
-        version(selected)
-        tags = sorted(set(wheel.get_all("Tag", [])))
-        require(bool(tags) and any(compatible_tag(tag) for tag in tags), "WHEEL_ABI_MISMATCH")
-        filename_parts = path.name.removesuffix(".whl").split("-")
-        require(path.name.endswith(".whl") and len(filename_parts) in {5, 6}, "WHEEL_FILENAME")
-        require(
-            normalized(filename_parts[0]) == normalized(name)
-            and version(filename_parts[1]) == version(selected),
-            "WHEEL_FILENAME_METADATA_MISMATCH",
-        )
-        if len(filename_parts) == 6:
-            require(
-                re.fullmatch(r"[0-9][A-Za-z0-9_]*", filename_parts[2]) is not None,
-                "WHEEL_BUILD_TAG",
+            omitted.append(
+                {
+                    "distribution": normalized(name),
+                    "version": selected,
+                    "wheel_filename": filename,
+                    "wheel_sha256": wheel_sha256,
+                    "member": member,
+                    "sha256": digest(content),
+                    "source": pin["source"],
+                    "source_sha256": digest(source),
+                    "cache_tag": "cpython-311",
+                    "magic": "a70d0d0a",
+                    "policy": BYTECODE_POLICY_ID,
+                }
             )
-        filename_tags = {
-            "-".join(parts)
-            for parts in itertools.product(*(part.split(".") for part in filename_parts[-3:]))
+    return bytecode, omitted
+
+
+def inspect_wheel_headers(
+    archive: zipfile.ZipFile,
+    files: set[str],
+    name: str,
+    selected: str,
+    filename: str,
+    wheel_sha256: str,
+) -> tuple[set[str], list[dict[str, Any]]]:
+    headers = {
+        member
+        for member in files
+        if len(PurePosixPath(member).parts) > 1
+        and PurePosixPath(member).parts[0].endswith(".data")
+        and PurePosixPath(member).parts[1] == "headers"
+    }
+    header_omissions = []
+    if headers or (normalized(name) == "greenlet" and selected == "3.5.6"):
+        header_policy = header_tools()
+        pinned_header_wheel = header_policy["WHEEL"]
+        if (
+            normalized(name) == pinned_header_wheel["distribution"]
+            and selected == pinned_header_wheel["version"]
+            and filename == pinned_header_wheel["wheel_filename"]
+        ):
+            # Removing the header must not make a changed pinned wheel escape
+            # the exception contract. Full RECORD validation still ran first.
+            require(headers == {header_policy["HEADER"]["member"]}, "UNSUPPORTED_WHEEL_DATA")
+        for member in sorted(headers):
+            try:
+                header_omissions.append(
+                    header_policy["inspect_header"](
+                        normalized(name),
+                        selected,
+                        filename,
+                        wheel_sha256,
+                        member,
+                        archive.read(member),
+                        archive.getinfo(member).external_attr >> 16,
+                    )
+                )
+            except ValueError as exc:
+                raise Refusal(str(exc)) from exc
+    return headers, header_omissions
+
+
+def check_executable_format(member: str, prefix: bytes) -> None:
+    # Profil Linux nie uznaje obcych formatów ani skryptów instalacji
+    # za zwykłe dane. Źródła .py są jawnie związane pełnym manifestem.
+    suffix = PurePosixPath(member).suffix.lower()
+    require(
+        not prefix.startswith(b"MZ")
+        and prefix
+        not in {
+            b"\xfe\xed\xfa\xce",
+            b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe",
+            b"\xbe\xba\xfe\xca",
+            b"\xca\xfe\xba\xbf",
+            b"\xbf\xba\xfe\xca",
         }
-        require(set(tags) == filename_tags, "WHEEL_FILENAME_TAG_MISMATCH")
-        dist_info = metadata_files[0].rsplit("/", 1)[0]
-        dist_identity = dist_info.removesuffix(".dist-info").rsplit("-", 1)
+        and suffix not in {".exe", ".com", ".bat", ".cmd", ".ps1", ".sh"}
+        and (not prefix.startswith(b"#!") or suffix == ".py"),
+        "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
+    )
+
+
+def check_v5d7_coff(member: str, header: bytes, size: int) -> None:
+    machine = int.from_bytes(header[:2], "little")
+    sections = int.from_bytes(header[2:4], "little")
+    optional_size = int.from_bytes(header[16:18], "little")
+    coff = (
+        len(header) >= 20
+        and machine in {0x014C, 0x01C0, 0x01C2, 0x01C4, 0x0200, 0x8664, 0xA641, 0xA64E, 0xAA64}
+        and sections > 0
+        and 20 + optional_size + sections * 40 <= size
+    )
+    require(
+        not coff and not member.lower().endswith(".obj"),
+        "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
+    )
+
+
+def check_native_member(member: str, prefix: bytes) -> bool:
+    if (
+        prefix == b"\x7fELF"
+        or member.endswith((".so", ".pyd", ".dll", ".dylib"))
+        or ".so." in member
+    ):
+        tagged = re.search(r"\.cpython-([A-Za-z0-9_-]+)\.so$", member)
         require(
-            "/" not in dist_info
-            and len(dist_identity) == 2
-            and normalized(dist_identity[0]) == normalized(filename_parts[0])
-            and version(dist_identity[1]) == version(filename_parts[1]),
-            "WHEEL_DIST_INFO_MISMATCH",
+            tagged is None or tagged[1] == "312-x86_64-linux-gnu",
+            "NATIVE_MEMBER_SOABI_MISMATCH",
         )
+        return True
+    return False
+
+
+def inspect_wheel_bytes(
+    data: bytes,
+    filename: str,
+    origin: Any,
+    *,
+    observations: dict[str, Any] | None = None,
+    v5d7: bool = False,
+) -> dict[str, Any]:
+    """Check the original wheel and optionally record completed diagnostic checkpoints.
+
+    Observations are output only. They survive a later refusal, but are never
+    used as input to the enforced inspection or returned as a verified wheel.
+    """
+    wheel_sha256 = check_wheel_origin(data, filename, origin)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        members = wheel_archive_members(archive)
+        names = [item.filename for item in members]
+        dist_info = wheel_dist_info(names)
+        metadata, wheel = read_wheel_metadata(archive, dist_info)
+        identity = validate_wheel_metadata(filename, dist_info, metadata, wheel, v5d7=v5d7)
+        name, selected = identity["name"], identity["version"]
         record_name = dist_info + "/RECORD"
         require(record_name in names, "WHEEL_RECORD_MISSING")
-        records: dict[str, tuple[str, str]] = {}
-        for row in csv.reader(io.StringIO(archive.read(record_name).decode("utf-8"))):
-            require(len(row) == 3 and row[0] not in records, "WHEEL_RECORD_SCHEMA")
-            records[row[0]] = row[1], row[2]
+        records = wheel_record_entries(archive, record_name)
         files = {item.filename for item in members if not item.is_dir()}
         require(set(records) == files, "WHEEL_RECORD_INCOMPLETE")
         for member, (member_hash, size) in records.items():
-            if member == record_name:
-                require(member_hash == size == "", "WHEEL_RECORD_SELF_HASH")
-                continue
-            content = archive.read(member)
-            expected = (
-                "sha256="
-                + base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=").decode()
-            )
-            require(member_hash == expected and size == str(len(content)), "WHEEL_RECORD_INTEGRITY")
-        directories = {
-            parent.as_posix()
-            for item in members
-            for parent in PurePosixPath(item.filename).parents
-            if parent.parts
-        } | {item.filename[:-1] for item in members if item.is_dir()}
+            content = b"" if member == record_name else archive.read(member)
+            check_wheel_record_member(member, member_hash, size, record_name, content)
+        directories = wheel_member_directories(members)
         require(not directories & files, "WHEEL_MEMBER_FILE_DIRECTORY_COLLISION")
         for item in members:
             if item.is_dir():
                 check_startup(item.filename[:-1])
-        requires_python = metadata.get("Requires-Python", "")
-        require(
-            satisfies(TARGET["python_full_version"], requires_python), "PYTHON_VERSION_MISMATCH"
-        )
+        requires_python = check_wheel_python(metadata)
         # Politykę startup stosujemy dopiero po pełnym RECORD, łącznie z plikami,
         # które zostaną odrzucone lub pominięte. ZIP sprawdza CRC przy odczycie.
-        bytecode = {member for member in files if member.endswith(".pyc")}
-        omitted: list[dict[str, str]] = []
-        if bytecode:
-            require(
-                normalized(name) == "pyside6-essentials"
-                and selected == "6.10.3"
-                and filename == BYTECODE_POLICY["filename"]
-                and digest(data) == BYTECODE_POLICY["sha256"]
-                and bytecode == set(BYTECODE_POLICY["members"]),
-                "WHEEL_STARTUP_CODE",
-            )
-            for member in sorted(bytecode):
-                pin = BYTECODE_POLICY["members"][member]
-                content = archive.read(member)
-                require(pin["source"] in files, "WHEEL_BYTECODE_SOURCE_MISSING")
-                source = archive.read(pin["source"])
-                require(
-                    digest(content) == pin["sha256"]
-                    and digest(source) == pin["source_sha256"]
-                    and len(content) > 16
-                    and content[:16].hex() == pin["header"]
-                    and content[:8] == bytes.fromhex("a70d0d0a00000000")
-                    and int.from_bytes(content[12:16], "little") == len(source)
-                    and TARGET["python_version"] == "3.12",
-                    "WHEEL_BYTECODE_PIN_MISMATCH",
-                )
-                omitted.append(
-                    {
-                        "distribution": normalized(name),
-                        "version": selected,
-                        "wheel_filename": filename,
-                        "wheel_sha256": digest(data),
-                        "member": member,
-                        "sha256": digest(content),
-                        "source": pin["source"],
-                        "source_sha256": digest(source),
-                        "cache_tag": "cpython-311",
-                        "magic": "a70d0d0a",
-                        "policy": BYTECODE_POLICY_ID,
-                    }
-                )
+        bytecode, omitted = inspect_wheel_bytecode(
+            archive, files, name, selected, filename, wheel_sha256
+        )
         if observations is not None:
             observations["foreign_pyc_omissions"] = omitted
-        headers = {
-            member
-            for member in files
-            if len(PurePosixPath(member).parts) > 1
-            and PurePosixPath(member).parts[0].endswith(".data")
-            and PurePosixPath(member).parts[1] == "headers"
-        }
-        header_omissions = []
-        if headers or (normalized(name) == "greenlet" and selected == "3.5.6"):
-            header_policy = header_tools()
-            pinned_header_wheel = header_policy["WHEEL"]
-            if (
-                normalized(name) == pinned_header_wheel["distribution"]
-                and selected == pinned_header_wheel["version"]
-                and filename == pinned_header_wheel["wheel_filename"]
-            ):
-                # Removing the header must not make a changed pinned wheel escape
-                # the exception contract. Full RECORD validation still ran first.
-                require(headers == {header_policy["HEADER"]["member"]}, "UNSUPPORTED_WHEEL_DATA")
-            for member in sorted(headers):
-                try:
-                    header_omissions.append(
-                        header_policy["inspect_header"](
-                            normalized(name),
-                            selected,
-                            filename,
-                            digest(data),
-                            member,
-                            archive.read(member),
-                            archive.getinfo(member).external_attr >> 16,
-                        )
-                    )
-                except ValueError as exc:
-                    raise Refusal(str(exc)) from exc
+        headers, header_omissions = inspect_wheel_headers(
+            archive, files, name, selected, filename, wheel_sha256
+        )
         if observations is not None:
             observations["header_omissions"] = header_omissions
+        artifact_omissions = (
+            artifact_tools()["inspect_omissions"](
+                normalized(name), selected, filename, wheel_sha256, archive, files
+            )
+            if v5d7
+            else []
+        )
+        excluded_artifacts = {row["member"] for row in artifact_omissions}
         materialized: dict[str, dict[str, str]] = {}
-        for member in sorted(files - bytecode - headers):
+        for member in sorted(files - bytecode - headers - excluded_artifacts):
             destination = materialized_path(member, dist_info)
             check_startup(member)
             check_startup(destination)
@@ -803,8 +1108,8 @@ def inspect_wheel_bytes(
         mapped_members = {
             "name": normalized(name),
             "version": selected,
-            "filename": path.name,
-            "sha256": digest(data),
+            "filename": filename,
+            "sha256": wheel_sha256,
             "header_omissions": header_omissions,
             "materialized_members": materialized,
             "member_metadata": {
@@ -817,44 +1122,21 @@ def inspect_wheel_bytes(
                 if not item.is_dir()
             },
         }
+        if v5d7:
+            mapped_members["artifact_omissions"] = artifact_omissions
         if observations is not None:
             observations["materialization_input"] = mapped_members
         native: dict[str, str] = {}
         for item in members:
-            if item.is_dir():
+            if item.is_dir() or item.filename in excluded_artifacts:
                 continue
             with archive.open(item) as stream:
-                prefix = stream.read(4)
-            # Profil Linux nie uznaje obcych formatów ani skryptów instalacji
-            # za zwykłe dane. Źródła .py są jawnie związane pełnym manifestem.
-            suffix = PurePosixPath(item.filename).suffix.lower()
-            require(
-                not prefix.startswith(b"MZ")
-                and prefix
-                not in {
-                    b"\xfe\xed\xfa\xce",
-                    b"\xce\xfa\xed\xfe",
-                    b"\xfe\xed\xfa\xcf",
-                    b"\xcf\xfa\xed\xfe",
-                    b"\xca\xfe\xba\xbe",
-                    b"\xbe\xba\xfe\xca",
-                    b"\xca\xfe\xba\xbf",
-                    b"\xbf\xba\xfe\xca",
-                }
-                and suffix not in {".exe", ".com", ".bat", ".cmd", ".ps1", ".sh"}
-                and (not prefix.startswith(b"#!") or suffix == ".py"),
-                "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
-            )
-            if (
-                prefix == b"\x7fELF"
-                or item.filename.endswith((".so", ".pyd", ".dll", ".dylib"))
-                or ".so." in item.filename
-            ):
-                tagged = re.search(r"\.cpython-([A-Za-z0-9_-]+)\.so$", item.filename)
-                require(
-                    tagged is None or tagged[1] == "312-x86_64-linux-gnu",
-                    "NATIVE_MEMBER_SOABI_MISMATCH",
-                )
+                header = stream.read(20 if v5d7 else 4)
+            prefix = header[:4]
+            check_executable_format(item.filename, prefix)
+            if v5d7:
+                check_v5d7_coff(item.filename, header, item.file_size)
+            if check_native_member(item.filename, prefix):
                 native[item.filename] = digest(archive.read(item))
         require(
             not any(".data/" in member for member in native),
@@ -862,26 +1144,17 @@ def inspect_wheel_bytes(
         )
         return {
             **mapped_members,
+            **identity,
             "origin": origin,
-            "tags": tags,
             "requires_python": requires_python,
-            "requires_dist": sorted(metadata.get_all("Requires-Dist", [])),
-            "provides_extra": sorted(
-                normalized(value) for value in metadata.get_all("Provides-Extra", [])
-            ),
+            **metadata_dependency_fields(metadata),
             "native_members": native,
             "omitted_members": omitted,
         }
 
 
-def propose(
-    pyproject: Path,
-    wheelhouse: Path,
-    origins: dict[str, Any],
-    allow_shared_candidates: bool = False,
-) -> dict[str, Any]:
-    raw = read_regular(pyproject, 8 * 1024 * 1024)
-    project = tomllib.loads(raw.decode())["project"]
+def closure_roots(pyproject_bytes: bytes) -> list[str]:
+    project = tomllib.loads(pyproject_bytes.decode())["project"]
     require(
         satisfies(TARGET["python_full_version"], project["requires-python"]),
         "PROJECT_PYTHON_VERSION",
@@ -890,16 +1163,31 @@ def propose(
         project["optional-dependencies"]["observer-kvm-preflight"]
     )
     require(all(isinstance(value, str) for value in roots), "PROJECT_REQUIREMENTS")
-    require(not wheelhouse.is_symlink() and wheelhouse.is_dir(), "WHEELHOUSE_DIRECTORY")
-    candidates: dict[str, dict[str, Any]] = {}
-    for path in sorted(wheelhouse.iterdir()):
-        require(path.suffix == ".whl", "NON_WHEEL_DISTRIBUTION")
-        package = inspect_wheel(path, origins.get(path.name))
-        require(package["name"] not in candidates, "AMBIGUOUS_PACKAGE_VERSION")
-        candidates[package["name"]] = package
-    require(
-        set(origins) == {package["filename"] for package in candidates.values()}, "ORIGIN_INVENTORY"
-    )
+    return roots
+
+
+def validate_import_ownership(packages: list[dict[str, Any]]) -> None:
+    """Reject declared cross-project shadowing, including exclusive ancestors."""
+    exclusive: dict[str, str] = {}
+    declarations: list[tuple[str, str]] = []
+    for package in packages:
+        owner = package["name"]
+        for name in package.get("import_names", {}):
+            if name:
+                require(name not in exclusive, "WHEEL_IMPORT_NAME_OVERLAP:" + name)
+                exclusive[name] = owner
+                declarations.append((name, owner))
+        declarations.extend((name, owner) for name in package.get("import_namespaces", {}))
+    for name, owner in declarations:
+        while name:
+            require(exclusive.get(name, owner) == owner, "WHEEL_IMPORT_NAME_OVERLAP:" + name)
+            name = name.rpartition(".")[0]
+
+
+def resolve_dependency_closure(
+    roots: list[str], candidates: dict[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[list[str]]]:
+    """Resolve a complete registry of independently validated wheel metadata."""
     selected: dict[str, dict[str, Any]] = {}
     enabled: dict[str, set[str]] = {}
     pending = [(raw_requirement, {""}, "project") for raw_requirement in roots]
@@ -922,8 +1210,33 @@ def propose(
         pending.extend((item, next_extras, name) for item in package["requires_dist"])
     require(set(selected) == set(candidates), "UNREACHABLE_WHEEL")
     packages = [selected[name] for name in sorted(selected)]
-    if allow_shared_candidates:
-        sharing = shared_inventory(packages)
+    validate_import_ownership(packages)
+    return packages, [list(item) for item in sorted(edges)]
+
+
+def propose(
+    pyproject: Path,
+    wheelhouse: Path,
+    origins: dict[str, Any],
+    allow_shared_candidates: bool = False,
+    *,
+    v5d7: bool = False,
+) -> dict[str, Any]:
+    raw = read_regular(pyproject, 8 * 1024 * 1024)
+    roots = closure_roots(raw)
+    require(not wheelhouse.is_symlink() and wheelhouse.is_dir(), "WHEELHOUSE_DIRECTORY")
+    candidates: dict[str, dict[str, Any]] = {}
+    for path in sorted(wheelhouse.iterdir()):
+        require(path.suffix == ".whl", "NON_WHEEL_DISTRIBUTION")
+        package = inspect_wheel(path, origins.get(path.name), v5d7=v5d7)
+        require(package["name"] not in candidates, "AMBIGUOUS_PACKAGE_VERSION")
+        candidates[package["name"]] = package
+    require(
+        set(origins) == {package["filename"] for package in candidates.values()}, "ORIGIN_INVENTORY"
+    )
+    packages, edges = resolve_dependency_closure(roots, candidates)
+    if allow_shared_candidates or v5d7:
+        sharing = shared_inventory(packages, v5d7=v5d7)
     else:
         validate_materialization(packages)
     result = {
@@ -937,19 +1250,24 @@ def propose(
         "pyproject_sha256": digest(raw),
         "root_requirements": roots,
         "packages": packages,
-        "edges": [list(item) for item in sorted(edges)],
+        "edges": edges,
         "system_binding": "SEPARATE_REVIEW_REQUIRED:python3-libvirt/libvirtmod/ELF",
         "bytecode_policy": BYTECODE_POLICY_ID,
         "installation_contract_exception": (
             "OMIT_PINNED_FOREIGN_BYTECODE_REQUIRES_INDEPENDENT_APPROVAL"
-            if any(package["omitted_members"] for package in selected.values())
+            if any(package["omitted_members"] for package in packages)
             else "NONE"
         ),
         "authorization": "NOT_AUTHORIZED",
     }
-    if allow_shared_candidates:
+    if allow_shared_candidates or v5d7:
         result["shared_wheel_members"] = sharing
     result["header_omissions"] = header_inventory(packages)
+    if v5d7:
+        result.update(
+            profile=V5D7_PROPOSAL,
+            artifact_omissions=artifact_tools()["omission_inventory"](packages),
+        )
     return result
 
 
@@ -974,6 +1292,7 @@ def verify(
     approved_omissions: dict[str, Any] | None = None,
     approved_shared: dict[str, Any] | None = None,
     approved_headers: dict[str, Any] | None = None,
+    approved_artifacts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Oczekiwany digest i native inventory muszą przyjść od odrębnego recenzenta.
 
@@ -985,8 +1304,13 @@ def verify(
         "INDEPENDENT_EXPECTATION_MISSING",
     )
     require(digest(canonical(proposal)) == expected_sha256, "PROPOSAL_SHA256_MISMATCH")
-    uses_shared_contract = proposal.get("profile") == "stage9-v5d5-dependency-proposal-v1"
-    rebuilt = propose(pyproject, wheelhouse, origins, allow_shared_candidates=uses_shared_contract)
+    profile = proposal.get("profile")
+    v5d7 = profile == V5D7_PROPOSAL
+    require(v5d7 or approved_artifacts is None, "ARTIFACT_EXPECTATION_PROFILE_MISMATCH")
+    uses_shared_contract = v5d7 or profile == "stage9-v5d5-dependency-proposal-v1"
+    rebuilt = propose(
+        pyproject, wheelhouse, origins, allow_shared_candidates=uses_shared_contract, v5d7=v5d7
+    )
     require(canonical(proposal) == canonical(rebuilt), "PROPOSAL_CONTENT_MISMATCH")
     native = {
         package["filename"] + ":" + member: sha
@@ -1000,7 +1324,8 @@ def verify(
     sharing: dict[str, Any] | None = None
     if uses_shared_contract or approved_shared is not None:
         try:
-            sharing = shared_tools()["verify_shared"](rebuilt["packages"], approved_shared)
+            tools = shared_tools(v5d7=True) if v5d7 else shared_tools()
+            sharing = tools["verify_shared"](rebuilt["packages"], approved_shared)
         except ValueError as exc:
             raise Refusal(str(exc)) from exc
     try:
@@ -1035,6 +1360,14 @@ def verify(
                 "shared_wheel_policy": sharing["policy"],
             }
         )
+    if v5d7:
+        artifacts = artifact_tools()["verify_omissions"](rebuilt["packages"], approved_artifacts)
+        result.update(
+            profile=V5D7_VERIFICATION,
+            artifact_omissions=artifacts,
+            artifact_expectations=approved_artifacts,
+            artifact_policy=artifacts["policy"],
+        )
     return result
 
 
@@ -1050,7 +1383,9 @@ def main() -> int:
     parser.add_argument("--approved-omissions", type=Path)
     parser.add_argument("--approved-shared", type=Path)
     parser.add_argument("--approved-headers", type=Path)
+    parser.add_argument("--approved-artifacts", type=Path)
     parser.add_argument("--allow-shared-candidates", action="store_true")
+    parser.add_argument("--v5d7", action="store_true", help="Select the V5d7 proposal profile")
     args = parser.parse_args()
     try:
         origins = json_data(args.origins)
@@ -1061,6 +1396,7 @@ def main() -> int:
                 args.wheelhouse,
                 origins,
                 allow_shared_candidates=args.allow_shared_candidates,
+                v5d7=args.v5d7,
             )
         else:
             require(
@@ -1077,6 +1413,7 @@ def main() -> int:
                 json_data(args.approved_omissions) if args.approved_omissions else None,
                 json_data(args.approved_shared) if args.approved_shared else None,
                 json_data(args.approved_headers) if args.approved_headers else None,
+                json_data(args.approved_artifacts) if args.approved_artifacts else None,
             )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0

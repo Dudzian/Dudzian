@@ -1,5 +1,13 @@
 # Quality, security, and code-intelligence toolchain
 
+V5d7 obejmuje testy statycznej diagnostyki, kontraktów członków wheels
+i kolektora operatora w macierzy Ubuntu, Windows i macOS. Te same moduły
+wchodzą do skonfigurowanego mypy Linux/Win32 oraz zakresu Ruff i formatowania.
+Bramka pokrycia wymaga raportu branch coverage każdego modułu V5d5–V5d7
+na wszystkich trzech platformach i egzekwuje próg 70% dla zmienionego kodu.
+Zakres regresji obejmuje wcześniejsze etapy. Testy używają syntetycznych
+danych i nie uruchamiają narzędzi z badanych archiwów.
+
 V5d6 rozszerza istniejącą statyczną macierz V5d5 o odrębny kontrakt pominięcia
 dokładnie przypiętego nagłówka greenlet, inspektory archiwum i wheelhouse oraz
 pozytywne i negatywne testy. Wszystkie trzy moduły obejmuje configured mypy

@@ -21,6 +21,9 @@ from typing import Any, cast
 import venv
 import zipfile
 
+V5D7_PROPOSAL = "stage9-v5d7-dependency-proposal-v1"
+V5D7_RECEIPT = "stage9-v5d7-prepared-environment-v1"
+
 
 class Refusal(ValueError):
     """Brak dowodu lub nieobsługiwany profil zatrzymuje budowę."""
@@ -223,7 +226,9 @@ def wheel_plan(data: bytes, package: dict[str, Any] | None = None) -> dict[str, 
     """
     if package is not None:
         deps = helper("stage9_v5d4_dependencies.py")
-        rebuilt = deps["inspect_wheel_bytes"](data, package["filename"], package["origin"])
+        rebuilt = deps["inspect_wheel_bytes"](
+            data, package["filename"], package["origin"], v5d7="artifact_omissions" in package
+        )
         require(
             deps["canonical"](rebuilt) == deps["canonical"](package),
             "WHEEL_PLAN_CHANGED_AFTER_VERIFICATION",
@@ -279,6 +284,7 @@ def extract_wheel(
     approved_headers: dict[str, Any] | None = None,
 ) -> None:
     """Materializuj dokładny plan; oryginalny wheel i RECORD pozostają niezmienione."""
+    require(package is None or "artifact_omissions" not in package, "V5D7_WHEEL_SET_REQUIRED")
     plan = wheel_plan(data, package)
     header_contract([package] if package is not None else [], approved_headers)
     # Sprawdź wszystkie istniejące cele przed jakimkolwiek zapisem tego wheel.
@@ -301,6 +307,9 @@ def prepare_wheel_set(
     wheelhouse: Path,
     approved_shared: dict[str, Any] | None,
     approved_headers: dict[str, Any] | None = None,
+    *,
+    v5d7: bool = False,
+    approved_artifacts: dict[str, Any] | None = None,
 ) -> tuple[
     list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]], dict[str, str], dict[str, Any]
 ]:
@@ -309,9 +318,20 @@ def prepare_wheel_set(
     Only the separate exact contract can identify a shared target. The ordinary
     reservation guard is retained for every other target and its ancestors.
     """
-    shared_tools = runpy.run_path(str(Path(__file__).with_name("stage9_v5d5_shared.py")))
+    require(
+        all(("artifact_omissions" in package) == v5d7 for package in packages)
+        and (v5d7 or approved_artifacts is None),
+        "V5D7_WHEEL_SET_REQUIRED",
+    )
+    shared_tools = (
+        helper("stage9_v5d7_shared.py")
+        if v5d7
+        else runpy.run_path(str(Path(__file__).with_name("stage9_v5d5_shared.py")))
+    )
     shared = shared_tools["verify_shared"](packages, approved_shared)
     header_contract(packages, approved_headers)
+    if v5d7:
+        helper("stage9_v5d7_omissions.py")["verify_omissions"](packages, approved_artifacts)
     shared_paths = {row["path"] for row in shared["members"]}
     snapshots: list[tuple[dict[str, Any], bytes, dict[str, dict[str, str]]]] = []
     planned: dict[str, str] = {}
@@ -338,14 +358,31 @@ def materialize_wheel_set(
     destination: Path,
     shared: dict[str, Any],
     approved_headers: dict[str, Any] | None = None,
+    *,
+    v5d7: bool = False,
+    approved_shared: dict[str, Any] | None = None,
+    approved_artifacts: dict[str, Any] | None = None,
 ) -> None:
     """Use retained immutable bytes; write each approved shared target once."""
+    packages = [package for package, _, _ in snapshots]
+    require(
+        all(("artifact_omissions" in package) == v5d7 for package in packages)
+        and (v5d7 or (approved_shared is None and approved_artifacts is None)),
+        "V5D7_WHEEL_SET_REQUIRED",
+    )
     # Reinspect every snapshot before trusting its candidate declarations. A
     # caller must not erase the header identity to disable the omission checks.
     # The omitted bytes are remeasured although runtime never receives them.
     for package, data, plan in snapshots:
         require(wheel_plan(data, package) == plan, "WHEEL_HEADER_MATERIALIZATION_PLAN_CHANGED")
-    header_contract([package for package, _, _ in snapshots], approved_headers)
+    header_contract(packages, approved_headers)
+    if v5d7:
+        shared_tools = helper("stage9_v5d7_shared.py")
+        require(
+            shared_tools["exact"](shared, shared_tools["verify_shared"](packages, approved_shared)),
+            "SHARED_WHEEL_MATERIALIZATION_PLAN_CHANGED",
+        )
+        helper("stage9_v5d7_omissions.py")["verify_omissions"](packages, approved_artifacts)
     for _, _, plan in snapshots:
         for member in plan.values():
             target_path = destination / relative(member["path"])
@@ -434,7 +471,13 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         "INPUT_SCHEMA_REJECTED",
     )
     require(
-        set(approval) - {"wheel_omissions", "wheel_shared_members", "wheel_header_omissions"}
+        set(approval)
+        - {
+            "wheel_omissions",
+            "wheel_shared_members",
+            "wheel_header_omissions",
+            "wheel_artifact_omissions",
+        }
         == {
             "host",
             "proposal_sha256",
@@ -488,6 +531,11 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     repository = Path(inputs["repository"])
     deps = helper("stage9_v5d4_dependencies.py")
     proposal = document(Path(inputs["proposal"]))
+    v5d7 = proposal.get("profile") == V5D7_PROPOSAL
+    require(
+        v5d7 or "wheel_artifact_omissions" not in approval, "ARTIFACT_EXPECTATION_PROFILE_MISMATCH"
+    )
+    approved_artifacts = approval.get("wheel_artifact_omissions")
     verification = deps["verify"](
         repository / "pyproject.toml",
         Path(inputs["wheelhouse"]),
@@ -498,6 +546,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         approval.get("wheel_omissions"),
         approval.get("wheel_shared_members"),
         approval.get("wheel_header_omissions"),
+        approved_artifacts,
     )
     closure_tools = helper("stage9_v5d4_closure.py")
     closure = closure_tools["inventory"](repository)
@@ -559,6 +608,8 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
         Path(inputs["wheelhouse"]),
         approval.get("wheel_shared_members"),
         approval.get("wheel_header_omissions"),
+        v5d7=v5d7,
+        approved_artifacts=approved_artifacts,
     )
     headers = header_contract(proposal["packages"], approval.get("wheel_header_omissions"))
     planned_directories = {
@@ -610,7 +661,15 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     if lib64.is_symlink() and lib64.readlink() == Path("lib"):
         lib64.unlink()
     packages.mkdir(mode=0o700)
-    materialize_wheel_set(snapshots, packages, shared, approval.get("wheel_header_omissions"))
+    materialize_wheel_set(
+        snapshots,
+        packages,
+        shared,
+        approval.get("wheel_header_omissions"),
+        v5d7=v5d7,
+        approved_shared=approval.get("wheel_shared_members") if v5d7 else None,
+        approved_artifacts=approved_artifacts,
+    )
     for name, digest in code.items():
         data = read(repository / relative(name))
         require(sha(data) == digest, "SOURCE_CHANGED_AFTER_REVIEW")
@@ -631,6 +690,13 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     write_new(output, "launch.py", launcher)
     write_new(output, "runtime-audit.py", read(Path(__file__).with_name("stage9_v5d4_closure.py")))
     write_new(output, "shared-audit.py", read(Path(__file__).with_name("stage9_v5d5_shared.py")))
+    if v5d7:
+        write_new(
+            output, "shared-audit-v5d7.py", read(Path(__file__).with_name("stage9_v5d7_shared.py"))
+        )
+        write_new(
+            output, "artifact-audit.py", read(Path(__file__).with_name("stage9_v5d7_omissions.py"))
+        )
     if headers is not None:
         write_new(
             output, "header-audit.py", read(Path(__file__).with_name("stage9_v5d6_headers.py"))
@@ -651,7 +717,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
     )
     verify_materialized(packages, planned)
     receipt = {
-        "profile": "stage9-v5d5-prepared-environment-v1",
+        "profile": V5D7_RECEIPT if v5d7 else "stage9-v5d5-prepared-environment-v1",
         "files": files,
         "directories": sorted(
             path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_dir()
@@ -676,6 +742,7 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
                 )
             }
             | {"header_omissions": package.get("header_omissions", [])}
+            | ({"artifact_omissions": package["artifact_omissions"]} if v5d7 else {})
             for package, _, _ in snapshots
         ],
         "shared_wheel_members": shared,
@@ -729,6 +796,14 @@ def build(inputs: dict[str, Any], approval: dict[str, Any], output: Path) -> dic
                 "header_omission_policy": headers["policy"],
                 "header_runtime_inclusion": "EXCLUDED",
             }
+        )
+    if v5d7:
+        artifacts = verification["artifact_omissions"]
+        helper("stage9_v5d7_omissions.py")["verify_runtime_absence"](files, artifacts)
+        receipt.update(
+            artifact_omissions=artifacts,
+            artifact_expectations=approved_artifacts,
+            artifact_policy=artifacts["policy"],
         )
     for row in receipt["shared_wheel_output"]:
         metadata = (packages / row["path"]).lstat()
