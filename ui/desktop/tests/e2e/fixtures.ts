@@ -17,12 +17,9 @@ export const test = base.extend({
       };
     });
 
+    await page.goto('/');
     await use(page);
   }
-});
-
-test.beforeEach(async ({ page }) => {
-  await page.goto('/');
 });
 
 export { expect };

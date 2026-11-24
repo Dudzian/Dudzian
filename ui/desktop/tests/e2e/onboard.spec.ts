@@ -26,3 +26,28 @@ test.describe('Onboarding wizard', () => {
     await expect(page.getByRole('listitem').first()).toContainText('Test preset');
   });
 });
+
+test('odmawia przejścia dla błędnej nazwy i alokacji po migracji resolvera', async ({ page }) => {
+  const next = page.getByRole('button', { name: 'Dalej' });
+  await page.getByLabel('Nazwa presetu').fill('ab');
+  await expect(next).toBeDisabled();
+  await page.getByLabel('Nazwa presetu').fill('Poprawny preset');
+  await expect(next).toBeEnabled();
+  await next.click();
+
+  await page.getByLabel('Spot %').fill('101');
+  await expect(next).toBeDisabled();
+  await page.getByLabel('Spot %').fill('40');
+  await expect(next).toBeEnabled();
+  await page.getByLabel('Futures %').fill('50');
+  await expect(next).toBeDisabled();
+});
+
+test('odmawia przejścia bez wybranej giełdy', async ({ page }) => {
+  const next = page.getByRole('button', { name: 'Dalej' });
+  await expect(next).toBeEnabled();
+  await next.click();
+  await next.click();
+  await page.getByRole('checkbox', { name: 'Binance' }).uncheck();
+  await expect(next).toBeDisabled();
+});

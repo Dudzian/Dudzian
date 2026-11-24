@@ -1,0 +1,77 @@
+name: Desktop native Linux smoke
+
+on:
+  pull_request:
+    paths:
+      - 'ui/desktop/**'
+      - '.github/workflows/desktop-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui/desktop
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ui/desktop/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install display and system dependencies
+        run: |
+          npx --no-install playwright install-deps chromium
+          sudo apt-get install -y xauth
+      - name: Install the verified official Electron sandbox
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset ELECTRON_MIRROR ELECTRON_CUSTOM_DIR ELECTRON_CUSTOM_FILENAME
+          unset electron_use_remote_checksums npm_config_electron_use_remote_checksums
+          unset ELECTRON_OVERRIDE_DIST_PATH ELECTRON_SKIP_BINARY_DOWNLOAD
+          node - <<'JS'
+          const assert = require('node:assert/strict');
+          assert.equal(require('./node_modules/electron/package.json').version, '43.8.10');
+          assert.equal(require('./node_modules/electron/checksums.json')['electron-v43.8.10-linux-x64.zip'],
+            '657998e8d675aefd16f624b4771e7b9e8f6de34d6c11abfc9cf90d55894adc53');
+          JS
+          node node_modules/electron/install.js
+          sudo python3 -I - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          data = Path('node_modules/electron/dist/chrome-sandbox').read_bytes()
+          if hashlib.sha256(data).hexdigest() != 'd7d2a29b6bd265950a83d583a3901c5b7d6daba6ab7eca9439076bcf99343cc9':
+              raise SystemExit('Official Electron sandbox checksum mismatch')
+          directory = Path('/usr/local/lib/dudzian-electron-native')
+          directory.mkdir(mode=0o755)
+          descriptor = os.open(directory / 'chrome-sandbox', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
+          with os.fdopen(descriptor, 'wb') as output:
+              output.write(data)
+              output.flush()
+              os.fchown(output.fileno(), 0, 0)
+              os.fchmod(output.fileno(), 0o4755)
+              os.fsync(output.fileno())
+          PY
+          # Chromium tries the adjacent helper before CHROME_DEVEL_SANDBOX.
+          # Keep the verified root-owned helper outside the runner-writable checkout.
+          rm -- node_modules/electron/dist/chrome-sandbox
+          echo 'CHROME_DEVEL_SANDBOX=/usr/local/lib/dudzian-electron-native/chrome-sandbox' >> "$GITHUB_ENV"
+      - name: Build the actual desktop application
+        run: npm run build
+      - name: Verify the native window renderer preload IPC and sandbox
+        env:
+          DEBUG: pw:browser
+          ELECTRON_ENABLE_LOGGING: '1'
+        run: xvfb-run -a node --test tests/native-electron.test.cjs

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
-import { appendPerformanceEntry, clearPerformanceLog, getPerformanceLog } from '@perf/profiler';
+import { appendPerformanceEntry, clearPerformanceLog, getPerformanceLog } from '../../perf/profiler';
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 
@@ -19,7 +19,7 @@ function createWindow(): BrowserWindow {
     window.loadURL('http://localhost:5173');
     window.webContents.openDevTools();
   } else {
-    window.loadFile(path.join(__dirname, '../renderer/index.html'));
+    window.loadFile(path.join(__dirname, '../../../renderer/index.html'));
   }
 
   return window;
