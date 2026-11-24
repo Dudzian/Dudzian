@@ -10,7 +10,6 @@ import pytest
 
 import scripts.quality.betterleaks_hook as betterleaks_hook
 
-
 ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN_TRACKED_STORES = {
     ".env",
@@ -189,9 +188,15 @@ def test_cli_uses_explicit_paths_or_staged_index(tmp_path: Path, explicit: bool)
     (repository / "dir").write_text(
         "import json, os, sys\n"
         "from pathlib import Path\n"
-        "Path(os.environ['SCANNER_ARGUMENT_LOG']).write_text(json.dumps(sys.argv[1:]))\n",
+        "Path(os.environ['SCANNER_ARGUMENT_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+        "print('synthetic-sensitive-scanner-stdout')\n"
+        "print('synthetic-sensitive-scanner-stderr', file=sys.stderr)\n",
         encoding="utf-8",
     )
+    if not explicit:
+        # The Python scanner fixture must itself be present in the index
+        # snapshot, since staged scans no longer execute from the working tree.
+        _git(repository, "add", "dir")
     command = [sys.executable, str(ROOT / "scripts/quality/betterleaks_hook.py")]
     if explicit:
         command.append(str(explicit_path))
@@ -209,6 +214,9 @@ def test_cli_uses_explicit_paths_or_staged_index(tmp_path: Path, explicit: bool)
     )
 
     assert completed.returncode == 0, completed.stderr
+    assert "synthetic-sensitive-scanner" not in completed.stdout + completed.stderr
     scanner_arguments = json.loads(log.read_text(encoding="utf-8"))
     separator = scanner_arguments.index("--")
-    assert scanner_arguments[separator + 1 :] == [explicit_path.name if explicit else staged.name]
+    assert scanner_arguments[separator + 1 :] == (
+        [explicit_path.name] if explicit else ["dir", staged.name]
+    )
