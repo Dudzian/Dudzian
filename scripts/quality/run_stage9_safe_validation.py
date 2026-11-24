@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 
 AUDITED_BASE = "fc15b98298c5430286dd2206ec7eeb8f20e2497b"
 COVERAGE_THRESHOLD = 70
+_MAX_REPORT_BYTES = 16 * 1024 * 1024
 SAFE_FILES = (
     "tests/deployment/test_freshness_runtime_bootstrap_security.py",
     "tests/deployment/test_stage9_harness_import_security.py",
@@ -300,12 +301,23 @@ def run_step(
     return record
 
 
+class _ReportTreeBuilder(ET.TreeBuilder):
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        raise ValueError("unsafe XML declaration in JUnit report")
+
+
 def junit_result(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {"status": "NOT_EXECUTED", "reason": "JUNIT_MISSING"}
     try:
-        cases = list(ET.parse(path).iter("testcase"))
-    except ET.ParseError:
+        if not path.is_file():
+            return {"status": "NOT_EXECUTED", "reason": "JUNIT_MISSING"}
+        with path.open("rb") as stream:
+            raw = stream.read(_MAX_REPORT_BYTES + 1)
+        if len(raw) > _MAX_REPORT_BYTES:
+            raise ValueError("JUnit report exceeds the size limit")
+        cases = list(
+            ET.fromstring(raw, parser=ET.XMLParser(target=_ReportTreeBuilder())).iter("testcase")
+        )
+    except (OSError, LookupError, ValueError, ET.ParseError):
         return {"status": "FAIL", "reason": "JUNIT_INVALID"}
     skipped = sum(case.find("skipped") is not None for case in cases)
     failures = sum(

@@ -51,6 +51,8 @@ def test_dispatch_routes_only_explicit_safe_scope_and_keeps_old_jobs():
         "stage9-safe-validation",
         "stage9-v5d1-static-contract",
         "stage9-v5d4-static-environment",
+        "stage9-v5d5-shared-wheel-members",
+        "stage9-v5d5-shared-wheel-coverage",
     }
 
 

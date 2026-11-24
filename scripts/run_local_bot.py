@@ -31,6 +31,7 @@ from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.exchanges.base import Environment as ExchangeEnvironment
 from bot_core.logging.config import install_metrics_logging_handler
 from bot_core.runtime.state_manager import RuntimeStateError, RuntimeStateManager
+from bot_core.runtime._grpc_support import validate_plaintext_grpc_host
 from bot_core.runtime.cloud_client import (
     CloudClientOptions,
     CloudHandshakeResult,
@@ -582,6 +583,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _configure_logging(args.log_level)
+    try:
+        args.host = validate_plaintext_grpc_host(args.host)
+    except ValueError as exc:
+        _LOGGER.error("Niepoprawny adres lokalnego gRPC: %s", exc)
+        return 2
 
     config_path = Path(args.config).expanduser()
     if not config_path.exists():
