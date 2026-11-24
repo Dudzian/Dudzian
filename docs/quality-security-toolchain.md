@@ -1,5 +1,14 @@
 # Quality, security, and code-intelligence toolchain
 
+V5d6 rozszerza istniejącą statyczną macierz V5d5 o odrębny kontrakt pominięcia
+dokładnie przypiętego nagłówka greenlet, inspektory archiwum i wheelhouse oraz
+pozytywne i negatywne testy. Wszystkie trzy moduły obejmuje configured mypy
+Linux/Win32, Ruff, format i wymagany zakres branch coverage każdej platformy.
+Agregacja odmawia przy braku któregokolwiek modułu V5d6 na jednej platformie;
+próg 70%, regresje V5d5/V5d4/V5d3/V5d2 i odrębne bramki ręczne pozostają
+w mocy. Testy używają danych syntetycznych; nie instalują badanych wheels,
+nie tworzą aprobat operatora i nie zmieniają bramki native load.
+
 V5d5 dodaje kontrakt dokładnie wskazanych współdzielonych członków wheels do
 skonfigurowanego mypy Linux/Win32 i istniejących zakresów Ruff/format. Osobny
 job `stage9-v5d5-shared-wheel-members` sprawdza syntetyczne pozytywne i negatywne

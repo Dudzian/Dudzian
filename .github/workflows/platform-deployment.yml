@@ -477,18 +477,21 @@ jobs:
           "coverage>=7.10,<8"
       - name: Sprawdź Ruff, format i typy V5d5
         run: |
-          python -m ruff check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/scripts/test_stage9_v5d5_ci_contract.py
-          python -m ruff format --check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/scripts/test_stage9_v5d5_ci_contract.py
-          python -m mypy scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py
-          python -m mypy --platform win32 scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py
-      - name: Sprawdź kontrakt V5d5 oraz pełne regresje V5d4 i V5d3
+          python -m ruff check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/deployment/test_stage9_v5d6_*.py tests/scripts/test_stage9_v5d5_ci_contract.py
+          python -m ruff format --check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/deployment/test_stage9_v5d6_*.py tests/scripts/test_stage9_v5d5_ci_contract.py
+          python -m mypy scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py
+          python -m mypy --platform win32 scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py
+      - name: Sprawdź kontrakty V5d5/V5d6 oraz pełne regresje V5d4 i V5d3
         run: |
           git cat-file -e '17e03a9cb42a84302401415f96ac90e756926915^{commit}'
           python -m pytest -q --confcutdir=tests/deployment \
             tests/deployment/test_stage9_v5d5_*.py \
+            tests/deployment/test_stage9_v5d6_*.py \
             tests/deployment/test_stage9_v5d4_*.py \
             tests/deployment/test_stage9_v5d3_release.py \
             -p pytest_cov.plugin --cov=scripts.stage9_v5d5_shared \
+            --cov=scripts.stage9_v5d6_headers --cov=scripts.stage9_v5d6_inspect_greenlet \
+            --cov=scripts.stage9_v5d6_inspect_wheelhouse \
             --cov=scripts.stage9_v5d4_abi --cov=scripts.stage9_v5d4_closure \
             --cov=scripts.stage9_v5d4_dependencies --cov=scripts.stage9_v5d4_environment \
             --cov=scripts.stage9_v5d4_launch --cov-branch \
@@ -551,7 +554,7 @@ jobs:
           expected = [root / f"stage9-v5d5-static-{runner}-{revision}-{attempt}" / "stage9-v5d5.coverage" for runner in runners]
           if set(root.glob("*/stage9-v5d5.coverage")) != set(expected):
               raise SystemExit("V5D5_COVERAGE_ARTIFACT_SET_REFUSED")
-          required = {f"scripts/stage9_v5d4_{module}.py" for module in ("abi", "closure", "dependencies", "environment", "launch")} | {"scripts/stage9_v5d5_shared.py"}
+          required = {f"scripts/stage9_v5d4_{module}.py" for module in ("abi", "closure", "dependencies", "environment", "launch")} | {"scripts/stage9_v5d5_shared.py", "scripts/stage9_v5d6_headers.py", "scripts/stage9_v5d6_inspect_greenlet.py", "scripts/stage9_v5d6_inspect_wheelhouse.py"}
           for path in expected:
               data = CoverageData(basename=str(path))
               data.read()

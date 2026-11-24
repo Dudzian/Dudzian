@@ -1,0 +1,19 @@
+{
+  "authorization": "NOT_AUTHORIZED",
+  "bypass": "NOT_ADDED",
+  "header_policy": "stage9-v5d6-greenlet-3.5.6-non-runtime-header-v1",
+  "offending_members": [
+    {
+      "first_line": "call \"C:\\Program Files (x86)\\Microsoft Visual Studio 9.0\\VC\\vcvarsall.bat\" amd64",
+      "member": "greenlet/platform/setup_switch_x64_masm.cmd",
+      "mode": 33188,
+      "sha256": "6690a5509794d2e8c43d24d63527a93f45b67fd5e2610280f10292a15a2ef045",
+      "size": 143,
+      "suffix": ".cmd"
+    }
+  ],
+  "profile": "stage9-v5d6-next-refusal-static-evidence-v1",
+  "reason": "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED",
+  "wheel_filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+  "wheel_sha256": "975736b002ed080d124cf81a79cb7e05cb26d6b3f5c7a7b651c0fcce70353aa1"
+}

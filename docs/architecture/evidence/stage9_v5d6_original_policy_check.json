@@ -1,0 +1,22 @@
+{
+  "authorization": "NOT_AUTHORIZED",
+  "dependency_inspector_exit": 2,
+  "full_record_checks": 98,
+  "full_wheelhouse": "NOT_AVAILABLE_IN_CLOUD_OPERATOR_LAPTOP_ONLY",
+  "header_policy_candidate": {
+    "distribution": "greenlet",
+    "member": "greenlet-3.5.6.data/headers/greenlet.h",
+    "mode": 33188,
+    "policy": "stage9-v5d6-greenlet-3.5.6-non-runtime-header-v1",
+    "runtime_inclusion": "EXCLUDED",
+    "sha256": "b33e69611490a9e7603add80320c4b65d4e33bea9caff24cbe0884251f48009f",
+    "size": 4755,
+    "type": "regular",
+    "version": "3.5.6",
+    "wheel_filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+    "wheel_sha256": "975736b002ed080d124cf81a79cb7e05cb26d6b3f5c7a7b651c0fcce70353aa1"
+  },
+  "header_policy_result": "PINNED_CANDIDATE_ONLY_NOT_APPROVED",
+  "profile": "stage9-v5d6-original-greenlet-policy-check-v1",
+  "reason": "WHEEL_EXECUTABLE_FORMAT_UNSUPPORTED"
+}
