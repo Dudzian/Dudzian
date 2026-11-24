@@ -516,6 +516,7 @@ jobs:
         run: >-
           python -m pytest -ra -p asyncio -p pytest_cov -p xdist.plugin -n 4
           tests/property
+          tests/security/test_grpc_bind_boundary.py
           tests/quality/test_semgrep_gate.py
           tests/deployment/test_linux_physical_evidence.py
           tests/deployment/test_linux_physical_remediation.py
@@ -644,6 +645,11 @@ jobs:
           tests/architecture/test_stage9_account_initial_binding_contract.py
           -m "not hardware and not destructive and not network"
           --cov=bot_core.risk.portfolio
+          --cov=bot_core.runtime._grpc_support
+          --cov=bot_core.api.server
+          --cov=bot_core.runtime.market_data_service
+          --cov=bot_core.runtime.metrics_service
+          --cov=bot_core.runtime.risk_service
           --cov=bot_core.licensing.canonical
           --cov=bot_core.security.license
           --cov=deployment.windows_tpm_substrate_probe

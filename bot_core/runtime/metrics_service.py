@@ -28,7 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from bot_core.alerts.base import AlertRouter
     from bot_core.config.models import MetricsServiceConfig
 
-from bot_core.runtime._grpc_support import GrpcServerLifecycleMixin
+from bot_core.runtime._grpc_support import GrpcServerLifecycleMixin, validate_plaintext_grpc_host
 from bot_core.security.tokens import ServiceToken, ServiceTokenValidator
 
 # --- Stuby gRPC są opcjonalne podczas developmentu ---
@@ -603,6 +603,8 @@ class MetricsServer(GrpcServerLifecycleMixin):
             raise RuntimeError(
                 "Uruchomienie MetricsServer wymaga pakietów grpcio oraz wygenerowanych stubów."
             )
+        if server_credentials is None:
+            host = validate_plaintext_grpc_host(host)
         self._store = MetricsSnapshotStore(maxlen=history_size)
         self._servicer = MetricsServiceServicer(
             self._store,

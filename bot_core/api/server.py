@@ -54,6 +54,7 @@ from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionServic
 from bot_core.generated import trading_pb2, trading_pb2_grpc
 from bot_core.observability import get_global_metrics_registry
 from bot_core.observability.exporters import LocalPrometheusExporter
+from bot_core.runtime._grpc_support import validate_plaintext_grpc_host
 from bot_core.security.base import SecretManager, SecretStorage
 from bot_core.exchanges.base import (
     Environment as ExchangeEnvironment,
@@ -2420,6 +2421,7 @@ class LocalRuntimeServer:
         max_workers: int = 16,
         interceptors: Sequence[grpc.ServerInterceptor] | None = None,
     ) -> None:
+        host = validate_plaintext_grpc_host(host)
         self._context = context
         server_interceptors = tuple(interceptors or ())
         self._server = grpc.server(
