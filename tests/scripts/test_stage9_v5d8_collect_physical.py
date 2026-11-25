@@ -212,12 +212,19 @@ def git(source: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def test_source_uses_exact_commit_even_if_checkout_changes(capture):
+def test_source_uses_exact_commit_even_if_checkout_changes(capture, monkeypatch):
     source = capture.scratch / "source-checkout"
     scripts = source / "scripts"
     scripts.mkdir(parents=True)
     for name in operator.HELPER_PINS:
         (scripts / name).write_bytes((REPO / "scripts" / name).read_bytes())
+    # This fixture creates its own revision, separate from the pinned V5d8
+    # physical input. Give it hashes for the exact bytes it commits.
+    monkeypatch.setattr(
+        operator,
+        "HELPER_PINS",
+        {name: operator.sha((scripts / name).read_bytes()) for name in operator.HELPER_PINS},
+    )
     entry = scripts / "stage9_observer_kvm_preflight_v5d1.py"
     entry.write_text("import ast\nraise RuntimeError('fixture must only be read')\n")
     (source / "pyproject.toml").write_text(
@@ -240,6 +247,7 @@ def test_source_uses_exact_commit_even_if_checkout_changes(capture):
     )
     head = git(source, "rev-parse", "HEAD")
     entry.write_text("raise RuntimeError('changed checkout')\n")
+    (scripts / operator.ABI).write_text("raise RuntimeError('changed helper checkout')\n")
     actual, _, _ = capture.collect_source(source, head)
     assert actual == head
     data = json.loads((capture.contents / "source-closure.json").read_bytes())

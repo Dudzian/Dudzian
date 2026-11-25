@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -353,32 +354,251 @@ def test_symlink_refusal_category_precedes_windows_backend(
         abi.read_bytes(attempted)
 
 
-def test_readelf_parser_records_versions_without_execution() -> None:
-    record = abi.parse_elf(
-        """ELF Header:
+_READELF_WITH_VERSION_INFO = """ELF Header:
  Class: ELF64
  Data: 2's complement, little endian
  Type: DYN (Shared object file)
  Machine: Advanced Micro Devices X86-64
+
+Program Headers:
  [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+
+Dynamic section at offset 0x1230 contains 7 entries:
  0x00000001 (NEEDED) Shared library: [libvirt.so.0]
  0x0000000e (SONAME) Library soname: [binding.so]
  0x0000001d (RUNPATH) Library runpath: [$ORIGIN/.libs]
+ 0x00000006 (SYMTAB) 0x280
+ 0x6ffffff0 (VERSYM) 0x3ee
+ 0x6ffffffd (VERDEFNUM) 2
+ 0x6fffffff (VERNEEDNUM) 1
+
+Relocation section '.rela.plt' at offset 0x520 contains 1 entry:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+0000000000004020  0000000100000007 R_X86_64_JUMP_SLOT     0000000000000000 virConnectOpen@LIBVIRT_10.0.0 + 0
+
+Symbol table '.dynsym' contains 3 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND virConnectOpen@LIBVIRT_10.0.0 (3)
+     2: 0000000000001080    30 FUNC    GLOBAL DEFAULT   12 PyInit_binding@@BINDING_1
+
+Version symbols section '.gnu.version' contains 3 entries:
+ Addr: 0x00000000000003ee  Offset: 0x000003ee  Link: 4 (.dynsym)
+  000:   0 (*local*)       3 (LIBVIRT_10.0.0)     2 (BINDING_1)
+
+Version definition section '.gnu.version_d' contains 2 entries:
+ Addr: 0x0000000000000408  Offset: 0x00000408  Link: 5 (.dynstr)
+ 000000: Rev: 1 Flags: BASE Index: 1 Cnt: 1 Name: binding.so
+ 0x001c: Rev: 1 Flags: none Index: 2 Cnt: 2 Name: BINDING_1
+ 0x0038: Parent 1: binding.so
+
 Version needs section '.gnu.version_r' contains 1 entry:
+ Addr: 0x0000000000000440  Offset: 0x00000440  Link: 5 (.dynstr)
  000000: Version: 1 File: libvirt.so.0 Cnt: 1
- 0x0010: Name: LIBVIRT_10.0.0 Flags: none Version: 2
-Version definition section '.gnu.version_d' contains 1 entry:
- 0x0010: Rev: 1 Flags: none Index: 2 Cnt: 1 Name: BINDING_1
+ 0x0010: Name: LIBVIRT_10.0.0 Flags: none Version: 3
+
+Displaying notes found in: .note.stapsdt
+  Owner                Data size  Description
+  stapsdt              0x0000003e NT_STAPSDT (SystemTap probe descriptors)
+    Provider: libvirt
+    Name: rpc_keepalive_start
+    Location: 0x0000000000001484, Base: 0x000000000002709c, Semaphore: 0x0000000000000000
 """
-    )
+
+
+def test_readelf_parser_records_versions_without_execution() -> None:
+    record = abi.parse_elf(_READELF_WITH_VERSION_INFO)
     assert record.interpreter == "/lib64/ld-linux-x86-64.so.2"
     assert record.needed == ("libvirt.so.0",)
     assert record.soname == "binding.so"
     assert record.search_paths == ("$ORIGIN/.libs",)
     assert record.version_needs == {"libvirt.so.0": ("LIBVIRT_10.0.0",)}
-    assert record.version_definitions == ("BINDING_1",)
+    assert record.version_definitions == ("binding.so", "BINDING_1")
+    assert record.defined_python_symbols == ("PyInit_binding",)
     with pytest.raises(abi.Refusal, match="ELF_HEADER_INCOMPLETE"):
         abi.parse_elf("Niekompletny wynik readelf")
+
+
+def test_readelf_definition_section_ends_before_notes_and_other_symbol_tables() -> None:
+    content, needs_and_notes = _READELF_WITH_VERSION_INFO.split("Version needs section", 1)
+    _, notes = needs_and_notes.split("Displaying notes", 1)
+    content = content.replace(" 0x6fffffff (VERNEEDNUM) 1\n", "")
+    content = content.replace("virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen")
+    content = content.replace("3 (LIBVIRT_10.0.0)", "1 (*global*)")
+    content += """Symbol table '.symtab' contains 1 entry:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000    10 FUNC    GLOBAL DEFAULT   12 PyInit_only_in_symtab
+
+"""
+    record = abi.parse_elf(content + "Displaying notes" + notes)
+    assert record.version_needs == {}
+    assert record.version_definitions == ("binding.so", "BINDING_1")
+    assert record.defined_python_symbols == ("PyInit_binding",)
+
+
+def test_readelf_version_needs_auxiliary_records_can_follow_all_primary_records() -> None:
+    content = _READELF_WITH_VERSION_INFO.replace("(VERNEEDNUM) 1", "(VERNEEDNUM) 2")
+    content = content.replace("contains 1 entry:\n Addr:", "contains 2 entries:\n Addr:")
+    content = content.replace(
+        "0x0010: Name: LIBVIRT_10.0.0 Flags: none Version: 3",
+        """0x0020: Name: LIBVIRT_10.0.0 Flags: none Version: 3
+ 0x0010: Version: 1 File: libc.so.6 Cnt: 1
+ 0x0030: Name: GLIBC_2.2.5 Flags: none Version: 4""",
+    )
+    assert abi.parse_elf(content).version_needs == {
+        "libvirt.so.0": ("LIBVIRT_10.0.0",),
+        "libc.so.6": ("GLIBC_2.2.5",),
+    }
+
+
+def test_readelf_links_copy_symbols_hidden_exports_and_absolute_version_labels() -> None:
+    content = _READELF_WITH_VERSION_INFO.replace("contains 3 entries:", "contains 10 entries:")
+    content = content.replace(
+        "Symbol table '.dynsym'",
+        """Relocation section '.rela.dyn' at offset 0x550 contains 1 entry:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+0000000000004030  0000000600000005 R_X86_64_COPY          0000000000004030 PyCopied@LIBVIRT_10.0.0 + 0
+
+Symbol table '.dynsym'""",
+    )
+    content = content.replace(
+        "PyInit_binding@@BINDING_1",
+        """PyInit_binding@@BINDING_1
+     3: 0000000000001100    12 FUNC    GLOBAL DEFAULT   12 PyInit_old_binding@BINDING_1
+     4: 0000000000000000     0 OBJECT  GLOBAL DEFAULT  ABS BINDING_1
+     5: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND PyLong_FromLong
+     6: 0000000000004030     8 OBJECT  GLOBAL DEFAULT   19 PyCopied@LIBVIRT_10.0.0 (3)
+     7: 0000000000004030     8 OBJECT  WEAK   DEFAULT   19 PyCopiedAlias@LIBVIRT_10.0.0 (3)
+     8: 0000000000004040     8 OBJECT  GLOBAL DEFAULT   19 PyLocal
+     9: 0000000000004048     8 OBJECT  GLOBAL DEFAULT   19 PyGlobal""",
+    )
+    content = content.replace(
+        "  000:   0 (*local*)       3 (LIBVIRT_10.0.0)     2 (BINDING_1)",
+        """  000:   0 (*local*)       3 (LIBVIRT_10.0.0)     2 (BINDING_1)   2h(BINDING_1)
+  004:   2 (BINDING_1)     0 (*local*)            3 (LIBVIRT_10.0.0)   3 (LIBVIRT_10.0.0)
+  008:   0 (*local*)       1 (*global*)""",
+    )
+    record = abi.parse_elf(content)
+    assert record.defined_python_symbols == ("PyGlobal", "PyInit_binding")
+    assert record.undefined_python_symbols == ("PyLong_FromLong",)
+
+
+def test_readelf_links_hidden_version_requirement_using_raw_decimal_index() -> None:
+    content = (
+        _READELF_WITH_VERSION_INFO.replace("LIBVIRT_10.0.0 (3)", "LIBVIRT_10.0.0 (32771)")
+        .replace("3 (LIBVIRT_10.0.0)", "3h(LIBVIRT_10.0.0)")
+        .replace("Flags: none Version: 3", "Flags: none Version: 32771")
+    )
+    assert abi.parse_elf(content).version_needs == {"libvirt.so.0": ("LIBVIRT_10.0.0",)}
+    wrong_index = content.replace("LIBVIRT_10.0.0 (32771)", "LIBVIRT_10.0.0 (3)")
+    with pytest.raises(abi.Refusal, match="^ELF_VERSION_SECTION_REJECTED$"):
+        abi.parse_elf(wrong_index)
+
+
+def test_readelf_rejects_same_version_name_with_wrong_provider_index() -> None:
+    content = (
+        _READELF_WITH_VERSION_INFO.replace("contains 7 entries:", "contains 8 entries:")
+        .replace("(VERNEEDNUM) 1", "(VERNEEDNUM) 2")
+        .replace(
+            "Shared library: [libvirt.so.0]",
+            "Shared library: [libvirt.so.0]\n 0x00000001 (NEEDED) Shared library: [alternate.so.0]",
+        )
+    )
+    content = content.replace("contains 1 entry:\n Addr:", "contains 2 entries:\n Addr:")
+    content = content.replace(
+        "0x0010: Name: LIBVIRT_10.0.0 Flags: none Version: 3",
+        """0x0010: Name: LIBVIRT_10.0.0 Flags: none Version: 3
+ 0x0020: Version: 1 File: alternate.so.0 Cnt: 1
+ 0x0030: Name: LIBVIRT_10.0.0 Flags: none Version: 4""",
+    )
+    assert abi.parse_elf(content).version_needs["alternate.so.0"] == ("LIBVIRT_10.0.0",)
+    wrong_index = content.replace(
+        "virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@LIBVIRT_10.0.0 (4)"
+    )
+    with pytest.raises(abi.Refusal, match="^ELF_VERSION_SECTION_REJECTED$"):
+        abi.parse_elf(wrong_index)
+
+
+def test_readelf_rejects_versioned_symbols_without_version_tables() -> None:
+    head, _ = _READELF_WITH_VERSION_INFO.split("Version symbols section", 1)
+    head = re.sub(r"^.*\((?:VERSYM|VERDEFNUM|VERNEEDNUM)\).*\n", "", head, flags=re.MULTILINE)
+    with pytest.raises(abi.Refusal, match="^ELF_VERSION_SECTION_REJECTED$"):
+        abi.parse_elf(head)
+
+
+def test_readelf_requires_dynamic_symbol_section_for_symtab_without_dependencies() -> None:
+    header = _READELF_WITH_VERSION_INFO.split("Program Headers:", 1)[0]
+    content = (
+        header
+        + """Dynamic section at offset 0x1230 contains 2 entries:
+ 0x00000006 (SYMTAB) 0x280
+ 0x00000000 (NULL) 0x0
+"""
+    )
+    with pytest.raises(abi.Refusal, match="^ELF_DYNAMIC_SYMBOL_SECTION_REJECTED$"):
+        abi.parse_elf(content)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "code"),
+    [
+        (".gnu.version_r' contains 1 entry:", ".gnu.version_r' contains entries:", "VERSION"),
+        (
+            "Version needs section '.gnu.version_r'",
+            "Version needs section '.gnu.version_d'",
+            "VERSION",
+        ),
+        ("File: libvirt.so.0 Cnt: 1", "File: libvirt.so.0 Cnt: 2", "VERSION"),
+        ("File: libvirt.so.0 Cnt: 1", "File: libvirt.so.0 Cnt: 0", "VERSION"),
+        ("(VERNEEDNUM) 1", "(VERNEEDNUM) 2", "VERSION"),
+        ("(VERDEFNUM) 2", "(VERDEFNUM) 1", "VERSION"),
+        ("(VERSYM) 0x3ee", "(VERSYM) unknown", "VERSION"),
+        ("(SYMTAB) 0x280", "(SYMTAB) 0x280\n 0x00000006 (SYMTAB) 0x280", "DYNAMIC_SYMBOL"),
+        ("(.dynsym)\n", "(.symtab)\n", "VERSION"),
+        ("000000: Version: 1", "000010: Version: 1", "VERSION"),
+        ("0x0010: Name:", "0x0000: Name:", "VERSION"),
+        ("none Version: 3", "none Version: 1", "VERSION"),
+        ("Name: LIBVIRT_10.0.0 Flags: none Version: 3", "Name: LIBVIRT_10.0.0", "VERSION"),
+        ("Cnt: 2 Name: BINDING_1", "Cnt: 3 Name: BINDING_1", "VERSION"),
+        ("Parent 1: binding.so", "Parent 2: binding.so", "VERSION"),
+        ("Parent 1: binding.so", "Parent 1: unknown", "VERSION"),
+        ("  000:   0", "  001:   0", "VERSION"),
+        ("     2 (BINDING_1)", "     invalid", "VERSION"),
+        ("'.gnu.version' contains 3 entries", "'.gnu.version' contains 2 entries", "VERSION"),
+        ("Symbol table '.dynsym' contains", "Symbol table '.symtab' contains", "DYNAMIC_SYMBOL"),
+        (
+            "Symbol table '.dynsym' contains 3 entries",
+            "Symbol table '.dynsym' contains 2 entries",
+            "VERSION",
+        ),
+        ("2: 0000000000001080", "1: 0000000000001080", "DYNAMIC_SYMBOL"),
+        ("30 FUNC", "30 BROKEN", "DYNAMIC_SYMBOL"),
+        ("FUNC    GLOBAL", "FUNC    FAKE", "DYNAMIC_SYMBOL"),
+        ("GLOBAL DEFAULT", "GLOBAL PRIVATE", "DYNAMIC_SYMBOL"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding@@", "DYNAMIC_SYMBOL"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding (2)", "DYNAMIC_SYMBOL"),
+        ("3 (LIBVIRT_10.0.0)", "7 (LIBVIRT_10.0.0)", "VERSION"),
+        ("3 (LIBVIRT_10.0.0)", "3 (FAKE_VERSION)", "VERSION"),
+        ("3 (LIBVIRT_10.0.0)", "3 (*both*)", "VERSION"),
+        ("0 (*local*)", "0 (*global*)", "VERSION"),
+        ("0 (*local*)", "0h(*local*)", "VERSION"),
+        ("Index: 2 Cnt: 2", "Index: 3 Cnt: 2", "VERSION"),
+        ("Version: 3\n", "Version: 32770\n", "VERSION"),
+        ("Version: 3\n", "Version: 65539\n", "VERSION"),
+        ("virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@@LIBVIRT_10.0.0 (3)", "VERSION"),
+        ("virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@LIBVIRT_10.0.0", "VERSION"),
+        ("virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@FAKE_VERSION (3)", "VERSION"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding@BINDING_1", "VERSION"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding@@BINDING_1 (2)", "VERSION"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding", "VERSION"),
+        ("12 PyInit_binding@@BINDING_1", "UND PyInit_binding@@BINDING_1", "VERSION"),
+    ],
+)
+def test_readelf_refuses_incomplete_or_malformed_sections(old: str, new: str, code: str) -> None:
+    assert old in _READELF_WITH_VERSION_INFO
+    malformed = _READELF_WITH_VERSION_INFO.replace(old, new, 1)
+    with pytest.raises(abi.Refusal, match=rf"^ELF_{code}_SECTION_REJECTED$"):
+        abi.parse_elf(malformed)
 
 
 def test_cli_missing_evidence_emits_refusal(tmp_path: Path) -> None:
@@ -532,15 +752,26 @@ def test_dynamic_python_symbols_are_parsed() -> None:
 Data: 2's complement, little endian
 Type: DYN
 Machine: Advanced Micro Devices X86-64
-Symbol table '.dynsym' contains 4 entries:
+Symbol table '.dynsym' contains 10 entries:
  Num: Value Size Type Bind Vis Ndx Name
- 1: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND PyLong_FromLong@PYTHON_3.12
+ 0: 0000000000000000 0 NOTYPE LOCAL DEFAULT UND
+ 1: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND PyLong_FromLong
  2: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND _Py_Dealloc
  3: 0000000000010000 4 FUNC GLOBAL DEFAULT 12 PyInit_libvirtmod
- 4: 0000000000010200 4 FUNC GLOBAL DEFAULT 12 unrelated_symbol
+ 4: 0000000000010200 4 OBJECT GLOBAL DEFAULT 12 PyInit_not_callable
+ 5: 0000000000010300 4 FUNC GLOBAL HIDDEN 12 PyInit_not_visible
+ 6: 0000000000010400 4 FUNC LOCAL DEFAULT 12 PyInit_not_global
+ 7: 0000000000010500 4 OBJECT GLOBAL PROTECTED 12 PyCAPI
+ 8: 0000000000010600 4 OBJECT <OS specific>: 10 DEFAULT 12 PyUniqueCAPI
+ 9: 0000000000010700 4 <OS specific>: 10 GLOBAL DEFAULT 12 PyInit_resolver
 """
     )
-    assert record.defined_python_symbols == ("PyInit_libvirtmod",)
+    assert record.defined_python_symbols == (
+        "PyCAPI",
+        "PyInit_libvirtmod",
+        "PyInit_resolver",
+        "PyUniqueCAPI",
+    )
     assert record.undefined_python_symbols == ("PyLong_FromLong", "_Py_Dealloc")
 
 
