@@ -133,6 +133,245 @@ class ELF:
     undefined_python_symbols: tuple[str, ...] = ()
 
 
+_VERSION_ERROR = "ELF_VERSION_SECTION_REJECTED"
+_SYMBOL_ERROR = "ELF_DYNAMIC_SYMBOL_SECTION_REJECTED"
+_SECTION_NAMES = {
+    "Version needs section": ".gnu.version_r",
+    "Version definition section": ".gnu.version_d",
+    "Version symbols section": ".gnu.version",
+    "Symbol table": ".dynsym",
+}
+_SECTION_PREFIXES = (
+    "Version needs section",
+    "Version definition section",
+    "Version symbols section",
+    "Symbol table '.dynsym'",
+)
+_SECTION_HEADER = re.compile(
+    r"(Version (?:needs|definition|symbols) section|Symbol table)"
+    r" '([^']+)' contains ([0-9]+) entr(?:y|ies):"
+)
+_VERSION_LINK = re.compile(r"Addr: 0x[0-9a-f]+\s+Offset: 0x[0-9a-f]+\s+Link: [0-9]+ \((\S+)\)")
+_VERSION_ROW = re.compile(r"(?:0x)?([0-9a-f]+):\s+(.+)")
+_NEED_LIBRARY = re.compile(r"Version: 1\s+File: (\S+)\s+Cnt: ([0-9]+)")
+_NEED_NAME = re.compile(r"Name: (\S+)\s+Flags: .+?\s+Version: ([0-9]+)")
+_DEFINITION = re.compile(r"Rev: 1\s+Flags: .+?\s+Index: ([0-9]+)\s+Cnt: ([0-9]+)\s+Name: (\S+)")
+_DEFINITION_PARENT = re.compile(r"Parent ([0-9]+): (\S+)")
+_VERSION_SYMBOL = re.compile(r"\s*([0-9a-f]+)(?:h|\s+)\([^()]+\)")
+# GNU readelf can show the numeric OS-specific form for System V OS/ABI.
+_GNU_OS_SPECIFIC = "<OS specific>: 10"
+_SYMBOL_ROW = re.compile(
+    r"([0-9]+):\s+[0-9a-f]+\s+(?:[0-9]+|0x[0-9a-f]+)"
+    rf"\s+(NOTYPE|OBJECT|FUNC|SECTION|FILE|COMMON|TLS|IFUNC|RELC|SRELC|{_GNU_OS_SPECIFIC})"
+    rf"\s+(LOCAL|GLOBAL|WEAK|UNIQUE|{_GNU_OS_SPECIFIC})\s+(DEFAULT|INTERNAL|HIDDEN|PROTECTED)"
+    r"\s+(UND|ABS|COM|[0-9]+)(?:\s+(\S+)(?:\s+\(([0-9]+)\))?)?"
+)
+_TABLE_TAG = re.compile(
+    r"^[ \t]+0x[0-9a-f]+[ \t]+\((SYMTAB|VERSYM|VERNEEDNUM|VERDEFNUM)\)[ \t]+(.+)$",
+    re.MULTILINE,
+)
+
+_ReadelfSection = tuple[int, list[str]]
+
+
+@dataclass(frozen=True)
+class DynamicSymbol:
+    name: str
+    version: str | None
+    default_version: bool
+    kind: str
+    binding: str
+    visibility: str
+    section_index: str
+
+    @property
+    def is_export(self) -> bool:
+        return (
+            bool(self.name)
+            and self.section_index != "UND"
+            and self.binding in {"GLOBAL", "WEAK", "UNIQUE"}
+            and self.visibility in {"DEFAULT", "PROTECTED"}
+            and self.kind not in {"FILE", "SECTION"}
+        )
+
+
+def _readelf_sections(output: str) -> dict[str, _ReadelfSection]:
+    sections: dict[str, _ReadelfSection] = {}
+    rows: list[str] | None = None
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        if line[0].isspace():
+            if rows is not None:
+                rows.append(line.strip())
+            continue
+        # GNU readelf starts each report section at column zero. This includes
+        # relocation and Notes headers, and sections added by newer versions.
+        rows = None
+        if line.startswith(_SECTION_PREFIXES):
+            header = _SECTION_HEADER.fullmatch(line)
+            code = _SYMBOL_ERROR if line.startswith("Symbol table") else _VERSION_ERROR
+            require(header is not None, code)
+            assert header is not None
+            name, section_name, count = header.groups()
+            require(name not in sections and section_name == _SECTION_NAMES[name], code)
+            rows = []
+            sections[name] = (int(count), rows)
+    return sections
+
+
+def _version_rows(section: _ReadelfSection, linked_table: str = ".dynstr") -> list[tuple[int, str]]:
+    _, rows = section
+    link = _VERSION_LINK.fullmatch(rows[0]) if rows else None
+    require(link is not None and link[1] == linked_table, _VERSION_ERROR)
+    data = []
+    offsets: set[int] = set()
+    for row in rows[1:]:
+        match = _VERSION_ROW.fullmatch(row)
+        require(match is not None, _VERSION_ERROR)
+        assert match is not None
+        offset = int(match[1], 16)
+        require(offset not in offsets and (bool(offsets) or offset == 0), _VERSION_ERROR)
+        offsets.add(offset)
+        data.append((offset, match[2]))
+    return data
+
+
+def _version_requirements(section: _ReadelfSection) -> dict[str, list[str]]:
+    expected, _ = section
+    requirements: dict[str, list[str]] = {}
+    current: list[str] = []
+    remaining = 0
+    indices: set[int] = set()
+    library_offset = -1
+    auxiliary_offset = -1
+    for offset, row in _version_rows(section):
+        library = _NEED_LIBRARY.fullmatch(row)
+        if library is not None:
+            name, count = library.groups()
+            require(
+                remaining == 0
+                and name not in requirements
+                and int(count) > 0
+                and offset > library_offset,
+                _VERSION_ERROR,
+            )
+            remaining = int(count)
+            current = requirements[name] = []
+            library_offset = auxiliary_offset = offset
+        else:
+            version = _NEED_NAME.fullmatch(row)
+            require(
+                version is not None and remaining > 0 and offset > auxiliary_offset, _VERSION_ERROR
+            )
+            assert version is not None
+            index = int(version[2])
+            require(2 <= index < 0x8000 and index not in indices, _VERSION_ERROR)
+            indices.add(index)
+            current.append(version[1])
+            remaining -= 1
+            auxiliary_offset = offset
+    require(remaining == 0 and len(requirements) == expected, _VERSION_ERROR)
+    return requirements
+
+
+def _version_definitions(section: _ReadelfSection) -> tuple[str, ...]:
+    expected, _ = section
+    definitions: dict[int, str] = {}
+    parents: set[str] = set()
+    pending_parents = 0
+    parent_number = 0
+    definition_offset = -1
+    auxiliary_offset = -1
+    for offset, row in _version_rows(section):
+        definition = _DEFINITION.fullmatch(row)
+        if definition is not None:
+            index, count = int(definition[1]), int(definition[2])
+            require(
+                pending_parents == 0
+                and 1 <= index < 0x8000
+                and index not in definitions
+                and count > 0
+                and offset > definition_offset,
+                _VERSION_ERROR,
+            )
+            definitions[index] = definition[3]
+            pending_parents = count - 1
+            parent_number = 1
+            definition_offset = auxiliary_offset = offset
+        else:
+            parent = _DEFINITION_PARENT.fullmatch(row)
+            require(
+                parent is not None
+                and pending_parents > 0
+                and int(parent[1]) == parent_number
+                and offset > auxiliary_offset,
+                _VERSION_ERROR,
+            )
+            assert parent is not None
+            parents.add(parent[2])
+            parent_number += 1
+            pending_parents -= 1
+            auxiliary_offset = offset
+    require(
+        pending_parents == 0
+        and len(definitions) == expected
+        and parents <= set(definitions.values()),
+        _VERSION_ERROR,
+    )
+    return tuple(definitions.values())
+
+
+def _validate_version_symbols(section: _ReadelfSection) -> None:
+    expected, _ = section
+    count = 0
+    for offset, row in _version_rows(section, ".dynsym"):
+        require(offset == count, _VERSION_ERROR)
+        position = 0
+        while symbol := _VERSION_SYMBOL.match(row, position):
+            position = symbol.end()
+            count += 1
+        require(position == len(row), _VERSION_ERROR)
+    require(count == expected, _VERSION_ERROR)
+
+
+def _dynamic_symbols(section: _ReadelfSection) -> list[DynamicSymbol]:
+    expected, rows = section
+    require(
+        bool(rows)
+        and rows[0].split() == ["Num:", "Value", "Size", "Type", "Bind", "Vis", "Ndx", "Name"],
+        _SYMBOL_ERROR,
+    )
+    require(len(rows) - 1 == expected, _SYMBOL_ERROR)
+    symbols = []
+    for index, row in enumerate(rows[1:]):
+        match = _SYMBOL_ROW.fullmatch(row)
+        require(match is not None and int(match[1]) == index, _SYMBOL_ERROR)
+        assert match is not None
+        _, kind, binding, visibility, section_index, label, rendered_index = match.groups()
+        name, version_mark, version = (label or "").partition("@")
+        default_version = version.startswith("@")
+        if default_version:
+            version = version[1:]
+        require(
+            (not version_mark or bool(name) and bool(version) and "@" not in version)
+            and (rendered_index is None or bool(version)),
+            _SYMBOL_ERROR,
+        )
+        symbols.append(
+            DynamicSymbol(
+                name,
+                version or None,
+                default_version,
+                "IFUNC" if kind == _GNU_OS_SPECIFIC else kind,
+                "UNIQUE" if binding == _GNU_OS_SPECIFIC else binding,
+                visibility,
+                section_index,
+            )
+        )
+    return symbols
+
+
 def parse_elf(output: str) -> ELF:
     """Parse tylko jawne pola readelf; nie wywołuje loadera ani `ldd`."""
 
@@ -142,52 +381,64 @@ def parse_elf(output: str) -> ELF:
         assert match is not None
         return match.group(1).strip()
 
+    machine, elf_class, endian, kind = (field(key) for key in ("Machine", "Class", "Data", "Type"))
     loader = re.search(r"\[Requesting program interpreter: ([^\]]+)\]", output)
     soname = re.search(r"\(SONAME\).*\[([^\]]+)\]", output)
-    version_needs: dict[str, list[str]] = {}
-    definitions: list[str] = []
-    section, library = "", ""
-    for line in output.splitlines():
-        if line.startswith("Version needs section"):
-            section = "needs"
-        elif line.startswith("Version definition section"):
-            section = "definitions"
-        elif line.startswith("Version symbols section"):
-            section = "symbols"
-        if section == "needs":
-            match = re.search(r"\bFile: (\S+)", line)
-            if match:
-                library = match.group(1)
-                version_needs.setdefault(library, [])
-            match = re.search(r"\bName: (\S+)", line)
-            if match:
-                require(bool(library), "ELF_VERSION_SECTION_REJECTED")
-                version_needs[library].append(match.group(1))
-        elif section == "definitions":
-            match = re.search(r"\bName: (\S+)", line)
-            if match:
-                definitions.append(match.group(1))
+    needed = tuple(re.findall(r"\(NEEDED\).*\[([^\]]+)\]", output))
+    sections = _readelf_sections(output)
+    needs = sections.get("Version needs section")
+    definitions = sections.get("Version definition section")
+    versions = sections.get("Version symbols section")
+    dynamic = sections.get("Symbol table")
+    if versions is not None:
+        _validate_version_symbols(versions)
+        require(dynamic is not None, _SYMBOL_ERROR)
+        assert dynamic is not None
+        require(versions[0] == dynamic[0], _VERSION_ERROR)
+    table_references = {
+        "SYMTAB": dynamic,
+        "VERSYM": versions,
+        "VERNEEDNUM": needs,
+        "VERDEFNUM": definitions,
+    }
+    seen_tags: set[str] = set()
+    for tag, value in _TABLE_TAG.findall(output):
+        section = table_references[tag]
+        code = _SYMBOL_ERROR if tag == "SYMTAB" else _VERSION_ERROR
+        require(tag not in seen_tags and section is not None, code)
+        assert section is not None
+        seen_tags.add(tag)
+        if tag.endswith("NUM"):
+            require(re.fullmatch(r"[0-9]+", value) is not None and int(value) == section[0], code)
+        else:
+            require(re.fullmatch(r"0x[0-9a-f]+", value) is not None, code)
+    require(dynamic is not None or not needed, _SYMBOL_ERROR)
+    version_needs = _version_requirements(needs) if needs is not None else {}
+    symbols = _dynamic_symbols(dynamic) if dynamic is not None else []
     defined_python_symbols: set[str] = set()
     undefined_python_symbols: set[str] = set()
-    for line in output.splitlines():
-        fields = line.split()
-        if len(fields) >= 8 and re.fullmatch(r"[0-9]+:", fields[0]):
-            name = fields[7].split("@")[0]
-            if name.startswith(("Py", "_Py")):
-                (undefined_python_symbols if fields[6] == "UND" else defined_python_symbols).add(
-                    name
-                )
+    for symbol in symbols:
+        if not symbol.name.startswith(("Py", "_Py")):
+            continue
+        if symbol.section_index == "UND":
+            undefined_python_symbols.add(symbol.name)
+        elif (
+            symbol.is_export
+            and (symbol.version is None or symbol.default_version)
+            and (not symbol.name.startswith("PyInit_") or symbol.kind in {"FUNC", "IFUNC"})
+        ):
+            defined_python_symbols.add(symbol.name)
     return ELF(
-        field("Machine"),
-        field("Class"),
-        field("Data"),
-        field("Type").split()[0],
+        machine,
+        elf_class,
+        endian,
+        kind.split()[0],
         loader.group(1) if loader else None,
-        tuple(re.findall(r"\(NEEDED\).*\[([^\]]+)\]", output)),
+        needed,
         soname.group(1) if soname else None,
         tuple(re.findall(r"\((?:RPATH|RUNPATH)\).*\[([^\]]*)\]", output)),
-        {name: tuple(versions) for name, versions in version_needs.items()},
-        tuple(definitions),
+        {library: tuple(entries) for library, entries in version_needs.items()},
+        _version_definitions(definitions) if definitions is not None else (),
         tuple(sorted(defined_python_symbols)),
         tuple(sorted(undefined_python_symbols)),
     )
