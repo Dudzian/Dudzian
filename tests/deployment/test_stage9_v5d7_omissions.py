@@ -293,6 +293,7 @@ def test_artifact_approval_binds_proposal_and_materialization(
         v5d7=True,
         approved_artifacts=expectation,
     )
+    assert len(files) == len({target.casefold() for target in files})
     destination = tmp_path / "checked-snapshots"
     destination.mkdir()
     with pytest.raises(ValueError, match=omissions.APPROVAL_REQUIRED):

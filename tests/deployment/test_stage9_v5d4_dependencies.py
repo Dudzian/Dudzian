@@ -32,10 +32,17 @@ def wheel(
     tag: str = "py3-none-any",
     files: dict[str, bytes] | None = None,
     requires_python: str = ">=3.8",
+    *,
+    include_package_init: bool = True,
 ) -> tuple[Path, dict[str, str]]:
     prefix = f"{name}-{selected}.dist-info"
+    package_source = (
+        {f"{name}/__init__.py": b"raise RuntimeError('wheel code must never run')\n"}
+        if include_package_init
+        else {}
+    )
     entries = {
-        f"{name}/__init__.py": b"raise RuntimeError('wheel code must never run')\n",
+        **package_source,
         prefix + "/METADATA": (
             f"Metadata-Version: 2.1\nName: {name}\nVersion: {selected}\nRequires-Python: {requires_python}\n"
             + "".join(f"Requires-Dist: {item}\n" for item in requires)

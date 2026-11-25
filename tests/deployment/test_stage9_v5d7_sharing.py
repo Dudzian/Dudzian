@@ -198,6 +198,7 @@ def three_wheels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "6.10.3",
             tag="cp39-abi3-manylinux_2_34_x86_64",
             files=contents,
+            include_package_init=False,
         )
         assert path.name == identity["wheel_filename"]
         origins[path.name] = origin
