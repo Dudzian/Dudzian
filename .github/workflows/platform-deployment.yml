@@ -508,6 +508,17 @@ jobs:
             tests/scripts/test_stage9_v5d5_ci_contract.py \
             tests/scripts/test_stage9_v5d7_operator.py \
             --junitxml=stage9-v5d5-v5d2-regression.xml
+      - name: Sprawdź syntetyczne dane kolektora fizycznego V5d8
+        if: runner.os == 'Linux'
+        run: |
+          python -m ruff check scripts/stage9_v5d8_collect_physical.py tests/scripts/test_stage9_v5d8_collect_physical.py
+          python -m ruff format --check scripts/stage9_v5d8_collect_physical.py tests/scripts/test_stage9_v5d8_collect_physical.py
+          python -m mypy scripts/stage9_v5d8_collect_physical.py
+          python -m pytest -q --confcutdir=tests/scripts \
+            tests/scripts/test_stage9_v5d8_collect_physical.py \
+            -p pytest_cov.plugin --cov=scripts.stage9_v5d8_collect_physical \
+            --cov-branch --cov-append --cov-report=xml:stage9-v5d5-coverage.xml \
+            --junitxml=stage9-v5d8-static.xml
       - name: Zachowaj wyniki V5d5–V5d7 i zakres regresji
         if: always()
         uses: actions/upload-artifact@v7
@@ -516,6 +527,7 @@ jobs:
           path: |
             stage9-v5d5-static.xml
             stage9-v5d5-v5d2-regression.xml
+            stage9-v5d8-static.xml
             stage9-v5d5-coverage.xml
             stage9-v5d5.coverage
           if-no-files-found: error
@@ -566,10 +578,11 @@ jobs:
               *(f"scripts/stage9_v5d6_{module}.py" for module in ("headers", "inspect_greenlet", "inspect_wheelhouse")),
               *(f"scripts/stage9_v5d7_{module}.py" for module in ("collect_evidence", "focused", "inspect_wheelhouse", "native", "omissions", "shared")),
           }
-          for path in expected:
+          for runner, path in zip(runners, expected, strict=True):
               data = CoverageData(basename=str(path))
               data.read()
-              if not data.has_arcs() or not required.issubset({name.replace("\\", "/") for name in data.measured_files()}):
+              required_for_runner = required | ({"scripts/stage9_v5d8_collect_physical.py"} if runner == "ubuntu-24.04" else set())
+              if not data.has_arcs() or not required_for_runner.issubset({name.replace("\\", "/") for name in data.measured_files()}):
                   raise SystemExit("V5D5_COVERAGE_SCOPE_REFUSED")
           subprocess.run([sys.executable, "-m", "coverage", "combine", "--keep", *(str(path) for path in expected)], check=True, timeout=120)
       - name: Egzekwuj niezmieniony próg 70 procent po połączeniu
