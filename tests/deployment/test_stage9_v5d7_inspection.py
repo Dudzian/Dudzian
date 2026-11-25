@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+import zipfile
 
 import pytest
 
 from scripts import stage9_v5d4_dependencies as deps
 from scripts import stage9_v5d7_inspect_wheelhouse as inspector
+from scripts import stage9_v5d7_omissions as omissions
+from scripts import stage9_v5d7_shared as shared
 from tests.deployment.test_stage9_v5d4_dependencies import wheel
 from tests.deployment.test_stage9_v5d6_headers import rewrite
+from tests.deployment.test_stage9_v5d7_omissions import scipy_candidate as scipy_candidate
+from tests.deployment.test_stage9_v5d7_sharing import TARGET, three_wheels as three_wheels
 
 pytestmark = [pytest.mark.security, pytest.mark.unit]
 
@@ -200,3 +205,161 @@ def test_cli_refuses_duplicate_origins_keys(
     )
     assert inspector.main() == 2
     assert "DUPLICATE_JSON_KEY" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("alias_kind", ["source", "projected", "descendant"])
+def test_omission_diagnostics_find_all_cross_wheel_aliases(
+    monkeypatch: pytest.MonkeyPatch, scipy_candidate, three_wheels, alias_kind: str
+) -> None:
+    member, source, origin, _ = scipy_candidate
+    project, directory, origins = three_wheels
+    (directory / source.name).write_bytes(source.read_bytes())
+    origins[source.name] = origin
+    project.write_text(
+        project.read_text(encoding="utf-8").replace(
+            "dependencies=[", 'dependencies=["scipy==1.18.1","other==1.0",'
+        ),
+        encoding="utf-8",
+    )
+    with zipfile.ZipFile(source) as archive:
+        omitted_content = archive.read(member)
+    alias = {
+        "source": member,
+        "projected": "other-1.0.data/purelib/" + member,
+        "descendant": "other-1.0.data/purelib/" + member + "/extra.txt",
+    }[alias_kind]
+    copied = "other/copy.py"
+    path, other_origin = wheel(
+        directory, "other", files={alias: b"TEST ONLY no matching bytes", copied: omitted_content}
+    )
+    origins[path.name] = other_origin
+    bindings = {
+        filename: {"sha256": row["sha256"], "size": (directory / filename).stat().st_size}
+        for filename, row in origins.items()
+    }
+    monkeypatch.setattr(inspector, "dependency_tools", lambda: vars(deps))
+    with pytest.raises(ValueError, match="^ARTIFACT_OMISSION_RUNTIME_INCLUSION_FORBIDDEN$"):
+        deps.propose(project, directory, origins, v5d7=True)
+    report = inspector.inspect(project, directory, origins, expected_archives=bindings)
+    assert report["measurements"]["ARTIFACT_OMISSIONS"]["status"] == "MEASURED"
+    assert report["manifest_checks"]["artifact_omissions"] == {
+        "coverage": "MEASURED",
+        "status": "REFUSED",
+        "candidates": 1,
+    }
+    assert report["manifest_checks"]["sharing"]["status"] == "MEASURED"
+    findings = {row["member"]: row for row in report["refusals"]}
+    assert set(findings) == {alias, copied}
+    assert all(row["filename"] == path.name for row in findings.values())
+    assert all(row["wheel_sha256"] == other_origin["sha256"] for row in findings.values())
+    assert {row["reason"] for row in findings.values()} == {
+        "ARTIFACT_OMISSION_RUNTIME_INCLUSION_FORBIDDEN"
+    }
+    assert findings[copied]["sha256"] == deps.digest(omitted_content)
+    expected_target = member + "/extra.txt" if alias_kind == "descendant" else member
+    assert findings[alias]["projected_path"] == expected_target
+
+
+def test_all_pinned_omission_failures_retain_independent_member_evidence(
+    monkeypatch: pytest.MonkeyPatch, scipy_candidate
+) -> None:
+    member, path, origin, _ = scipy_candidate
+    pin = omissions.MEMBERS[origin["sha256"]]
+    digest, size, kind = pin[member]
+    missing = "scipy/missing.pyx"
+    pin[member] = ("0" * 64, size + 1, kind)
+    pin[missing] = (digest, size, kind)
+    monkeypatch.setattr(inspector, "dependency_tools", lambda: vars(deps))
+    result = inspector.inspect_archive(path.read_bytes(), path.name, origin)
+    assert result["artifact_omissions"] is None
+    assert result["record_status"] == "MEASURED"
+    assert {row["member"]: row["status"] for row in result["artifact_candidate_checks"]} == {
+        member: "REFUSED",
+        missing: "REFUSED",
+    }
+    assert {
+        (row["member"], row["reason"])
+        for row in result["refusals"]
+        if row["check"] == "artifact_omissions"
+    } == {
+        (member, "ARTIFACT_OMISSION_MEMBER_METADATA_MISMATCH:" + member),
+        (member, "ARTIFACT_OMISSION_MEMBER_HASH_MISMATCH:" + member),
+        (missing, "ARTIFACT_OMISSION_SET_MISMATCH"),
+    }
+
+
+def test_same_filename_without_matching_omission_hash_uses_ordinary_policy(
+    monkeypatch: pytest.MonkeyPatch, scipy_candidate
+) -> None:
+    member, path, origin, _ = scipy_candidate
+    rewrite(path, removes={member}, reseal_record=True)
+    data = path.read_bytes()
+    origin["sha256"] = deps.digest(data)
+    monkeypatch.setattr(inspector, "dependency_tools", lambda: vars(deps))
+    assert deps.inspect_wheel(path, origin, v5d7=True)["artifact_omissions"] == []
+    result = inspector.inspect_archive(data, path.name, origin)
+    assert result["artifact_omissions"] == []
+    assert result["artifact_candidate_checks"] == []
+    assert result["refusals"] == []
+
+
+def test_bound_sharing_reports_all_absent_archives_without_inventing_measurements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, three_wheels
+) -> None:
+    project, directory, origins = three_wheels
+    bindings = {
+        filename: {"sha256": row["sha256"], "size": (directory / filename).stat().st_size}
+        for filename, row in origins.items()
+    }
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setattr(inspector, "dependency_tools", lambda: vars(deps))
+    report = inspector.inspect(project, empty, {}, expected_archives=bindings)
+    assert report["manifest_checks"]["sharing"]["coverage"] == "NOT_TESTED"
+    assert report["manifest_checks"]["sharing"]["status"] == "REFUSED"
+    refusal = next(
+        row for row in report["refusals"] if row["reason"] == "SHARED_WHEEL_OWNER_SET_MISMATCH"
+    )
+    assert {row["filename"] for row in refusal["missing_owners"]} == bindings.keys()
+
+
+@pytest.mark.parametrize(
+    "removed,reason",
+    [
+        (1, "SHARED_WHEEL_OWNER_MISMATCH"),
+        (2, "SHARED_WHEEL_MEMBER_SET_MISMATCH"),
+        (3, "SHARED_WHEEL_MEMBER_SET_MISMATCH"),
+    ],
+)
+def test_complete_sharing_measurement_exposes_missing_paths_and_owners(
+    monkeypatch: pytest.MonkeyPatch, three_wheels, removed: int, reason: str
+) -> None:
+    project, directory, origins = three_wheels
+    for _, identity in list(shared.WHEELS.items())[:removed]:
+        path = directory / identity["wheel_filename"]
+        rewrite(path, removes={TARGET}, reseal_record=True)
+        sha256 = deps.digest(path.read_bytes())
+        identity["wheel_sha256"] = sha256
+        origins[path.name]["sha256"] = sha256
+    bindings = {
+        filename: {"sha256": row["sha256"], "size": (directory / filename).stat().st_size}
+        for filename, row in origins.items()
+    }
+    monkeypatch.setattr(inspector, "dependency_tools", lambda: vars(deps))
+    with pytest.raises(ValueError, match="^" + reason):
+        deps.propose(project, directory, origins, v5d7=True)
+    report = inspector.inspect(project, directory, origins, expected_archives=bindings)
+    assert report["manifest_checks"]["sharing"] == {
+        "coverage": "MEASURED",
+        "status": "REFUSED",
+        "policy": shared.POLICY_ID,
+        "expected_paths": 62,
+        "expected_owners_per_path": 3,
+    }
+    assert report["measurements"]["SHARED_PATHS"]["status"] == "MEASURED"
+    findings = [row for row in report["refusals"] if row.get("path") == TARGET]
+    assert any(row["reason"] == reason for row in findings)
+    mismatch = next(row for row in findings if row["reason"] == "SHARED_WHEEL_OWNER_MISMATCH")
+    assert len(mismatch["owners"]) == 3 - removed
+    assert len(mismatch["expected_owners"]) == 3
+    assert {row["path"] for row in report["refusals"]} == {TARGET}

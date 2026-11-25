@@ -1,12 +1,16 @@
 """Static evidence for native and executable-format wheel members."""
 
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any
+import hashlib
 import os
 import re
+import runpy
 import selectors
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -829,4 +833,206 @@ def measure_host_loader_cache(needed_names: set[str]) -> dict[str, Any]:
         "limitations": issues,
         "entries_by_needed_name": dict(sorted(entries.items())),
         "unlisted_needed_names": sorted(needed_names - entries.keys()) if not issues else None,
+    }
+
+
+_HOST_FILE_LIMIT = 128 * 1024 * 1024
+_HOST_TOTAL_LIMIT = 1024 * 1024 * 1024
+_HOST_PATH_LIMIT = 512
+HOST_ABI_LIBRARY_NAMES = {
+    "libvirt.so.0",
+    "libvirt-admin.so.0",
+    "libvirt-lxc.so.0",
+    "libvirt-qemu.so.0",
+    f"libpython{sys.version_info.major}.{sys.version_info.minor}.so.1.0",
+}
+_BINDING_FILE = re.compile(
+    r"(?:libvirt(?:_qemu|_lxc|aio)?\.py"
+    r"|_?libvirtmod(?:_qemu|_lxc)?(?:\.[A-Za-z0-9_-]+)?\.so)"
+)
+
+
+def _find_libvirt_bindings(extra_paths: Iterable[str]) -> tuple[list[str], list[dict[str, str]]]:
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    roots = [
+        "/usr/lib/python3/dist-packages",
+        f"/usr/lib/{version}/dist-packages",
+        f"/usr/lib/{version}/site-packages",
+        f"/usr/local/lib/{version}/dist-packages",
+        f"/usr/local/lib/{version}/site-packages",
+        *extra_paths,
+    ]
+    paths = []
+    observations = []
+    for directory in dict.fromkeys(roots):
+        root = Path(directory)
+        if not root.is_absolute():
+            observations.append({"path": directory, "status": "REFUSED", "reason": "relative path"})
+            continue
+        try:
+            with os.scandir(root) as entries:
+                matches = sorted(
+                    entry.path for entry in entries if _BINDING_FILE.fullmatch(entry.name)
+                )
+            paths.extend(matches)
+            observations.append(
+                {
+                    "path": directory,
+                    "status": "MEASURED",
+                    "presence": "FOUND" if matches else "NOT_FOUND",
+                }
+            )
+        except FileNotFoundError:
+            observations.append({"path": directory, "status": "MEASURED", "presence": "ABSENT"})
+        except OSError as exc:
+            observations.append({"path": directory, "status": "PARTIAL", "reason": str(exc)})
+    return paths, observations
+
+
+def measure_host_native_files(
+    cache_report: dict[str, Any],
+    loader_paths: Iterable[str],
+    *,
+    python_executable: str | None = None,
+    libvirt_search_paths: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Hash and statically inspect the host files named by interpreter and cache evidence."""
+    result: dict[str, Any] = {
+        "scope": "HOST_NATIVE_STATIC_FILE_EVIDENCE",
+        "status": "NOT_TESTED",
+        "loader_resolution": "NOT_TESTED",
+        "abi_compatibility": "NOT_TESTED",
+        "native_load": "NOT_TESTED",
+        "cache_status": cache_report["status"],
+        "cache_unlisted_needed_names": cache_report["unlisted_needed_names"],
+        "limits": {
+            "max_bytes_per_file": _HOST_FILE_LIMIT,
+            "max_total_bytes": _HOST_TOTAL_LIMIT,
+            "max_candidate_paths": _HOST_PATH_LIMIT,
+        },
+    }
+    if not sys.platform.startswith("linux"):
+        return {**result, "reason": "Host native file evidence is scoped to Linux"}
+
+    access = runpy.run_path(str(Path(__file__).with_name("stage9_v5d4_dependencies.py")))
+    read_regular, file_identity = access["read_regular"], access["file_identity"]
+    python_path = sys.executable if python_executable is None else python_executable
+    bindings, searches = _find_libvirt_bindings(libvirt_search_paths)
+    candidates: dict[str, list[dict[str, str]]] = defaultdict(list)
+    candidates[python_path].append({"kind": "PYTHON_INTERPRETER"})
+    for loader_path in sorted(set(loader_paths)):
+        candidates[loader_path].append({"kind": "WHEEL_ELF_INTERPRETER"})
+    for binding_path in bindings:
+        candidates[binding_path].append({"kind": "LIBVIRT_PYTHON_BINDING"})
+    for name, entries in sorted(cache_report["entries_by_needed_name"].items()):
+        for entry in entries:
+            candidates[entry["path"]].append(
+                {
+                    "kind": "LOADER_CACHE_CANDIDATE",
+                    "needed_name": name,
+                    "abi_as_listed": entry["abi_as_listed"],
+                }
+            )
+    files: dict[str, dict[str, Any]] = {}
+    observations: list[dict[str, Any]] = []
+    bytes_read = 0
+    # Build this list separately so the system Python ELF may add its own
+    # interpreter path even when the wheelhouse specified a different loader.
+    queue = list(candidates)
+    for index, supplied in enumerate(queue):
+        provenance = candidates[supplied]
+        if index >= _HOST_PATH_LIMIT:
+            observations.append(
+                {
+                    "path": supplied,
+                    "provenance": provenance,
+                    "status": "NOT_TESTED",
+                    "reason": "host candidate path limit reached",
+                }
+            )
+            continue
+        path = Path(supplied)
+        row: dict[str, Any] = {"path": supplied, "provenance": provenance}
+        observations.append(row)
+        try:
+            if not path.is_absolute() or ".." in path.parts:
+                raise ValueError("host evidence path must be absolute and normalized")
+            resolved = path.resolve(strict=True)
+            if resolved.parts[:2] in {("/", "dev"), ("/", "proc"), ("/", "sys")}:
+                raise ValueError("host evidence path resolved to a pseudo-filesystem")
+            key = str(resolved)
+            row["resolved_path"] = key
+            metadata = resolved.lstat()
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("host evidence target is not a regular file")
+            identity = file_identity(metadata)
+            if key not in files:
+                limit = min(_HOST_FILE_LIMIT, _HOST_TOTAL_LIMIT - bytes_read)
+                if not 0 <= metadata.st_size <= limit:
+                    raise ValueError("host file or total byte limit reached")
+                content = read_regular(resolved, limit)
+                bytes_read += len(content)
+                if (
+                    identity != file_identity(resolved.lstat())
+                    or path.resolve(strict=True) != resolved
+                ):
+                    raise ValueError("host evidence path changed during measurement")
+                file_record: dict[str, Any] = {
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "size": len(content),
+                    "mode": metadata.st_mode,
+                    "device": metadata.st_dev,
+                    "inode": metadata.st_ino,
+                    "uid": metadata.st_uid,
+                    "gid": metadata.st_gid,
+                    "mtime_ns": metadata.st_mtime_ns,
+                    "ctime_ns": metadata.st_ctime_ns,
+                }
+                if content.startswith(b"\x7fELF"):
+                    details, issues = _measure_elf(content)
+                    file_record.update(format="ELF", elf=details, limitations=issues)
+                elif (
+                    path.suffix == ".py"
+                    and any(source["kind"] == "LIBVIRT_PYTHON_BINDING" for source in provenance)
+                    and b"\0" not in content
+                ):
+                    file_record.update(format="PYTHON_SOURCE_CANDIDATE", limitations=[])
+                else:
+                    file_record.update(format="UNRECOGNIZED", limitations=["expected ELF"])
+                files[key] = file_record
+            file_record = files[key]
+            if (
+                path.resolve(strict=True) != resolved
+                or file_record["size"] != metadata.st_size
+                or file_record["mtime_ns"] != metadata.st_mtime_ns
+                or file_record["ctime_ns"] != metadata.st_ctime_ns
+                or file_record["inode"] != metadata.st_ino
+                or file_record["device"] != metadata.st_dev
+            ):
+                raise ValueError("host file identity changed between candidate observations")
+            row["status"] = "PARTIAL" if file_record["limitations"] else "MEASURED"
+            if supplied == python_path and (
+                interpreter := file_record.get("elf", {}).get("interpreter")
+            ):
+                if interpreter not in candidates:
+                    queue.append(interpreter)
+                candidates[interpreter].append({"kind": "HOST_PYTHON_ELF_INTERPRETER"})
+        except FileNotFoundError:
+            row.update(status="NOT_TESTED", reason="host file absent")
+        except (OSError, RuntimeError, ValueError) as exc:
+            row.update(status="PARTIAL", reason=str(exc))
+    complete = (
+        cache_report["status"] == "MEASURED"
+        and bool(bindings)
+        and all(search["status"] == "MEASURED" for search in searches)
+        and all(row["status"] == "MEASURED" for row in observations)
+    )
+    return {
+        **result,
+        "status": "MEASURED" if complete else "PARTIAL",
+        "bytes_read": bytes_read,
+        "paths": observations,
+        "files_by_resolved_path": files,
+        "libvirt_binding_search": searches,
+        "libvirt_binding_presence": "FOUND" if bindings else "NOT_FOUND_IN_SEARCH_PATHS",
     }

@@ -1,6 +1,7 @@
 import os
 import struct
 import sys
+from hashlib import sha256
 
 import pytest
 
@@ -329,6 +330,110 @@ def test_host_loader_cache_reports_gaps(monkeypatch):
     result = native.measure_host_loader_cache({"liba.so"})
     assert result["status"] == "PARTIAL"
     assert result["unlisted_needed_names"] is None
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="host file reader is scoped to Linux")
+def test_collects_host_elf_candidates_without_resolving_dependencies(tmp_path, monkeypatch):
+    python = tmp_path / "python3.12"
+    python.write_bytes(b"\x7fELFpython")
+    alias = tmp_path / "python3"
+    alias.symlink_to(python.name)
+    loader = tmp_path / "ld-linux.so.2"
+    loader.write_bytes(b"\x7fELFloader")
+    library = tmp_path / "libdemo.so.1"
+    library.write_bytes(b"\x7fELFlibrary")
+    library_alias = tmp_path / "libdemo_alias.so.1"
+    library_alias.symlink_to(library.name)
+    bindings = tmp_path / "dist-packages"
+    bindings.mkdir()
+    source = bindings / "libvirt.py"
+    source.write_bytes(b"raise RuntimeError('must not execute')\n")
+    extension = bindings / "libvirtmod.cpython-312-x86_64-linux-gnu.so"
+    extension.write_bytes(b"\x7fELFbindings")
+    (bindings / "unrelated.so").write_bytes(b"\x7fELFother")
+
+    def elf(content):
+        return {"interpreter": str(loader) if content == python.read_bytes() else None}, []
+
+    monkeypatch.setattr(native, "_measure_elf", elf)
+    real_find = native._find_libvirt_bindings
+
+    def find(paths):
+        names, rows = real_find(paths)
+        return (
+            [name for name in names if name.startswith(str(tmp_path))],
+            [row for row in rows if row["path"] == str(bindings)],
+        )
+
+    monkeypatch.setattr(native, "_find_libvirt_bindings", find)
+    cache = {
+        "status": "MEASURED",
+        "unlisted_needed_names": ["libmissing.so"],
+        "entries_by_needed_name": {
+            "libdemo.so.1": [
+                {"path": str(library), "abi_as_listed": "libc6,x86-64"},
+                {"path": str(library_alias), "abi_as_listed": "libc6,x86-64"},
+            ],
+        },
+    }
+    result = native.measure_host_native_files(
+        cache, [], python_executable=str(alias), libvirt_search_paths=[str(bindings)]
+    )
+    assert result["status"] == "MEASURED"
+    assert result["abi_compatibility"] == "NOT_TESTED"
+    assert result["native_load"] == "NOT_TESTED"
+    assert result["libvirt_binding_presence"] == "FOUND"
+    assert result["cache_unlisted_needed_names"] == ["libmissing.so"]
+    files = result["files_by_resolved_path"]
+    assert set(files) == {str(path) for path in (python, loader, library, source, extension)}
+    assert files[str(source)]["format"] == "PYTHON_SOURCE_CANDIDATE"
+    assert files[str(library)]["size"] == library.stat().st_size
+    assert files[str(library)]["sha256"] == sha256(library.read_bytes()).hexdigest()
+    assert result["bytes_read"] == sum(entry["size"] for entry in files.values())
+    paths = {row["path"]: row for row in result["paths"]}
+    assert paths[str(alias)]["resolved_path"] == str(python)
+    assert paths[str(library_alias)]["resolved_path"] == str(library)
+    assert paths[str(loader)]["provenance"] == [{"kind": "HOST_PYTHON_ELF_INTERPRETER"}]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="host file reader is scoped to Linux")
+def test_host_candidate_files_report_missing_refused_and_budget_limits(tmp_path, monkeypatch):
+    interpreter = tmp_path / "missing-python"
+    nonelf = tmp_path / "plain"
+    nonelf.write_bytes(b"not an ELF file")
+    large = tmp_path / "large"
+    large.write_bytes(b"padding " * 100)
+    monkeypatch.setattr(native, "_find_libvirt_bindings", lambda _: ([], []))
+    monkeypatch.setattr(native, "_HOST_FILE_LIMIT", 20)
+    monkeypatch.setattr(native, "_HOST_PATH_LIMIT", 4)
+    cache = {
+        "status": "PARTIAL",
+        "unlisted_needed_names": None,
+        "entries_by_needed_name": {"demo": [{"path": str(large), "abi_as_listed": ""}]},
+    }
+    report = native.measure_host_native_files(
+        cache, [str(nonelf), "/proc/self/status", "relative"], python_executable=str(interpreter)
+    )
+    assert report["status"] == "PARTIAL"
+    assert report["libvirt_binding_presence"] == "NOT_FOUND_IN_SEARCH_PATHS"
+    paths = {row["path"]: row for row in report["paths"]}
+    assert paths[str(interpreter)]["reason"] == "host file absent"
+    assert paths[str(nonelf)]["status"] == "PARTIAL"
+    assert "pseudo-filesystem" in paths["/proc/self/status"]["reason"]
+    assert paths["relative"]["status"] == "PARTIAL"
+    assert paths[str(large)]["reason"] == "host candidate path limit reached"
+
+    monkeypatch.setattr(native, "_HOST_PATH_LIMIT", 5)
+    report = native.measure_host_native_files(
+        cache, [str(nonelf)], python_executable=str(interpreter)
+    )
+    assert "byte limit" in report["paths"][-1]["reason"]
+
+
+def test_nonlinux_host_files_are_not_read(monkeypatch):
+    monkeypatch.setattr(native, "sys", type("Host", (), {"platform": "win32"}))
+    cache = {"status": "NOT_TESTED", "unlisted_needed_names": None}
+    assert native.measure_host_native_files(cache, [])["status"] == "NOT_TESTED"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="pipe capture uses POSIX selectors")

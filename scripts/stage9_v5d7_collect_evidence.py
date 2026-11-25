@@ -53,8 +53,60 @@ def read_reference(raw: bytes, deps: dict[str, Any]) -> tuple[dict[str, Any], li
     return expected, inventory["cross_wheel_collisions"]
 
 
+def attempt_proposal(
+    deps: dict[str, Any],
+    static_errors: tuple[type[Exception], ...],
+    pyproject: Path,
+    wheelhouse: Path,
+    origins: dict[str, Any],
+    expected: dict[str, Any],
+    output: Path | None,
+) -> dict[str, Any]:
+    """Run the enforced proposal independently of the diagnostic findings."""
+    result: dict[str, Any] = {
+        "status": "REFUSED",
+        "reference_binding": "NOT_TESTED",
+        "canonical_output": "NOT_REQUESTED" if output is None else "NOT_WRITTEN",
+    }
+    try:
+        proposal = deps["propose"](pyproject, wheelhouse, origins, v5d7=True)
+        canonical = deps["canonical"](proposal)
+    except static_errors as exc:
+        return {**result, "reason": str(exc), "error_type": type(exc).__name__}
+
+    expected_hashes = {name: pin["sha256"] for name, pin in expected.items()}
+    proposed_hashes = {row["filename"]: row["sha256"] for row in proposal["packages"]}
+    reference_matches = proposed_hashes == expected_hashes and len(proposal["packages"]) == len(
+        expected_hashes
+    )
+    result.update(
+        status=proposal["status"],
+        profile=proposal["profile"],
+        sha256=deps["digest"](canonical),
+        size=len(canonical),
+        reference_binding="MEASURED" if reference_matches else "REFUSED",
+    )
+    if not reference_matches:
+        result["reference_reason"] = "PROPOSAL_V5D6_ARCHIVE_IDENTITY_MISMATCH"
+    elif output is not None:
+        try:
+            with output.open("xb") as stream:
+                stream.write(canonical)
+        except OSError as exc:
+            result.update(canonical_output="REFUSED", output_reason=str(exc))
+        else:
+            result["canonical_output"] = "WRITTEN"
+    return result
+
+
 def collect(
-    reference: Path, pyproject: Path, wheelhouse: Path, origins_file: Path
+    reference: Path,
+    pyproject: Path,
+    wheelhouse: Path,
+    origins_file: Path,
+    *,
+    proposal_output: Path | None = None,
+    measure_host_abi: bool = False,
 ) -> dict[str, Any]:
     diagnostic = tools("stage9_v5d7_inspect_wheelhouse.py")
     deps = diagnostic["dependency_tools"]()
@@ -112,6 +164,9 @@ def collect(
     report = diagnostic["inspect"](
         pyproject, wheelhouse, origins, on_member=observe, expected_archives=expected
     )
+    proposal_attempt = attempt_proposal(
+        deps, diagnostic["STATIC_ERRORS"], pyproject, wheelhouse, origins, expected, proposal_output
+    )
     directory_paths = {
         directory
         for row in report["archives"]
@@ -142,14 +197,24 @@ def collect(
     needed = set(dependency_synthesis["bundled_candidates_by_needed_name"]) | set(
         dependency_synthesis["unmatched_needed_names"]
     )
-    status = report["status"]
-    if status == "MEASURED" and sharing["status"] == "REFUSED":
-        status = "REFUSED"
-    elif status == "MEASURED" and any(
-        measurement != "MEASURED"
-        for measurement in (focus_status, native_status, sharing["status"])
-    ):
-        status = "PARTIAL"
+    host_abi: dict[str, Any] = {"status": "NOT_TESTED"}
+    if measure_host_abi:
+        needed.update(native["HOST_ABI_LIBRARY_NAMES"])
+    host_cache = native["measure_host_loader_cache"](needed)
+    if measure_host_abi:
+        host_abi = native["measure_host_native_files"](
+            host_cache, dependency_synthesis["program_interpreters"]
+        )
+    measurement_status = native_status
+    if measurement_status == "MEASURED" and sharing["status"] == "PARTIAL":
+        measurement_status = "PARTIAL"
+    failed = "REFUSED" in (
+        report["status"],
+        sharing["status"],
+        proposal_attempt["status"],
+        proposal_attempt["reference_binding"],
+        proposal_attempt["canonical_output"],
+    )
     try:
         release = platform.freedesktop_os_release()
     except OSError:
@@ -157,7 +222,9 @@ def collect(
     return {
         **SAFETY,
         "profile": "stage9-v5d7-original-wheelhouse-evidence-v1",
-        "status": status,
+        "status": "REFUSED" if failed else measurement_status,
+        "measurement_status": measurement_status,
+        "proposal_attempt": proposal_attempt,
         "reference": {"sha256": REFERENCE_SHA256, "physical_revision": REFERENCE_REVISION},
         "host": {
             "platform": platform.platform(),
@@ -186,7 +253,8 @@ def collect(
             "members": native_members,
             "details": native_details,
             "dependency_synthesis": dependency_synthesis,
-            "host_loader_cache": native["measure_host_loader_cache"](needed),
+            "host_loader_cache": host_cache,
+            "host_abi_inputs": host_abi,
         },
     }
 
@@ -199,11 +267,30 @@ def main() -> int:
     )
     parser.add_argument("--wheelhouse", type=Path, required=True)
     parser.add_argument("--origins", type=Path, required=True)
+    parser.add_argument(
+        "--proposal-output", type=Path, help="New file for canonical proposal bytes"
+    )
+    parser.add_argument(
+        "--measure-host-abi", action="store_true", help="Read static host ABI inputs"
+    )
     args = parser.parse_args()
     try:
-        report = collect(args.reference, args.pyproject, args.wheelhouse, args.origins)
+        report = collect(
+            args.reference,
+            args.pyproject,
+            args.wheelhouse,
+            args.origins,
+            proposal_output=args.proposal_output,
+            measure_host_abi=args.measure_host_abi,
+        )
     except (KeyError, OSError, TypeError, ValueError, tarfile.TarError) as exc:
-        report = {**SAFETY, "status": "REFUSED", "reason": str(exc)}
+        report = {
+            **SAFETY,
+            "status": "REFUSED",
+            "measurement_status": "NOT_TESTED",
+            "proposal_attempt": {"status": "NOT_TESTED"},
+            "reason": str(exc),
+        }
     print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     if report["status"] == "REFUSED":
         return 2

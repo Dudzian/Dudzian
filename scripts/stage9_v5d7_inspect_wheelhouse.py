@@ -46,6 +46,8 @@ def new_archive(filename: str) -> dict[str, Any]:
         "filename": filename,
         "sha256": None,
         "size": None,
+        "distribution": None,
+        "version": None,
         "record_status": "NOT_TESTED",
         "record_entries_verified": 0,
         "metadata_status": "NOT_TESTED",
@@ -60,6 +62,7 @@ def new_archive(filename: str) -> dict[str, Any]:
         "foreign_pyc_omissions": None,
         "header_omissions": None,
         "artifact_omissions": None,
+        "artifact_candidate_checks": [],
         "dependency_candidate": None,
         "refusals": [],
         "legacy_refusals": [],
@@ -82,8 +85,9 @@ def refuse(
     }
     if member is not None:
         row.update({key: member[key] for key in ("member", "sha256", "size", "mode", "type")})
-        if "format_prefix_hex" in member:
-            row["format_prefix_hex"] = member["format_prefix_hex"]
+        for key in ("format_prefix_hex", "projected_path"):
+            if key in member:
+                row[key] = member[key]
     rows = wheel["legacy_refusals" if legacy_only else "refusals"]
     if row not in rows:
         rows.append(row)
@@ -183,6 +187,7 @@ def measure_metadata(
         refuse(wheel, "metadata", str(exc), metadata_row)
         return None
     wheel["metadata_status"] = "MEASURED"
+    wheel.update(distribution=candidate["name"], version=candidate["version"])
     if candidate.get("metadata_version") == "2.5":
         refuse(
             wheel, "metadata", "WHEEL_METADATA_VERSION_UNSUPPORTED", metadata_row, legacy_only=True
@@ -204,6 +209,38 @@ def measure_metadata(
         if wheel["requires_python_status"] == "MEASURED":
             wheel["dependency_candidate"] = candidate
     return candidate["name"], candidate["version"]
+
+
+def measure_artifact_pins(
+    tools: dict[str, Any],
+    archive: zipfile.ZipFile,
+    records: dict[str, str],
+    wheel: dict[str, Any],
+) -> None:
+    """Preserve each measurable pin result before applying the whole-set policy."""
+    for expected in tools["pinned_rows"](wheel["sha256"]):
+        member = expected["member"]
+        row = {
+            "member": member,
+            "sha256": None,
+            "size": None,
+            "mode": None,
+            "type": None,
+        }
+        reasons = []
+        if member not in records:
+            reasons.append("ARTIFACT_OMISSION_SET_MISMATCH")
+        else:
+            row = member_row(archive.getinfo(member), records[member])
+            if any(row[key] != expected[key] for key in ("size", "mode", "type")):
+                reasons.append("ARTIFACT_OMISSION_MEMBER_METADATA_MISMATCH:" + member)
+            if row["sha256"] != expected["sha256"]:
+                reasons.append("ARTIFACT_OMISSION_MEMBER_HASH_MISMATCH:" + member)
+        wheel["artifact_candidate_checks"].append(
+            {**row, "expected": expected, "status": "REFUSED" if reasons else "MEASURED"}
+        )
+        for reason in reasons:
+            refuse(wheel, "artifact_omissions", reason, row)
 
 
 def measure_omissions(
@@ -229,12 +266,18 @@ def measure_omissions(
         else:
             wheel[check] = omissions
             omitted.update(sources)
+    tools = deps["artifact_tools"]()
+    measure_artifact_pins(tools, archive, records, wheel)
     try:
-        artifacts = deps["artifact_tools"]()["inspect_omissions"](
+        artifacts = tools["inspect_omissions"](
             *identity, wheel["filename"], wheel["sha256"], archive, set(records)
         )
     except STATIC_ERRORS as exc:
-        refuse(wheel, "artifact_omissions", str(exc))
+        if not any(
+            item["check"] == "artifact_omissions" and item["reason"] == str(exc)
+            for item in wheel["refusals"]
+        ):
+            refuse(wheel, "artifact_omissions", str(exc))
         return omitted, set()
     wheel["artifact_omissions"] = artifacts
     return omitted, {row["member"] for row in artifacts}
@@ -309,7 +352,7 @@ def measure_members(
 ) -> None:
     wheel["member_scan_status"] = "PARTIAL"
     omitted, artifacts = measure_omissions(deps, archive, records, wheel, identity)
-    header_sha = deps["header_tools"]()["HEADER"]["sha256"]
+    header = deps["header_tools"]()["HEADER"]
     archive_directories = []
     projected_directories: set[str] = set()
     for item in members:
@@ -323,7 +366,17 @@ def measure_members(
             continue
         target = measure_projection(deps, wheel, row, dist_info, omitted)
         artifact_candidate = item.filename in artifacts
-        if target is not None and row["sha256"] == header_sha:
+        target_parts = PurePosixPath(target).parts if target is not None else ()
+        row["projected_path"] = target
+        if target is not None and (
+            row["sha256"] == header["sha256"]
+            or header["member"] in {item.filename, target}
+            or (
+                len(target_parts) > 1
+                and target_parts[0].endswith(".data")
+                and target_parts[1] == "headers"
+            )
+        ):
             refuse(
                 wheel,
                 "header_inventory",
@@ -415,12 +468,36 @@ def inspect_archive(
     wheel = new_archive(filename)
     wheel.update(sha256=deps["digest"](data), size=len(data))
     inspect_archive_data(deps, data, wheel, origin, on_member)
+    inspect_artifact_aliases(deps["artifact_tools"](), [wheel])
     return wheel
+
+
+def inspect_artifact_aliases(tools: dict[str, Any], archives: list[dict[str, Any]]) -> None:
+    """Check every projected member against omissions from the entire wheelhouse."""
+    omissions = [item for wheel in archives for item in (wheel["artifact_omissions"] or [])]
+    if not omissions:
+        return
+    inventory = {"policy": tools["POLICY_ID"], "members": omissions}
+    sources = {row["member"] for row in omissions}
+    for wheel in archives:
+        for row in wheel["members"]:
+            path = row["projected_path"]
+            if path is None:
+                continue
+            try:
+                tools["require"](
+                    row["member"] not in sources, "ARTIFACT_OMISSION_RUNTIME_INCLUSION_FORBIDDEN"
+                )
+                tools["verify_runtime_absence"]({path: row["sha256"]}, inventory)
+            except STATIC_ERRORS as exc:
+                refuse(wheel, "artifact_omission_alias", str(exc), row)
 
 
 def inspect_collisions(
     archives: list[dict[str, Any]],
     shared: dict[str, Any],
+    *,
+    check_complete_contract: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     owners: dict[str, list[dict[str, Any]]] = defaultdict(list)
     directories: set[str] = set()
@@ -436,6 +513,8 @@ def inspect_collisions(
                 **{key: member[key] for key in ("member", "sha256", "size", "mode", "type")},
                 "filename": wheel["filename"],
                 "wheel_sha256": wheel["sha256"],
+                "distribution": wheel["distribution"],
+                "version": wheel["version"],
             }
             if path in local:
                 refusals.append(
@@ -452,26 +531,58 @@ def inspect_collisions(
             }
         )
     collisions = []
-    for path, path_owners in sorted(owners.items()):
-        if len({owner["filename"] for owner in path_owners}) < 2:
-            continue
-        pin = shared["MEMBERS"].get(path)
-        expected = {
-            (row["wheel_filename"], row["wheel_sha256"], path) for row in shared["WHEELS"].values()
-        }
+    contracts = shared["MEMBERS"]
+    pinned_owners = {
+        (name, row["version"], row["wheel_filename"], row["wheel_sha256"])
+        for name, row in shared["WHEELS"].items()
+    }
+    owner_fields = ("distribution", "version", "filename", "wheel_sha256")
+    if check_complete_contract:
+        distributions = {wheel["distribution"] for wheel in archives}
+        missing = {owner for owner in pinned_owners if owner[0] not in distributions}
+        if missing:
+            refusals.append(
+                {
+                    "reason": "SHARED_WHEEL_OWNER_SET_MISMATCH",
+                    "missing_owners": [
+                        dict(zip(owner_fields, row, strict=True)) for row in sorted(missing)
+                    ],
+                }
+            )
+    collision_paths = {
+        path for path, rows in owners.items() if len({owner["filename"] for owner in rows}) >= 2
+    }
+    checked_paths = collision_paths | (set(contracts) if check_complete_contract else set())
+    for path in sorted(checked_paths):
+        path_owners = owners.get(path, [])
+        pin = contracts.get(path)
         row = {"path": path, "owners": path_owners}
-        if pin is None:
+        if path not in collision_paths or pin is None:
             refusals.append({"reason": "SHARED_WHEEL_MEMBER_SET_MISMATCH", **row})
-        elif {
-            (owner["filename"], owner["wheel_sha256"], owner["member"]) for owner in path_owners
-        } != expected:
-            refusals.append({"reason": "SHARED_WHEEL_OWNER_MISMATCH", **row})
-        if pin is not None and any(
-            any(owner[key] != pin[key] for key in ("sha256", "size", "mode", "type"))
-            for owner in path_owners
-        ):
-            refusals.append({"reason": "SHARED_WHEEL_CONTENT_OR_MODE_MISMATCH", **row})
-        collisions.append(row)
+        if pin is not None:
+            identity_fields = (*owner_fields, "member")
+            expected = {(*owner, path) for owner in pinned_owners}
+            actual_owners = {tuple(owner[key] for key in identity_fields) for owner in path_owners}
+            if len(path_owners) != len(expected) or actual_owners != expected:
+                refusals.append(
+                    {
+                        "reason": "SHARED_WHEEL_OWNER_MISMATCH",
+                        "expected_owners": [
+                            dict(zip(identity_fields, owner, strict=True))
+                            for owner in sorted(expected)
+                        ],
+                        **row,
+                    }
+                )
+            if any(
+                not shared["exact"](
+                    {key: owner[key] for key in ("sha256", "size", "mode", "type")}, pin
+                )
+                for owner in path_owners
+            ):
+                refusals.append({"reason": "SHARED_WHEEL_CONTENT_OR_MODE_MISMATCH", **row})
+        if path in collision_paths:
+            collisions.append(row)
     return collisions, refusals
 
 
@@ -521,9 +632,11 @@ def inspect(
     archives: list[dict[str, Any]] = []
     refusals: list[dict[str, Any]] = []
     paths = []
+    directory_listed = False
     try:
         deps["require"](not wheelhouse.is_symlink() and wheelhouse.is_dir(), "WHEELHOUSE_DIRECTORY")
         paths = sorted(wheelhouse.iterdir())
+        directory_listed = True
         actual = {path.name for path in paths}
         if set(origins) != actual:
             refusals.append(
@@ -567,7 +680,35 @@ def inspect(
     map_count = sum(wheel["materialization_map_status"] == "MEASURED" for wheel in archives)
     map_coverage = sum(wheel["materialization_map_status"] != "NOT_TESTED" for wheel in archives)
     inputs_complete = bool(paths) and read_count == len(paths) == expected_count and not refusals
-    collisions, collision_refusals = inspect_collisions(archives, deps["shared_tools"](v5d7=True))
+    inspect_artifact_aliases(deps["artifact_tools"](), archives)
+    shared = deps["shared_tools"](v5d7=True)
+    pinned_names = {row["wheel_filename"] for row in shared["WHEELS"].values()}
+    bound_names = pinned_names & (expected_archives or {}).keys()
+    observed_names = {wheel["filename"] for wheel in archives}
+    sharing_applicable = bool(
+        expected_count == EXPECTED_WHEELS or bound_names or pinned_names & observed_names
+    )
+    manifest_complete = inputs_complete and map_count == expected_count
+    collisions, collision_refusals = inspect_collisions(
+        archives, shared, check_complete_contract=sharing_applicable and manifest_complete
+    )
+    absent_bound = bound_names - observed_names
+    if directory_listed and absent_bound:
+        collision_refusals.append(
+            {
+                "reason": "SHARED_WHEEL_OWNER_SET_MISMATCH",
+                "missing_owners": [
+                    {
+                        "distribution": name,
+                        "version": pin["version"],
+                        "filename": pin["wheel_filename"],
+                        "wheel_sha256": pin["wheel_sha256"],
+                    }
+                    for name, pin in sorted(shared["WHEELS"].items())
+                    if pin["wheel_filename"] in absent_bound
+                ],
+            }
+        )
     _, legacy_collisions = inspect_collisions(archives, deps["shared_tools"]())
     refusals.extend(collision_refusals)
     refusals.extend(item for wheel in archives for item in wheel["refusals"])
@@ -607,11 +748,40 @@ def inspect(
                         "measured": row["value"],
                     }
                 )
+    sharing_coverage = measure(
+        len(collisions), map_coverage, sharing_applicable and manifest_complete
+    )["status"]
+    artifact_coverage = measure(
+        sum(row["projected_path"] is not None for wheel in archives for row in wheel["members"]),
+        map_coverage,
+        manifest_complete,
+    )["status"]
+    manifest_checks = {
+        "sharing": {
+            "coverage": sharing_coverage,
+            "status": "REFUSED" if collision_refusals else sharing_coverage,
+            "policy": shared["POLICY_ID"],
+            "expected_paths": len(shared["MEMBERS"]),
+            "expected_owners_per_path": len(shared["WHEELS"]),
+        },
+        "artifact_omissions": {
+            "coverage": artifact_coverage,
+            "status": "REFUSED"
+            if any(
+                item.get("check")
+                in {"artifact_omissions", "artifact_omission_alias", "ARTIFACT_OMISSIONS"}
+                for item in refusals
+            )
+            else artifact_coverage,
+            "candidates": metrics["ARTIFACT_OMISSIONS"]["value"],
+        },
+    }
     return {
         "profile": REPORT_PROFILE,
         "status": "REFUSED" if refusals else "MEASURED",
         "expected_counts": expected_counts,
         "measurements": metrics,
+        "manifest_checks": manifest_checks,
         "archives": archives,
         "archive_scan": {
             "entries_listed": len(paths),

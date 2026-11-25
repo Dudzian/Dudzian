@@ -73,6 +73,7 @@ def test_shared_contract_matrix_keeps_regressions_and_nonprivileged_scope() -> N
         "tests/scripts/test_stage9_operator_v5d2_inventory.py",
         "tests/scripts/test_stage9_v5d4_ci_history.py",
         "tests/scripts/test_stage9_v5d5_ci_contract.py",
+        "tests/scripts/test_stage9_v5d7_operator.py",
     ):
         assert inventory in job
     guard = "git cat-file -e '17e03a9cb42a84302401415f96ac90e756926915^{commit}'"
@@ -85,6 +86,7 @@ def test_shared_contract_matrix_keeps_regressions_and_nonprivileged_scope() -> N
         assert "scripts/stage9_v5d6_*.py" in line
         assert "scripts/stage9_v5d7_*.py" in line
     assert "--cov-branch" in job
+    assert "bash -n scripts/stage9_v5d7_collect_physical.sh" in job
     assert "COVERAGE_FILE: stage9-v5d5.coverage" in job
     assert "--fail-under" not in job
     assert "if: always()" in job
