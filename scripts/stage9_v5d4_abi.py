@@ -157,7 +157,10 @@ _NEED_LIBRARY = re.compile(r"Version: 1\s+File: (\S+)\s+Cnt: ([0-9]+)")
 _NEED_NAME = re.compile(r"Name: (\S+)\s+Flags: .+?\s+Version: ([0-9]+)")
 _DEFINITION = re.compile(r"Rev: 1\s+Flags: .+?\s+Index: ([0-9]+)\s+Cnt: ([0-9]+)\s+Name: (\S+)")
 _DEFINITION_PARENT = re.compile(r"Parent ([0-9]+): (\S+)")
-_VERSION_SYMBOL = re.compile(r"\s*([0-9a-f]+)(?:h|\s+)\([^()]+\)")
+_VERSION_SYMBOL = re.compile(r"\s*([0-9a-f]+)(h|\s+)\(([^()]+)\)")
+_VERSION_HIDDEN = 0x8000
+_VERSION_INDEX_MASK = _VERSION_HIDDEN - 1
+_RESERVED_VERSIONS = {0: "*local*", 1: "*global*"}
 # GNU readelf can show the numeric OS-specific form for System V OS/ABI.
 _GNU_OS_SPECIFIC = "<OS specific>: 10"
 _SYMBOL_ROW = re.compile(
@@ -183,6 +186,7 @@ class DynamicSymbol:
     binding: str
     visibility: str
     section_index: str
+    version_index: int | None = None
 
     @property
     def is_export(self) -> bool:
@@ -237,12 +241,15 @@ def _version_rows(section: _ReadelfSection, linked_table: str = ".dynstr") -> li
     return data
 
 
-def _version_requirements(section: _ReadelfSection) -> dict[str, list[str]]:
+def _version_requirements(
+    section: _ReadelfSection,
+) -> tuple[dict[str, list[str]], dict[int, str]]:
     expected, _ = section
     requirements: dict[str, list[str]] = {}
     current: list[str] = []
     remaining = 0
     indices: set[int] = set()
+    required_by_index: dict[int, str] = {}
     library_offset = -1
     auxiliary_offset = -1
     for offset, row in _version_rows(section):
@@ -266,16 +273,20 @@ def _version_requirements(section: _ReadelfSection) -> dict[str, list[str]]:
             )
             assert version is not None
             index = int(version[2])
-            require(2 <= index < 0x8000 and index not in indices, _VERSION_ERROR)
-            indices.add(index)
+            base_index = index & _VERSION_INDEX_MASK
+            require(
+                index <= 0xFFFF and base_index >= 2 and base_index not in indices, _VERSION_ERROR
+            )
+            indices.add(base_index)
+            required_by_index[index] = version[1]
             current.append(version[1])
             remaining -= 1
             auxiliary_offset = offset
     require(remaining == 0 and len(requirements) == expected, _VERSION_ERROR)
-    return requirements
+    return requirements, required_by_index
 
 
-def _version_definitions(section: _ReadelfSection) -> tuple[str, ...]:
+def _version_definitions(section: _ReadelfSection) -> dict[int, str]:
     expected, _ = section
     definitions: dict[int, str] = {}
     parents: set[str] = set()
@@ -289,7 +300,7 @@ def _version_definitions(section: _ReadelfSection) -> tuple[str, ...]:
             index, count = int(definition[1]), int(definition[2])
             require(
                 pending_parents == 0
-                and 1 <= index < 0x8000
+                and 1 <= index <= _VERSION_INDEX_MASK
                 and index not in definitions
                 and count > 0
                 and offset > definition_offset,
@@ -319,20 +330,79 @@ def _version_definitions(section: _ReadelfSection) -> tuple[str, ...]:
         and parents <= set(definitions.values()),
         _VERSION_ERROR,
     )
-    return tuple(definitions.values())
+    return definitions
 
 
-def _validate_version_symbols(section: _ReadelfSection) -> None:
+def _match_version_symbol(
+    symbol: DynamicSymbol,
+    index: int,
+    hidden: bool,
+    name: str,
+    required: dict[int, str],
+    provided: dict[int, str],
+) -> None:
+    require(index <= _VERSION_INDEX_MASK, _VERSION_ERROR)
+    if index in _RESERVED_VERSIONS:
+        # The versym index describes versioning, not the ELF symbol binding.
+        require(
+            not hidden and name == _RESERVED_VERSIONS[index] and symbol.version is None,
+            _VERSION_ERROR,
+        )
+        return
+    raw_index = index | (_VERSION_HIDDEN if hidden else 0)
+    if raw_index in required:
+        # GNU readelf prints the verneed index for imports and for defined data
+        # provided by a copy relocation, including aliases of that storage.
+        require(
+            name == required[raw_index] == symbol.version
+            and not symbol.default_version
+            and symbol.version_index == raw_index,
+            _VERSION_ERROR,
+        )
+        return
+    require(
+        name == provided.get(index)
+        and symbol.section_index != "UND"
+        and symbol.version_index is None,
+        _VERSION_ERROR,
+    )
+    # readelf omits the suffix when the symbol and definition share their name
+    # in the string table, as in the absolute symbols emitted by GNU ld.
+    if symbol.version is None:
+        require(symbol.name == name, _VERSION_ERROR)
+    else:
+        require(symbol.version == name and symbol.default_version != hidden, _VERSION_ERROR)
+
+
+def _validate_version_symbols(
+    section: _ReadelfSection,
+    symbols: list[DynamicSymbol],
+    required: dict[int, str],
+    provided: dict[int, str],
+) -> set[int]:
     expected, _ = section
+    require(len(symbols) == expected, _VERSION_ERROR)
+    require(
+        all((index & _VERSION_INDEX_MASK) not in provided for index in required), _VERSION_ERROR
+    )
+    non_exported_symbols = set()
     count = 0
     for offset, row in _version_rows(section, ".dynsym"):
         require(offset == count, _VERSION_ERROR)
         position = 0
-        while symbol := _VERSION_SYMBOL.match(row, position):
-            position = symbol.end()
+        while entry := _VERSION_SYMBOL.match(row, position):
+            require(count < expected, _VERSION_ERROR)
+            index_text, flag, name = entry.groups()
+            index = int(index_text, 16)
+            hidden = flag == "h"
+            _match_version_symbol(symbols[count], index, hidden, name, required, provided)
+            if hidden or index == 0:
+                non_exported_symbols.add(count)
+            position = entry.end()
             count += 1
         require(position == len(row), _VERSION_ERROR)
     require(count == expected, _VERSION_ERROR)
+    return non_exported_symbols
 
 
 def _dynamic_symbols(section: _ReadelfSection) -> list[DynamicSymbol]:
@@ -367,6 +437,7 @@ def _dynamic_symbols(section: _ReadelfSection) -> list[DynamicSymbol]:
                 "UNIQUE" if binding == _GNU_OS_SPECIFIC else binding,
                 visibility,
                 section_index,
+                int(rendered_index) if rendered_index is not None else None,
             )
         )
     return symbols
@@ -391,7 +462,6 @@ def parse_elf(output: str) -> ELF:
     versions = sections.get("Version symbols section")
     dynamic = sections.get("Symbol table")
     if versions is not None:
-        _validate_version_symbols(versions)
         require(dynamic is not None, _SYMBOL_ERROR)
         assert dynamic is not None
         require(versions[0] == dynamic[0], _VERSION_ERROR)
@@ -413,17 +483,27 @@ def parse_elf(output: str) -> ELF:
         else:
             require(re.fullmatch(r"0x[0-9a-f]+", value) is not None, code)
     require(dynamic is not None or not needed, _SYMBOL_ERROR)
-    version_needs = _version_requirements(needs) if needs is not None else {}
+    version_needs, required = _version_requirements(needs) if needs is not None else ({}, {})
+    provided = _version_definitions(definitions) if definitions is not None else {}
     symbols = _dynamic_symbols(dynamic) if dynamic is not None else []
+    non_exported_symbols: set[int] = set()
+    if versions is not None:
+        non_exported_symbols = _validate_version_symbols(versions, symbols, required, provided)
+    else:
+        require(
+            not required and not provided and all(s.version is None for s in symbols),
+            _VERSION_ERROR,
+        )
     defined_python_symbols: set[str] = set()
     undefined_python_symbols: set[str] = set()
-    for symbol in symbols:
+    for index, symbol in enumerate(symbols):
         if not symbol.name.startswith(("Py", "_Py")):
             continue
         if symbol.section_index == "UND":
             undefined_python_symbols.add(symbol.name)
         elif (
             symbol.is_export
+            and index not in non_exported_symbols
             and (symbol.version is None or symbol.default_version)
             and (not symbol.name.startswith("PyInit_") or symbol.kind in {"FUNC", "IFUNC"})
         ):
@@ -438,7 +518,7 @@ def parse_elf(output: str) -> ELF:
         soname.group(1) if soname else None,
         tuple(re.findall(r"\((?:RPATH|RUNPATH)\).*\[([^\]]*)\]", output)),
         {library: tuple(entries) for library, entries in version_needs.items()},
-        _version_definitions(definitions) if definitions is not None else (),
+        tuple(provided.values()),
         tuple(sorted(defined_python_symbols)),
         tuple(sorted(undefined_python_symbols)),
     )

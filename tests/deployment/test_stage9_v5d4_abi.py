@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -450,6 +451,81 @@ def test_readelf_version_needs_auxiliary_records_can_follow_all_primary_records(
     }
 
 
+def test_readelf_links_copy_symbols_hidden_exports_and_absolute_version_labels() -> None:
+    content = _READELF_WITH_VERSION_INFO.replace("contains 3 entries:", "contains 10 entries:")
+    content = content.replace(
+        "Symbol table '.dynsym'",
+        """Relocation section '.rela.dyn' at offset 0x550 contains 1 entry:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+0000000000004030  0000000600000005 R_X86_64_COPY          0000000000004030 PyCopied@LIBVIRT_10.0.0 + 0
+
+Symbol table '.dynsym'""",
+    )
+    content = content.replace(
+        "PyInit_binding@@BINDING_1",
+        """PyInit_binding@@BINDING_1
+     3: 0000000000001100    12 FUNC    GLOBAL DEFAULT   12 PyInit_old_binding@BINDING_1
+     4: 0000000000000000     0 OBJECT  GLOBAL DEFAULT  ABS BINDING_1
+     5: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND PyLong_FromLong
+     6: 0000000000004030     8 OBJECT  GLOBAL DEFAULT   19 PyCopied@LIBVIRT_10.0.0 (3)
+     7: 0000000000004030     8 OBJECT  WEAK   DEFAULT   19 PyCopiedAlias@LIBVIRT_10.0.0 (3)
+     8: 0000000000004040     8 OBJECT  GLOBAL DEFAULT   19 PyLocal
+     9: 0000000000004048     8 OBJECT  GLOBAL DEFAULT   19 PyGlobal""",
+    )
+    content = content.replace(
+        "  000:   0 (*local*)       3 (LIBVIRT_10.0.0)     2 (BINDING_1)",
+        """  000:   0 (*local*)       3 (LIBVIRT_10.0.0)     2 (BINDING_1)   2h(BINDING_1)
+  004:   2 (BINDING_1)     0 (*local*)            3 (LIBVIRT_10.0.0)   3 (LIBVIRT_10.0.0)
+  008:   0 (*local*)       1 (*global*)""",
+    )
+    record = abi.parse_elf(content)
+    assert record.defined_python_symbols == ("PyGlobal", "PyInit_binding")
+    assert record.undefined_python_symbols == ("PyLong_FromLong",)
+
+
+def test_readelf_links_hidden_version_requirement_using_raw_decimal_index() -> None:
+    content = (
+        _READELF_WITH_VERSION_INFO.replace("LIBVIRT_10.0.0 (3)", "LIBVIRT_10.0.0 (32771)")
+        .replace("3 (LIBVIRT_10.0.0)", "3h(LIBVIRT_10.0.0)")
+        .replace("Flags: none Version: 3", "Flags: none Version: 32771")
+    )
+    assert abi.parse_elf(content).version_needs == {"libvirt.so.0": ("LIBVIRT_10.0.0",)}
+    wrong_index = content.replace("LIBVIRT_10.0.0 (32771)", "LIBVIRT_10.0.0 (3)")
+    with pytest.raises(abi.Refusal, match="^ELF_VERSION_SECTION_REJECTED$"):
+        abi.parse_elf(wrong_index)
+
+
+def test_readelf_rejects_same_version_name_with_wrong_provider_index() -> None:
+    content = (
+        _READELF_WITH_VERSION_INFO.replace("contains 7 entries:", "contains 8 entries:")
+        .replace("(VERNEEDNUM) 1", "(VERNEEDNUM) 2")
+        .replace(
+            "Shared library: [libvirt.so.0]",
+            "Shared library: [libvirt.so.0]\n 0x00000001 (NEEDED) Shared library: [alternate.so.0]",
+        )
+    )
+    content = content.replace("contains 1 entry:\n Addr:", "contains 2 entries:\n Addr:")
+    content = content.replace(
+        "0x0010: Name: LIBVIRT_10.0.0 Flags: none Version: 3",
+        """0x0010: Name: LIBVIRT_10.0.0 Flags: none Version: 3
+ 0x0020: Version: 1 File: alternate.so.0 Cnt: 1
+ 0x0030: Name: LIBVIRT_10.0.0 Flags: none Version: 4""",
+    )
+    assert abi.parse_elf(content).version_needs["alternate.so.0"] == ("LIBVIRT_10.0.0",)
+    wrong_index = content.replace(
+        "virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@LIBVIRT_10.0.0 (4)"
+    )
+    with pytest.raises(abi.Refusal, match="^ELF_VERSION_SECTION_REJECTED$"):
+        abi.parse_elf(wrong_index)
+
+
+def test_readelf_rejects_versioned_symbols_without_version_tables() -> None:
+    head, _ = _READELF_WITH_VERSION_INFO.split("Version symbols section", 1)
+    head = re.sub(r"^.*\((?:VERSYM|VERDEFNUM|VERNEEDNUM)\).*\n", "", head, flags=re.MULTILINE)
+    with pytest.raises(abi.Refusal, match="^ELF_VERSION_SECTION_REJECTED$"):
+        abi.parse_elf(head)
+
+
 def test_readelf_requires_dynamic_symbol_section_for_symtab_without_dependencies() -> None:
     header = _READELF_WITH_VERSION_INFO.split("Program Headers:", 1)[0]
     content = (
@@ -501,6 +577,21 @@ def test_readelf_requires_dynamic_symbol_section_for_symtab_without_dependencies
         ("GLOBAL DEFAULT", "GLOBAL PRIVATE", "DYNAMIC_SYMBOL"),
         ("PyInit_binding@@BINDING_1", "PyInit_binding@@", "DYNAMIC_SYMBOL"),
         ("PyInit_binding@@BINDING_1", "PyInit_binding (2)", "DYNAMIC_SYMBOL"),
+        ("3 (LIBVIRT_10.0.0)", "7 (LIBVIRT_10.0.0)", "VERSION"),
+        ("3 (LIBVIRT_10.0.0)", "3 (FAKE_VERSION)", "VERSION"),
+        ("3 (LIBVIRT_10.0.0)", "3 (*both*)", "VERSION"),
+        ("0 (*local*)", "0 (*global*)", "VERSION"),
+        ("0 (*local*)", "0h(*local*)", "VERSION"),
+        ("Index: 2 Cnt: 2", "Index: 3 Cnt: 2", "VERSION"),
+        ("Version: 3\n", "Version: 32770\n", "VERSION"),
+        ("Version: 3\n", "Version: 65539\n", "VERSION"),
+        ("virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@@LIBVIRT_10.0.0 (3)", "VERSION"),
+        ("virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@LIBVIRT_10.0.0", "VERSION"),
+        ("virConnectOpen@LIBVIRT_10.0.0 (3)", "virConnectOpen@FAKE_VERSION (3)", "VERSION"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding@BINDING_1", "VERSION"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding@@BINDING_1 (2)", "VERSION"),
+        ("PyInit_binding@@BINDING_1", "PyInit_binding", "VERSION"),
+        ("12 PyInit_binding@@BINDING_1", "UND PyInit_binding@@BINDING_1", "VERSION"),
     ],
 )
 def test_readelf_refuses_incomplete_or_malformed_sections(old: str, new: str, code: str) -> None:
@@ -664,7 +755,7 @@ Machine: Advanced Micro Devices X86-64
 Symbol table '.dynsym' contains 10 entries:
  Num: Value Size Type Bind Vis Ndx Name
  0: 0000000000000000 0 NOTYPE LOCAL DEFAULT UND
- 1: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND PyLong_FromLong@PYTHON_3.12
+ 1: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND PyLong_FromLong
  2: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND _Py_Dealloc
  3: 0000000000010000 4 FUNC GLOBAL DEFAULT 12 PyInit_libvirtmod
  4: 0000000000010200 4 OBJECT GLOBAL DEFAULT 12 PyInit_not_callable
