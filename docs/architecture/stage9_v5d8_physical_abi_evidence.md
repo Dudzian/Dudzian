@@ -17,11 +17,16 @@ wejścia korzysta z dokładnych bajtów archiwum i propozycji.
   `libbz2.so.1` przez pakiet `libbz2-1.0`. Trzeba zmierzyć fizyczny alias i
   SONAME docelowego pliku. Plugin QPSQL wymaga dodatkowo wersji `RHPG_9.6`,
   której zmierzona systemowa `libpq.so.5.16` nie deklaruje.
-- `libPySidePlugin.so` ma dwa katalogi `RUNPATH` nieobecne w projektowanym
-  drzewie. Jego zależności Qt mogą znajdować się wcześniej w procesie Designer.
-  Potwierdzenie wymaga osobnego dowodu kontekstu ładowania. Builder zapisuje
-  pliki wheel w trybie `0600`, obejmując również 18 programów ELF. Każdy profil
-  wymagający uruchomienia takich programów potrzebuje ustalonej polityki trybów.
+- `PySide6/Qt/plugins/designer/libPySidePlugin.so` ma `DT_RPATH`
+  `$ORIGIN/:$ORIGIN/Qt/lib:$ORIGIN/../shiboken6/` i nie ma `DT_RUNPATH`.
+  Dwa z tych katalogów nie istnieją w projektowanym drzewie. Graf uwzględnia
+  `RPATH` w domknięciu tranzytywnym i oddzielnie traktuje `RUNPATH`, używany
+  dla bezpośrednich zależności obiektu deklarującego ten znacznik. Program
+  `PySide6/designer` ma własny `DT_RUNPATH`, w którym znajduje trzy biblioteki
+  Qt wymagane także przez plugin. Ich dostępność w procesie przy ładowaniu
+  pluginu wymaga osobnego dowodu. Builder zapisuje pliki wheel w trybie
+  `0600`, obejmując również 18 programów ELF. Profil uruchamiający te programy
+  potrzebuje ustalonej polityki trybów.
 
 ## Jeden przebieg odczytowy
 

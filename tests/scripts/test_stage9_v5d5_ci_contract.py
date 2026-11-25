@@ -207,7 +207,11 @@ def test_coverage_gate_combines_all_three_real_data_files(
     ]
     assert len(shared) == 1
     assert set(combined.lines(shared[0]) or ()) == {1, 2, 3}
-    assert combined.lines(V5D8_COLLECTOR) == [1]
+    collector = [
+        name for name in combined.measured_files() if name.replace("\\", "/") == V5D8_COLLECTOR
+    ]
+    assert len(collector) == 1
+    assert combined.lines(collector[0]) == [1]
     for module in CURRENT_MODULES:
         matches = [
             name
