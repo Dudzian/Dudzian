@@ -475,23 +475,28 @@ jobs:
         run: >-
           python -m pip install pytest pytest-cov "ruff==0.14.11" "mypy==1.10.0"
           "coverage>=7.10,<8"
-      - name: Sprawdź Ruff, format i typy V5d5
+      - name: Sprawdź Ruff, format i typy V5d4–V5d7
         run: |
-          python -m ruff check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/deployment/test_stage9_v5d6_*.py tests/scripts/test_stage9_v5d5_ci_contract.py
-          python -m ruff format --check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/deployment/test_stage9_v5d6_*.py tests/scripts/test_stage9_v5d5_ci_contract.py
-          python -m mypy scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py
-          python -m mypy --platform win32 scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py
-      - name: Sprawdź kontrakty V5d5/V5d6 oraz pełne regresje V5d4 i V5d3
+          python -m ruff check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py scripts/stage9_v5d7_*.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/deployment/test_stage9_v5d6_*.py tests/deployment/test_stage9_v5d7_*.py tests/scripts/test_stage9_v5d5_ci_contract.py tests/scripts/test_stage9_v5d7_operator.py
+          python -m ruff format --check scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py scripts/stage9_v5d7_*.py tests/deployment/test_stage9_v5d4_*.py tests/deployment/test_stage9_v5d5_*.py tests/deployment/test_stage9_v5d6_*.py tests/deployment/test_stage9_v5d7_*.py tests/scripts/test_stage9_v5d5_ci_contract.py tests/scripts/test_stage9_v5d7_operator.py
+          python -m mypy scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py scripts/stage9_v5d7_*.py
+          python -m mypy --platform win32 scripts/stage9_v5d4_*.py scripts/stage9_v5d5_shared.py scripts/stage9_v5d6_*.py scripts/stage9_v5d7_*.py
+          bash -n scripts/stage9_v5d7_collect_physical.sh
+      - name: Sprawdź kontrakty V5d5–V5d7 oraz pełne regresje V5d4 i V5d3
         run: |
           git cat-file -e '17e03a9cb42a84302401415f96ac90e756926915^{commit}'
           python -m pytest -q --confcutdir=tests/deployment \
             tests/deployment/test_stage9_v5d5_*.py \
             tests/deployment/test_stage9_v5d6_*.py \
+            tests/deployment/test_stage9_v5d7_*.py \
             tests/deployment/test_stage9_v5d4_*.py \
             tests/deployment/test_stage9_v5d3_release.py \
             -p pytest_cov.plugin --cov=scripts.stage9_v5d5_shared \
             --cov=scripts.stage9_v5d6_headers --cov=scripts.stage9_v5d6_inspect_greenlet \
             --cov=scripts.stage9_v5d6_inspect_wheelhouse \
+            --cov=scripts.stage9_v5d7_collect_evidence --cov=scripts.stage9_v5d7_focused \
+            --cov=scripts.stage9_v5d7_inspect_wheelhouse --cov=scripts.stage9_v5d7_native \
+            --cov=scripts.stage9_v5d7_omissions --cov=scripts.stage9_v5d7_shared \
             --cov=scripts.stage9_v5d4_abi --cov=scripts.stage9_v5d4_closure \
             --cov=scripts.stage9_v5d4_dependencies --cov=scripts.stage9_v5d4_environment \
             --cov=scripts.stage9_v5d4_launch --cov-branch \
@@ -501,8 +506,9 @@ jobs:
             tests/scripts/test_stage9_operator_v5d2_inventory.py \
             tests/scripts/test_stage9_v5d4_ci_history.py \
             tests/scripts/test_stage9_v5d5_ci_contract.py \
+            tests/scripts/test_stage9_v5d7_operator.py \
             --junitxml=stage9-v5d5-v5d2-regression.xml
-      - name: Zachowaj wyniki V5d5 i zakres regresji
+      - name: Zachowaj wyniki V5d5–V5d7 i zakres regresji
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -554,7 +560,12 @@ jobs:
           expected = [root / f"stage9-v5d5-static-{runner}-{revision}-{attempt}" / "stage9-v5d5.coverage" for runner in runners]
           if set(root.glob("*/stage9-v5d5.coverage")) != set(expected):
               raise SystemExit("V5D5_COVERAGE_ARTIFACT_SET_REFUSED")
-          required = {f"scripts/stage9_v5d4_{module}.py" for module in ("abi", "closure", "dependencies", "environment", "launch")} | {"scripts/stage9_v5d5_shared.py", "scripts/stage9_v5d6_headers.py", "scripts/stage9_v5d6_inspect_greenlet.py", "scripts/stage9_v5d6_inspect_wheelhouse.py"}
+          required = {
+              *(f"scripts/stage9_v5d4_{module}.py" for module in ("abi", "closure", "dependencies", "environment", "launch")),
+              "scripts/stage9_v5d5_shared.py",
+              *(f"scripts/stage9_v5d6_{module}.py" for module in ("headers", "inspect_greenlet", "inspect_wheelhouse")),
+              *(f"scripts/stage9_v5d7_{module}.py" for module in ("collect_evidence", "focused", "inspect_wheelhouse", "native", "omissions", "shared")),
+          }
           for path in expected:
               data = CoverageData(basename=str(path))
               data.read()

@@ -20,6 +20,9 @@ import stat
 import sysconfig
 from typing import Any
 
+V5D7_RECEIPT = "stage9-v5d7-prepared-environment-v1"
+V5D7_VERIFICATION = "stage9-v5d7-dependency-verification-v1"
+
 
 def verify_tree(
     root: Path, expected: dict[str, str], expected_directories: list[str] | None = None
@@ -63,26 +66,47 @@ def verify_shared_receipt(root: Path, receipt: dict[str, Any]) -> None:
         "shared_wheel_policy",
         "shared_wheel_output",
     }
+    profile = receipt.get("profile")
+    v5d7 = profile == V5D7_RECEIPT
+    legacy = profile == "stage9-v5d5-prepared-environment-v1"
+    v5d7_audit = "shared-audit-v5d7.py"
     if (
-        receipt.get("profile") != "stage9-v5d5-prepared-environment-v1"
+        not (v5d7 or legacy)
         and not fields.intersection(receipt)
         and "shared-audit.py" not in receipt["files"]
+        and v5d7_audit not in receipt["files"]
     ):
         return
     if (
-        receipt.get("profile") != "stage9-v5d5-prepared-environment-v1"
+        not (v5d7 or legacy)
         or not fields <= set(receipt)
         or "directories" not in receipt
         or "shared-audit.py" not in receipt["files"]
+        or (v5d7_audit in receipt["files"]) != v5d7
     ):
         raise ValueError("SHARED_WHEEL_RECEIPT_INCOMPLETE")
-    tools = runpy.run_path(str(root / "shared-audit.py"))
+    tools = runpy.run_path(str(root / (v5d7_audit if v5d7 else "shared-audit.py")))
     packages = receipt["wheel_materialization"]
     shared = tools["verify_shared"](packages, receipt["shared_wheel_expectations"])
     if receipt["shared_wheel_policy"] != tools["POLICY_ID"] or not tools["exact"](
         receipt["shared_wheel_members"], shared
     ):
         raise ValueError("SHARED_WHEEL_RECEIPT_MISMATCH")
+    if v5d7:
+        verification = receipt.get("dependency_verification")
+        if (
+            type(verification) is not dict
+            or verification.get("profile") != V5D7_VERIFICATION
+            or any(
+                key not in verification or not tools["exact"](verification[key], receipt[key])
+                for key in (
+                    "shared_wheel_policy",
+                    "shared_wheel_members",
+                    "shared_wheel_expectations",
+                )
+            )
+        ):
+            raise ValueError("SHARED_WHEEL_VERIFICATION_MISMATCH")
     if (
         type(receipt.get("package_files")) is not dict
         or type(receipt.get("wheel_archives")) is not list
@@ -227,6 +251,50 @@ def verify_header_receipt(root: Path, receipt: dict[str, Any]) -> None:
                 raise ValueError("HEADER_OMISSION_MATERIALIZED")
 
 
+def verify_artifact_receipt(root: Path, receipt: dict[str, Any]) -> None:
+    """Recheck V5d7 omission approval and absence using the verified tree inventory."""
+    fields = {"artifact_omissions", "artifact_expectations", "artifact_policy"}
+    files = receipt["files"]
+    packages = receipt.get("wheel_materialization")
+    verification = receipt.get("dependency_verification")
+    v5d7 = receipt.get("profile") == V5D7_RECEIPT
+    if not v5d7:
+        if (
+            fields.intersection(receipt)
+            or "artifact-audit.py" in files
+            or (type(verification) is dict and verification.get("profile") == V5D7_VERIFICATION)
+            or (
+                type(packages) is list
+                and any(type(item) is dict and "artifact_omissions" in item for item in packages)
+            )
+        ):
+            raise ValueError("ARTIFACT_OMISSION_RECEIPT_PROFILE")
+        return
+    if (
+        not fields <= set(receipt)
+        or "artifact-audit.py" not in files
+        or type(packages) is not list
+        or not all(type(item) is dict and "artifact_omissions" in item for item in packages)
+        or type(receipt.get("package_files")) is not dict
+        or type(verification) is not dict
+        or verification.get("profile") != V5D7_VERIFICATION
+    ):
+        raise ValueError("ARTIFACT_OMISSION_RECEIPT_INCOMPLETE")
+    tools = runpy.run_path(str(root / "artifact-audit.py"))
+    inventory = tools["verify_omissions"](packages, receipt["artifact_expectations"])
+    if (
+        receipt["artifact_policy"] != tools["POLICY_ID"]
+        or not tools["exact"](receipt["artifact_omissions"], inventory)
+        or any(
+            key not in verification or not tools["exact"](verification[key], receipt[key])
+            for key in fields
+        )
+    ):
+        raise ValueError("ARTIFACT_OMISSION_RECEIPT_MISMATCH")
+    tools["verify_runtime_absence"](files, inventory)
+    tools["verify_runtime_absence"](receipt["package_files"], inventory)
+
+
 class FixedRootFinder(importlib.abc.MetaPathFinder):
     def __init__(self, root: Path) -> None:
         self.root = str(root)
@@ -278,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
         verify_tree(root, receipt["files"], receipt.get("directories"))
         verify_shared_receipt(root, receipt)
         verify_header_receipt(root, receipt)
+        verify_artifact_receipt(root, receipt)
         auditor = runpy.run_path(str(root / "runtime-audit.py"))
         if (
             auditor["base_runtime_inventory"]([Path(p) for p in receipt["base_runtime"]["roots"]])
