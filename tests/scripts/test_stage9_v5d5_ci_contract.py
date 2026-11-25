@@ -29,6 +29,7 @@ CURRENT_MODULES = tuple(
     for version, modules in ((6, V5D6_MODULES), (7, V5D7_MODULES))
     for module in modules
 )
+V5D8_COLLECTOR = "scripts/stage9_v5d8_collect_physical.py"
 
 
 def workflow_job(name: str) -> str:
@@ -93,6 +94,8 @@ def test_shared_contract_matrix_keeps_regressions_and_nonprivileged_scope() -> N
     assert "stage9-v5d5-static.xml" in job
     assert "stage9-v5d5-v5d2-regression.xml" in job
     assert "stage9-v5d5-coverage.xml" in job
+    assert "tests/scripts/test_stage9_v5d8_collect_physical.py" in job
+    assert "--cov-branch --cov-append" in job
     assert "if-no-files-found: error" in job
     for privileged in ("sudo ", "--execute", "run_stage10 == true", "run_linux_physical == true"):
         assert privileged not in job
@@ -146,6 +149,8 @@ def run_aggregation(
         path.parent.mkdir(parents=True)
         data = CoverageData(basename=str(path))
         members = required[:1] if change == "incomplete" and index == 1 else required
+        if index == 0 and change != "missing_v5d8_ubuntu":
+            members = [*members, V5D8_COLLECTOR]
         if change in CURRENT_MODULES and index == 1:
             members = [name for name in members if name != f"scripts/stage9_{change}.py"]
         if windows_paths and index == 1:
@@ -202,6 +207,7 @@ def test_coverage_gate_combines_all_three_real_data_files(
     ]
     assert len(shared) == 1
     assert set(combined.lines(shared[0]) or ()) == {1, 2, 3}
+    assert combined.lines(V5D8_COLLECTOR) == [1]
     for module in CURRENT_MODULES:
         matches = [
             name
@@ -221,6 +227,7 @@ def test_coverage_gate_combines_all_three_real_data_files(
         "incomplete",
         "branchless",
         "failed_matrix",
+        "missing_v5d8_ubuntu",
         *CURRENT_MODULES,
     ],
 )
