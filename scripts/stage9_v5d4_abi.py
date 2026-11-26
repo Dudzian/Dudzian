@@ -708,6 +708,7 @@ def diagnose(
     expectations: dict[str, Any],
     *,
     reader: Callable[[Path], ELF] = read_elf,
+    observer_base_libpython: Path | None = None,
 ) -> dict[str, Any]:
     """Porównuje jawny plan; nie dowodzi rzeczywistego launch ani dlopen closure."""
     required = {
@@ -743,6 +744,8 @@ def diagnose(
         _path(path)
     pending = [_path(request["interpreter"]), extension]
     additional = _strings(request["additional_extensions"], "EXTENSIONS_REJECTED")
+    if observer_base_libpython is not None:
+        require(str(observer_base_libpython) in additional, "OBSERVER_LIBPYTHON_NOT_DECLARED")
     for path in additional:
         require(
             ".cpython-" not in Path(path).name or path.endswith(EXTENSION_SUFFIX),
@@ -804,17 +807,23 @@ def diagnose(
     }
     extensions = {_path(request["libvirt_extension"]), *(_path(item) for item in additional)}
     for path in extensions:
-        python_extension = path.name.endswith((EXTENSION_SUFFIX, ".abi3.so")) or any(
-            symbol.startswith("PyInit_") for symbol in records[str(path)].defined_python_symbols
-        )
-        if python_extension:
-            initializer = "PyInit_" + path.name.split(".", 1)[0]
+        record = records[str(path)]
+        if path == observer_base_libpython:
+            # The distro shared library exports initializers for built-in modules.
             require(
-                initializer in records[str(path)].defined_python_symbols,
-                "EXTENSION_INIT_SYMBOL_MISSING",
+                path.name == record.soname == "libpython3.12.so.1.0"
+                and record.kind == "DYN"
+                and record.interpreter is None
+                and str(path) not in imports.values(),
+                "OBSERVER_LIBPYTHON_ROLE_MISMATCH",
             )
+        elif path.name.endswith((EXTENSION_SUFFIX, ".abi3.so")) or any(
+            symbol.startswith("PyInit_") for symbol in record.defined_python_symbols
+        ):
+            initializer = "PyInit_" + path.name.split(".", 1)[0]
+            require(initializer in record.defined_python_symbols, "EXTENSION_INIT_SYMBOL_MISSING")
         require(
-            set(records[str(path)].undefined_python_symbols) <= python_exports,
+            set(record.undefined_python_symbols) <= python_exports,
             "PYTHON_SYMBOL_MISSING",
         )
     import_roots = [_path(item) for item in request["import_roots"]]

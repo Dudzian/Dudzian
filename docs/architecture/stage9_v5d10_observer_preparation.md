@@ -1,82 +1,114 @@
-# Stage 9 V5d10 — przygotowanie Observera
+# Stage 9 V5d10 — kwalifikacja preflight Observera
 
-Baza dowodowa to `52a18d6c423a3e4b2e24c05933518fe0c7bd5352` (PR #3297).
-Decyzja dla profilu preflight pozostaje **WSTRZYMAĆ MATERIALIZACJĘ** do czasu
-uzyskania pełnego pliku wejść oraz odrębnej aprobaty dla tego zakresu.
-Kandydaci opisani poniżej są materiałem do przeglądu. Builder i launcher
-obsługują dotychczasowe kontrakty wykonawcze.
+V5d10 przygotowuje osobny profil A dla odczytowego preflight V5d1. Builder A
+sprawdza cztery archiwa, przypięte wejścia, statyczne ABI i pełny plan katalogu.
+Recenzent ocenia niezależnie hash dokumentu aprobaty. Launcher weryfikuje
+wystawiony receipt w trybie `verify` bez importu pakietów Observera. Tryb
+`preflight` wymaga osobnej autoryzacji i uprzednio przygotowanej izolacji
+systemowej. Na tym etapie wynik fizycznego uruchomienia ma status `NOT_TESTED`.
 
-## Trzy zakresy
+## Zakresy A, B i C
 
-| Zakres | Identyfikator materiału do przeglądu | Wymagane wejścia | Decyzja |
-| --- | --- | --- | --- |
-| A. Observer preflight V5d1 | `stage9-v5d10-observer-preflight-proposal-v1` | Domknięcie V5d1, `cryptography` z zależnościami, `defusedxml`, bazowy CPython, binding potrzebny do odczytu libvirt, `qemu-img` i ich systemowe domknięcie ABI | Odrębny minimalny wheelhouse ma mniejszą powierzchnię kwalifikacji. Przed dopuszczeniem wymagane są przypięte pliki hosta i egzekwowana granica importu i ładowania. |
-| B. Opcjonalny offline verifier | `stage9-v5d10-offline-deb-inventory-wheel-candidate-v1` | Odrębny dekoder i interpreter, z przypiętym `zstandard` oraz własnym domknięciem ABI dla konkretnego wejścia i platformy | Przygotować osobną aprobatę wyłącznie dla operacji, które używają dekodera. Istniejący lock CP311 dotyczy CP311. |
-| C. Pełny runtime aplikacji | `stage9-v5d10-full-runtime-review-v1` | Kanoniczna propozycja V5d7, 69 wheels i pełny manifest ABI, zachowane kontrakty współdzielenia i pominięć | Wstrzymać do rozstrzygnięcia pozostałych krawędzi i kontekstów ładowania. |
+| Zakres | Kontrakt |
+| --- | --- |
+| A — preflight V5d1 | `cryptography==50.0.2`, `cffi==2.0.0`, `pycparser==3.0`, `defusedxml==0.7.1`, przypięty CPython/stdlib, dwa główne pliki libvirt oraz `/usr/bin/qemu-img`. |
+| B — opcjonalny verifier offline | Odrębny lock i interpreter CP311 albo odrębna kandydatura CP312. Dekoder V3 wymaga przypiętego `zstandard==0.25.0` z backendem `cext`. |
+| C — pełny CryptoHunter | Kanoniczna propozycja V5d7 obejmuje 69 wheels i ich pełne ABI. Każdy materiał C zachowuje dotychczasowy format i zakres. |
 
-Domknięcie V5d1 obejmuje 27 plików i 279 krawędzi AST. Statyczne korzenie zewnętrzne
-obejmują `cryptography` i `defusedxml`. Dwa odroczone cele literalne to
-`libvirt` w ścieżce odczytowego preflight oraz `zstandard` w dekoderze
-archiwów Ubuntu. Rozliczenie A wymaga jawnego punktu wejściowego, który nie
-udostępnia dekodera, oraz testu odmowy dostępu do niego także przez już
-zaimportowane moduły. `-I -S -B`, brak wielkiego wheelhouse na ścieżkach
-importu i weryfikacja korzeni są konieczne. Docelowa kontrola musi także
-objąć importy podpakietów, zawartość `sys.modules`, chroniony obraz plików
-oraz listę dozwolonych dostawców i konfiguracji natywnych dla mechanizmów `dlopen`.
-Osobno sprawdza się, że proces `qemu-img` ma przypiętą ścieżkę i zamknięte
-środowisko oraz że binding nie może przejść do odmiennego backendu.
-Przyszłe wykonanie Observera ma osobne wymagania tożsamości uruchomienia,
-izolacji, polityki oraz autoryzacji. Wynik V5d1 sam ich nie spełnia.
+Do A wchodzą cztery dokładne archiwa z kanonicznej propozycji V5d7, 179
+wierszy RECORD, dwa ELF wheels i 27 źródeł z 279 krawędziami AST. Manifest
+różnicy obejmuje 65 pozostałych dystrybucji, 11 658 unikalnych ścieżek
+docelowych i 718 wpisów ELF. Zależność systemowa `libzstd.so.1` pozostaje w
+zakresie `qemu-img`. Moduł Python `zstandard` jest odroczonym importem
+dekodera B i pozostaje niedostępny w A.
 
-## Kontrakt CPython
+Rozpatrzenie C nadal obejmuje 12 brakujących nazw PySide6, QPSQL i
+`RHPG_9.6`, kontekst RPATH Designera, 18 programów ELF, dostawców Qt/FFmpeg
+oraz libpyside/libshiboken. Statyczna kwalifikacja A nie używa tych plików.
+Pełne omówienie przypadków pozostaje w [V5d8](stage9_v5d8_physical_abi_evidence.md).
 
-Odtworzono podpisany łańcuch Ubuntu dla dwóch plików z wersji
-`3.12.3-1ubuntu0.17` na `amd64`. Istniejąca kontrola `_python_contract`
-potwierdziła wersję `3.12.3`, `SOABI=cpython-312-x86_64-linux-gnu`,
-`MULTIARCH=x86_64-linux-gnu` i `Py_DEBUG=0` przez analizę bajtów jako danych.
+## Builder i przegląd A
 
-| Wejście | Pakiet archiwalny | Bajty | SHA-256 |
-| --- | --- | ---: | --- |
-| `patchlevel.h` w pozasystemowym katalogu dowodowym V5d9 | `libpython3.12-dev` | 1299 | `f2f4800f05108bef77f6164484aba437b86b81e34744cbb5378f7bb2ccc69414` |
-| `/usr/lib/python3.12/_sysconfigdata__x86_64-linux-gnu.py` | `libpython3.12-minimal` | 49505 | `ee5bb5493fa4575f7788e1b0e8a067b9c463f9705dcb36f5eb571d1c0812ea82` |
+`stage9_v5d10_builder.py propose` z osobnego wheelhouse odtwarza wszystkie
+RECORD, analizuje METADATA, markery i aktywne zależności przechodnie oraz
+odrzuca obce dystrybucje, obcych właścicieli docelowych i dodatkowe ELF.
+`build` wymaga świeżego katalogu oraz przekazanego niezależnie hasha dokładnych
+bajtów aprobaty. Fizyczny `origins.json` i mapa odtworzona z wierszy V5d7 to
+dwa różne artefakty. Należy porównać pochodzenie wybranych archiwów z pierwotnym
+plikiem i wykazem. Minimalne wejście buildera zawiera dokładnie cztery rekordy.
 
-W ABI request ścieżka `patchlevel_header` wskazuje istniejący plik z dowodu
-V5d9. Ścieżka `sysconfigdata` wskazuje zmierzony plik hosta. Dwa przypięcia
-są częścią przyszłej mapy ABI razem z dokładnym interpreterem i pozostałymi
-pomiarami. Sama zgodność powyższych dwóch plików rozstrzyga wyłącznie kontrakt
-ich wspólnych pól.
+Przeznaczenie wiążą osobne identyfikatory w rodzinie
+`stage9-v5d10-observer-preflight-*-v1`. Zakres zatwierdzanych pól obejmuje host,
+propozycję, manifest native, kod, przegląd dynamiczny, ABI request, ABI
+expectations, systemowe bindingi, bazowy runtime i narzędzia hosta. Cztery
+pola wyjątków wheel mają puste listy, ponieważ zakres A nie przewiduje
+pomijania członków ani współdzielenia plików. Dodatkowy `file_plan_sha256`
+wiąże wszystkie ścieżki, tryby i hashe, wraz z venv i launcherem. Kod buildera
+sprawdza dokładne identyfikatory, odczytuje piny przed zapisem, porównuje ABI
+kopii i publikuje `ENVIRONMENT.json` po końcowym porównaniu drzewa i pinów.
+Receipt wiąże aprobatę i zakres. Jego stan `NOT_AUTHORIZED` dotyczy uruchomienia.
 
-## Granica w istniejącym builderze i launcherze
+W V5d8 pozyskano piny interpretera, `sysconfigdata`, bazowego runtime i
+systemowego grafu. Podpisane archiwum V5d9 dostarcza brakujący `patchlevel.h`
+CPython 3.12.3. Nagłówek pozostaje w katalogu dowodowym. Statyczny replay A
+obejmuje 122 ELF i 263 krawędzie. `libpython3.12.so.1.0` eksportuje
+inicjalizatory modułów wbudowanych, lecz nie jest rozszerzeniem importowanym
+pod nazwą `libpython3`. Adapter A klasyfikuje tylko ten przypięty systemowy
+obiekt w odrębnej roli i zachowuje wymagania wobec rzeczywistych rozszerzeń.
+Wejście i zachowanie domyślnego ABI V5d7 pozostają takie same.
 
-Weryfikator zależności odbudowuje pełną propozycję z autorytatywnego
-`pyproject.toml`, wheelhouse i originów. Wymaga dokładnego zbioru natywnych
-członków i pełnego ABI ścieżek przed wydaniem receipt. Zmiana etykiety lub
-zmniejszenie planu wejściowego kończy się odmową. Test obejmuje również
-wyzerowanie manifestu native przy pełnej propozycji.
+Po niezależnej aprobacie dane A obsługuje się poniższymi poleceniami z
+zaufanego i uprzednio sprawdzonego checkoutu. `A_APPROVAL_SHA256` i
+`A_RECEIPT_SHA256` pochodzą z niezależnego kanału. Każdy pomiar ścieżek
+należy wykonać dla dokładnego położenia, które wiąże plan.
 
-Launcher dopuszcza ścieżkę zgodności ze starszym formatem wyłącznie dla
-historycznego `stage9-v5d4-prepared-environment-v1`. Nieznany lub brakujący
-identyfikator formatu kończy walidację przed odczytem pomocnika runtime i
-przed dodaniem findera. Regresja używa poprawnego hasha syntetycznej projekcji
-receipt i sprawdza, że kandydat A dochodzi wyłącznie do odmowy. Rzeczywisty
-receipt V5d5/V5d7 nadal przechodzi własne kontrole.
+```sh
+/usr/bin/python3.12 -I -S -B scripts/stage9_v5d10_builder.py propose \
+  --repository /path/to/reviewed-source \
+  --wheelhouse /path/to/minimal-wheelhouse \
+  --origins /path/to/four-reviewed-origins.json
 
-## Punkt wznowienia
+umask 077
+/usr/bin/python3.12 -I -S -B scripts/stage9_v5d10_builder.py build \
+  --inputs /path/to/inputs.json --approval /path/to/approval.json \
+  --approval-sha256 "$A_APPROVAL_SHA256" --output /path/to/fresh-A
 
-1. Udostępnić oryginalne surowe archiwa V5d7 i V5d8 oraz oryginalny wheelhouse
-   z originami. Sprawdzić SHA-256 archiwum V5d7
-   `8c51cdbe12613b42ba7bc8de56eb9f5d19b9fb19f4e9800e6715d148bcb31b8e`
-   i kanonicznej propozycji V5d7
-   `7f5f6e7f885a368ccdbb844b11534ad7d09871eeb2d8b45484a6bf8fa95aacc4`.
-   Porównać brakujące piny z istniejącymi wynikami, przed zleceniem nowych pomiarów.
-2. Zbudować kompletny, odrębny spis A. Przypiąć wejścia do świeżego,
-   nieistniejącego katalogu poza drzewem systemowym i związać identyfikatory
-   profilu, planu plików, ABI i receipt. Sprawdzić syntetycznie, że profile B/C,
-   obce biblioteki, podmienione pliki oraz przejścia poza zakres A powodują odmowę.
-3. Przekazać dokładne bajty i skróty do niezależnego przeglądu A. Przy odmowie
-   sprawa wraca do wskazanego wejścia. Wyłącznie odrębna autoryzacja operatora
-   pozwala później na materializację danego profilu. Native load, odczyt libvirt
-   i uruchomienie Observera mają własne dalsze bramki.
+/usr/bin/python3.12 -I -S -B scripts/stage9_v5d10_launch.py verify \
+  --root /path/to/fresh-A --approval-sha256 "$A_APPROVAL_SHA256" \
+  --receipt-sha256 "$A_RECEIPT_SHA256"
+```
+
+## Granica uruchomienia preflight
+
+Launcher odmawia dla dodatkowych finderów, obcych korzeni `sys.path`,
+nieuzgodnionych wpisów `sys.modules`, podmienionego pakietu i podpakietu spoza
+przypiętego korzenia. Kod źródłowy jest odczytywany według hasha z receipt
+lub bazowego runtime, z pominięciem cache bytecode. Standardowe moduły
+wbudowane i zamrożone pochodzą z zaakceptowanego interpretera. Hook audytu
+ogranicza dynamiczne importy, operacje ctypes i wywołanie procesu QEMU do
+przypiętego deskryptora oraz argumentów istniejącej ścieżki V5d1.
+
+Kontrola Pythona obejmuje kod i importy w procesie. Ładowanie ELF wymaga
+odrębnego widoku systemowego. Operator musi dostarczyć zaufany bootstrap,
+prywatne przestrzenie nazw z dokładnym widokiem montowań, readonly root,
+prywatny procfs, wyczyszczone deskryptory, AppArmor i seccomp zgodne z osobno
+przejrzanymi politykami. Launcher porównuje stan jądra i widoczne drzewo z
+autoryzacją. Odrzuca cache loadera, preload, nieprzypięte aliasy oraz
+niezakwalifikowane katalogi modułów QEMU i libvirt. Widok wystawia wyłącznie
+przypięte pliki i jeden lokalny socket libvirt w trybie odczytowym. Recenzent
+potwierdza także tożsamość i zachowanie demona po drugiej stronie socketu,
+pin konfiguracji klienta oraz reguły wykonania potomka. Sam status AppArmor
+lub seccomp nie potwierdza treści załadowanych reguł.
+
+Autoryzacja `stage9-v5d10-observer-preflight-launch-authorization-v1` wiąże
+receipt i aprobatę, hash `mountinfo`, tożsamości przestrzeni nazw, oznaczenie
+AppArmor, lokalny socket i jego tożsamość, hash konfiguracji libvirt oraz
+aliasy i dozwolone ścieżki danych. Ścieżka żądania ABI prowadzi do dokładnych
+bajtów przypiętych w receipt. Launcher porównuje cele aliasów z tym żądaniem
+i zatwierdzonym bazowym runtime. Recenzent trzyma dokument poza drzewem A.
+To późniejsza operacja. Plan buildera i wynik statyczny nie poświadczają
+wyboru dostawcy przez loader ani uruchomienia. Pełny Observer oraz Stage 3B
+mają własne granice i autoryzacje.
 
 `STAGE_9=IN_PROGRESS`, `OBSERVER_3A=BLOCKED`, `STAGE_3B=NOT_AUTHORIZED`,
 `PRODUCTION=NO-GO`.
