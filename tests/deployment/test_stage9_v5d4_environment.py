@@ -398,6 +398,7 @@ def test_native_gate_checks_receipt_and_never_invokes_preflight(
         ),
     )
     receipt = {
+        "profile": "stage9-v5d4-prepared-environment-v1",
         "root": str(tmp_path),
         "files": {},
         "host": env["host_contract"](),
@@ -408,6 +409,20 @@ def test_native_gate_checks_receipt_and_never_invokes_preflight(
     (tmp_path / "ENVIRONMENT.json").write_bytes(raw)
     assert launch["main"](["--authorize-native-load", "--receipt-sha256", "0" * 64]) == 2
     assert calls == [] and finder_list == []
+    for profile in (None, "stage9-v5d10-observer-preflight-receipt-projection-v1"):
+        candidate = {**receipt, "profile": profile}
+        if profile is None:
+            del candidate["profile"]
+        candidate_raw = json.dumps(candidate).encode()
+        (tmp_path / "ENVIRONMENT.json").write_bytes(candidate_raw)
+        assert (
+            launch["main"](
+                ["--authorize-native-load", "--receipt-sha256", env["sha"](candidate_raw)]
+            )
+            == 2
+        )
+        assert calls == [] and finder_list == []
+    (tmp_path / "ENVIRONMENT.json").write_bytes(raw)
     assert launch["main"](["--authorize-native-load", "--receipt-sha256", env["sha"](raw)]) == 0
     assert calls == ["libvirt"]
     assert len(finder_list) == 1

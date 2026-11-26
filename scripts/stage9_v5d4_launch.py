@@ -68,17 +68,17 @@ def verify_shared_receipt(root: Path, receipt: dict[str, Any]) -> None:
     }
     profile = receipt.get("profile")
     v5d7 = profile == V5D7_RECEIPT
-    legacy = profile == "stage9-v5d5-prepared-environment-v1"
+    v5d5 = profile == "stage9-v5d5-prepared-environment-v1"
     v5d7_audit = "shared-audit-v5d7.py"
     if (
-        not (v5d7 or legacy)
+        profile == "stage9-v5d4-prepared-environment-v1"
         and not fields.intersection(receipt)
         and "shared-audit.py" not in receipt["files"]
         and v5d7_audit not in receipt["files"]
     ):
         return
     if (
-        not (v5d7 or legacy)
+        not (v5d7 or v5d5)
         or not fields <= set(receipt)
         or "directories" not in receipt
         or "shared-audit.py" not in receipt["files"]

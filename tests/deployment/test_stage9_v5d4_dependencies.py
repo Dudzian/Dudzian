@@ -150,6 +150,24 @@ def test_complete_closure_keeps_contract_and_extras(material) -> None:
     assert result["native_members"] == 1
 
 
+def test_narrow_profile_cannot_replace_full_native_closure(material) -> None:
+    project, directory, origins = material
+    full = deps.propose(project, directory, origins)
+    narrow = {
+        **full,
+        "profile": "stage9-v5d10-observer-preflight-proposal-v1",
+        "packages": [package for package in full["packages"] if package["name"] == "defusedxml"],
+    }
+    for profile in (narrow["profile"], full["profile"]):
+        proposal = {**narrow, "profile": profile}
+        with pytest.raises(ValueError, match="PROPOSAL_CONTENT_MISMATCH"):
+            deps.verify(
+                project, directory, origins, proposal, deps.digest(deps.canonical(proposal)), {}
+            )
+    with pytest.raises(ValueError, match="UNAPPROVED_NATIVE_LIBRARY"):
+        deps.verify(project, directory, origins, full, deps.digest(deps.canonical(full)), {})
+
+
 @pytest.mark.parametrize("name", ["native", "transitive", "defusedxml"])
 def test_missing_transitive_or_required_dependency_refuses(material, name: str) -> None:
     project, directory, origins = material

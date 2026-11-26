@@ -224,6 +224,17 @@ def test_proposal_rebuild_requires_v5d7_digest_and_reviews(three_wheels):
     inventory = proposal["shared_wheel_members"]
     expectation = approval(shared, inventory)
     sha256 = deps.digest(deps.canonical(proposal))
+    narrowed = {**proposal, "packages": proposal["packages"][:1]}
+    with pytest.raises(deps.Refusal, match="^PROPOSAL_CONTENT_MISMATCH$"):
+        deps.verify(
+            project,
+            directory,
+            origins,
+            narrowed,
+            deps.digest(deps.canonical(narrowed)),
+            {},
+            approved_shared=expectation,
+        )
     with pytest.raises(deps.Refusal, match="^PROPOSAL_SHA256_MISMATCH$"):
         deps.verify(
             project, directory, origins, proposal, "0" * 64, {}, approved_shared=expectation
