@@ -30,6 +30,9 @@ CURRENT_MODULES = tuple(
     for module in modules
 )
 V5D8_COLLECTOR = "scripts/stage9_v5d8_collect_physical.py"
+V5D10_MODULES = tuple(
+    f"scripts/stage9_v5d10_{module}.py" for module in ("abi", "contract", "builder", "launch")
+)
 
 
 def workflow_job(name: str) -> str:
@@ -51,6 +54,8 @@ def test_shared_contract_enters_configured_mypy_scope() -> None:
         assert files.count(f"scripts/stage9_{module}.py") == 1
     for module in ("dependencies", "environment", "launch", "abi", "closure"):
         assert f"scripts/stage9_v5d4_{module}.py" in files
+    for path in V5D10_MODULES:
+        assert files.count(path) == 1
 
 
 def test_shared_contract_matrix_keeps_regressions_and_nonprivileged_scope() -> None:
@@ -101,6 +106,21 @@ def test_shared_contract_matrix_keeps_regressions_and_nonprivileged_scope() -> N
         assert privileged not in job
 
 
+def test_observer_staging_enters_linux_matrix_and_existing_gate() -> None:
+    job = workflow_job("stage9-v5d5-shared-wheel-members")
+    step = job.split(
+        "- name: Sprawdź syntetyczny kontrakt i staging Observera V5d10\n", maxsplit=1
+    )[1]
+    step = step.split("- name:", maxsplit=1)[0]
+    assert "if: runner.os == 'Linux'" in step
+    assert "tests/deployment/test_stage9_v5d10_*.py" in step
+    assert "python -m mypy --platform win32 scripts/stage9_v5d10_*.py" in step
+    assert "--cov-branch --cov-append" in step
+    assert job.count("stage9-v5d10-static.xml") == 2
+    for path in V5D10_MODULES:
+        assert f"--cov={Path(path).with_suffix('').as_posix().replace('/', '.')}" in step
+
+
 def test_full_platform_matrix_is_required_before_combined_coverage_gate() -> None:
     job = workflow_job("stage9-v5d5-shared-wheel-coverage")
     assert "needs: stage9-v5d5-shared-wheel-members" in job
@@ -149,8 +169,11 @@ def run_aggregation(
         path.parent.mkdir(parents=True)
         data = CoverageData(basename=str(path))
         members = required[:1] if change == "incomplete" and index == 1 else required
-        if index == 0 and change != "missing_v5d8_ubuntu":
-            members = [*members, V5D8_COLLECTOR]
+        if index == 0:
+            linux_members = [V5D8_COLLECTOR, *V5D10_MODULES]
+            if change == "missing_v5d8_ubuntu":
+                linux_members.remove(V5D8_COLLECTOR)
+            members = [*members, *(member for member in linux_members if member != change)]
         if change in CURRENT_MODULES and index == 1:
             members = [name for name in members if name != f"scripts/stage9_{change}.py"]
         if windows_paths and index == 1:
@@ -212,6 +235,10 @@ def test_coverage_gate_combines_all_three_real_data_files(
     ]
     assert len(collector) == 1
     assert combined.lines(collector[0]) == [1]
+    for path in V5D10_MODULES:
+        matches = [name for name in combined.measured_files() if name.replace("\\", "/") == path]
+        assert len(matches) == 1
+        assert combined.lines(matches[0]) == [1]
     for module in CURRENT_MODULES:
         matches = [
             name
@@ -233,6 +260,7 @@ def test_coverage_gate_combines_all_three_real_data_files(
         "failed_matrix",
         "missing_v5d8_ubuntu",
         *CURRENT_MODULES,
+        *V5D10_MODULES,
     ],
 )
 def test_coverage_gate_refuses_partial_or_failed_matrix(tmp_path: Path, change: str) -> None:

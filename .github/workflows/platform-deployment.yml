@@ -519,7 +519,21 @@ jobs:
             -p pytest_cov.plugin --cov=scripts.stage9_v5d8_collect_physical \
             --cov-branch --cov-append --cov-report=xml:stage9-v5d5-coverage.xml \
             --junitxml=stage9-v5d8-static.xml
-      - name: Zachowaj wyniki V5d5–V5d7 i zakres regresji
+      - name: Sprawdź syntetyczny kontrakt i staging Observera V5d10
+        if: runner.os == 'Linux'
+        run: |
+          python -m ruff check scripts/stage9_v5d10_*.py tests/deployment/test_stage9_v5d10_*.py
+          python -m ruff format --check scripts/stage9_v5d10_*.py tests/deployment/test_stage9_v5d10_*.py
+          python -m mypy scripts/stage9_v5d10_*.py
+          python -m mypy --platform win32 scripts/stage9_v5d10_*.py
+          python -m pytest -q --confcutdir=tests/deployment \
+            tests/deployment/test_stage9_v5d10_*.py \
+            -p pytest_cov.plugin --cov=scripts.stage9_v5d10_contract \
+            --cov=scripts.stage9_v5d10_builder --cov=scripts.stage9_v5d10_launch \
+            --cov=scripts.stage9_v5d10_abi \
+            --cov-branch --cov-append --cov-report=xml:stage9-v5d5-coverage.xml \
+            --junitxml=stage9-v5d10-static.xml
+      - name: Zachowaj wyniki statyczne i zakres regresji
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -528,6 +542,7 @@ jobs:
             stage9-v5d5-static.xml
             stage9-v5d5-v5d2-regression.xml
             stage9-v5d8-static.xml
+            stage9-v5d10-static.xml
             stage9-v5d5-coverage.xml
             stage9-v5d5.coverage
           if-no-files-found: error
@@ -578,10 +593,14 @@ jobs:
               *(f"scripts/stage9_v5d6_{module}.py" for module in ("headers", "inspect_greenlet", "inspect_wheelhouse")),
               *(f"scripts/stage9_v5d7_{module}.py" for module in ("collect_evidence", "focused", "inspect_wheelhouse", "native", "omissions", "shared")),
           }
+          linux_required = {
+              "scripts/stage9_v5d8_collect_physical.py",
+              *(f"scripts/stage9_v5d10_{module}.py" for module in ("abi", "contract", "builder", "launch")),
+          }
           for runner, path in zip(runners, expected, strict=True):
               data = CoverageData(basename=str(path))
               data.read()
-              required_for_runner = required | ({"scripts/stage9_v5d8_collect_physical.py"} if runner == "ubuntu-24.04" else set())
+              required_for_runner = required | linux_required if runner == "ubuntu-24.04" else required
               if not data.has_arcs() or not required_for_runner.issubset({name.replace("\\", "/") for name in data.measured_files()}):
                   raise SystemExit("V5D5_COVERAGE_SCOPE_REFUSED")
           subprocess.run([sys.executable, "-m", "coverage", "combine", "--keep", *(str(path) for path in expected)], check=True, timeout=120)
