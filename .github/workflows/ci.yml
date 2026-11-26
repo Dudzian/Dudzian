@@ -1696,6 +1696,7 @@ jobs:
 
       - name: Resolve latest Stress Lab run id
         id: stress-lab-run
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
@@ -1712,15 +1713,22 @@ jobs:
             is_protected_context=true
           fi
 
+          # The Actions status filter can omit successful runs from the list.
+          # Check the run metadata before selecting a report.
           run_id="$(gh api \
             --method GET \
+            --paginate \
             -H 'Accept: application/vnd.github+json' \
             "/repos/${{ github.repository }}/actions/workflows/stress-lab-report.yml/runs" \
             -f "branch=${BRANCH_NAME}" \
             -f "head_sha=${GITHUB_SHA}" \
-            -f "status=success" \
-            -f "per_page=1" \
-            --jq '.workflow_runs[0].id')"
+            -f 'per_page=100' \
+            | jq -sr --arg branch "${BRANCH_NAME}" --arg sha "${GITHUB_SHA}" '
+                first(.[] | .workflow_runs[] | select(
+                  .head_branch == $branch and .head_sha == $sha and
+                  .status == "completed" and .conclusion == "success"
+                )).id
+              ')"
 
           if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
             if [ "${is_protected_context}" = "true" ]; then
@@ -1744,7 +1752,8 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.stress-lab-run.outputs.run_id }}
           name: stress-lab-report
-          path: artifacts/stress-lab-report
+          # The archive stores the report files at its root.
+          path: artifacts/stress-lab-report/reports/stress_lab
 
       - name: Generate skipped parity report for missing Stress Lab artefact
         if: steps.stress-lab-run.outputs.missing == 'true'
