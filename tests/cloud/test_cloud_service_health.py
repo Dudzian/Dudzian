@@ -255,10 +255,13 @@ def test_cloud_auth_servicer_propagates_cloud_metadata() -> None:
     headers = {"x-bot-cloud-health": "0", "x-bot-cloud-last-error": "boom"}
 
     class _Manager:
-        def authorize(self, _request):
+        def authorize(self, _request, *, peer=None):
             raise CloudAuthorizationError("denied")
 
     class _RpcContext:
+        def peer(self):
+            return "ipv4:127.0.0.1:1234"
+
         def __init__(self) -> None:
             self.initial_metadata: list[tuple[str, str]] | None = None
             self.trailing_metadata: list[tuple[str, str]] | None = None

@@ -969,6 +969,11 @@ class CloudAuthServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.IssueChallenge = channel.unary_unary(
+                '/botcore.trading.v1.CloudAuthService/IssueChallenge',
+                request_serializer=trading__pb2.CloudChallengeRequest.SerializeToString,
+                response_deserializer=trading__pb2.CloudChallengeResponse.FromString,
+                _registered_method=True)
         self.AuthorizeClient = channel.unary_unary(
                 '/botcore.trading.v1.CloudAuthService/AuthorizeClient',
                 request_serializer=trading__pb2.CloudAuthRequest.SerializeToString,
@@ -979,6 +984,12 @@ class CloudAuthServiceStub(object):
 class CloudAuthServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
+    def IssueChallenge(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def AuthorizeClient(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -988,6 +999,11 @@ class CloudAuthServiceServicer(object):
 
 def add_CloudAuthServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'IssueChallenge': grpc.unary_unary_rpc_method_handler(
+                    servicer.IssueChallenge,
+                    request_deserializer=trading__pb2.CloudChallengeRequest.FromString,
+                    response_serializer=trading__pb2.CloudChallengeResponse.SerializeToString,
+            ),
             'AuthorizeClient': grpc.unary_unary_rpc_method_handler(
                     servicer.AuthorizeClient,
                     request_deserializer=trading__pb2.CloudAuthRequest.FromString,
@@ -1003,6 +1019,33 @@ def add_CloudAuthServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class CloudAuthService(object):
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def IssueChallenge(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/botcore.trading.v1.CloudAuthService/IssueChallenge',
+            trading__pb2.CloudChallengeRequest.SerializeToString,
+            trading__pb2.CloudChallengeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def AuthorizeClient(request,

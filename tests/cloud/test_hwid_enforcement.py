@@ -55,8 +55,10 @@ def _cloud_server(tmp_path: Path):
         server.stop(0)
 
 
-def _build_signature(license_id: str, fingerprint: str) -> trading_pb2.CloudAuthSignature:
-    payload = {"license_id": license_id, "fingerprint": fingerprint, "nonce": "pytest"}
+def _build_signature(
+    license_id: str, fingerprint: str, nonce: str
+) -> trading_pb2.CloudAuthSignature:
+    payload = {"license_id": license_id, "fingerprint": fingerprint, "nonce": nonce}
     signature = sign_license_payload(payload, fingerprint=fingerprint, secret=b"demo-secret")
     return trading_pb2.CloudAuthSignature(
         algorithm=signature.get("algorithm", ""),
@@ -77,12 +79,16 @@ def test_cloud_hwid_enforcement_blocks_unauthorized_clients(_cloud_server):
     assert unauthorized.value.code() == grpc.StatusCode.UNAUTHENTICATED
 
     auth_stub = trading_pb2_grpc.CloudAuthServiceStub(channel)
-    signature = _build_signature("LIC-TRIAL-1", "HW-DEMO-1")
+    challenge = auth_stub.IssueChallenge(
+        trading_pb2.CloudChallengeRequest(fingerprint="HW-DEMO-1", license_id="LIC-TRIAL-1"),
+        timeout=2,
+    )
+    signature = _build_signature("LIC-TRIAL-1", "HW-DEMO-1", challenge.nonce)
     response = auth_stub.AuthorizeClient(
         trading_pb2.CloudAuthRequest(
             fingerprint="HW-DEMO-1",
             license_id="LIC-TRIAL-1",
-            nonce="pytest",
+            nonce=challenge.nonce,
             signature=signature,
         ),
         timeout=2,
