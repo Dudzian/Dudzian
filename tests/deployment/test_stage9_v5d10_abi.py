@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -35,7 +36,8 @@ def observer_environment(environment: Any, tmp_path: Path, monkeypatch: pytest.M
         assert Path(path).name == "stage9_v5d4_abi.py"
         return {"diagnose": partial(legacy.diagnose, reader=lambda path: records[str(path)])}
 
-    monkeypatch.setattr(observer.runpy, "run_path", analyzer)
+    # The Windows file reader in the legacy ABI also uses the shared runpy module.
+    monkeypatch.setattr(observer, "runpy", SimpleNamespace(run_path=analyzer))
     return request, expectations, records, library
 
 

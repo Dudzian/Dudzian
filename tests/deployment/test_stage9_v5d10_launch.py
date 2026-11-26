@@ -25,8 +25,15 @@ pytestmark = [
 ]
 
 
+def mkdir_private(path: Path) -> None:
+    if not path.is_dir():
+        mkdir_private(path.parent)
+        path.mkdir(mode=0o700)
+        path.chmod(0o700)
+
+
 def put(path: Path, data: bytes) -> None:
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    mkdir_private(path.parent)
     path.write_bytes(data)
     path.chmod(0o600)
 
@@ -34,7 +41,7 @@ def put(path: Path, data: bytes) -> None:
 @pytest.fixture
 def sealed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = tmp_path / "sealed"
-    root.mkdir(mode=0o700)
+    mkdir_private(root)
     base = tmp_path / "base"
     put(base / "statistics.py", b"answer = 42\n")
     put(
@@ -79,6 +86,23 @@ def seal(root: Path, receipt: dict[str, Any]) -> str:
     data = contract.canonical(receipt) + b"\n"
     put(root / "ENVIRONMENT.json", data)
     return contract.digest(data)
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o077], ids=["umask-0022", "umask-0077"])
+def test_fixture_creates_private_directories_under_umask(tmp_path: Path, mask: int) -> None:
+    root = tmp_path / "sealed"
+    previous = os.umask(mask)
+    try:
+        mkdir_private(root)
+        put(root / "packages/scripts/preflight.py", b"synthetic\n")
+    finally:
+        os.umask(previous)
+
+    assert contract.inventory(root)["directories"] == {
+        ".": 0o700,
+        "packages": 0o700,
+        "packages/scripts": 0o700,
+    }
 
 
 def test_verify_exact_seal_is_static(sealed) -> None:

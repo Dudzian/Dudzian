@@ -236,7 +236,9 @@ def test_coverage_gate_combines_all_three_real_data_files(
     assert len(collector) == 1
     assert combined.lines(collector[0]) == [1]
     for path in V5D10_MODULES:
-        assert combined.lines(path) == [1]
+        matches = [name for name in combined.measured_files() if name.replace("\\", "/") == path]
+        assert len(matches) == 1
+        assert combined.lines(matches[0]) == [1]
     for module in CURRENT_MODULES:
         matches = [
             name
