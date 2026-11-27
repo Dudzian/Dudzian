@@ -33,7 +33,7 @@ python -m scripts.stage9_v5d11_qualify \
   --static-report-sha256 "$APPROVED_STATIC_REPORT_SHA256" \
   --evidence "$PRIVATE_REVIEW_DIR/native-evidence.json" \
   --evidence-sha256 "$APPROVED_NATIVE_EVIDENCE_SHA256" \
-  --artifacts "$PRIVATE_REVIEW_DIR/artifacts"
+  --artifacts "$PRIVATE_REVIEW_DIR"
 ```
 
 Pomiń trzy ostatnie opcje, gdy nie ma fizycznego materiału. Wynik `NOT_TESTED`
@@ -44,37 +44,29 @@ CLI Observera V5d1 ma osobny kontrakt kodu 2.
 
 ## Oddzielnie autoryzowana replika diagnostyczna
 
-Przygotuj replikę według tego samego planu plików, aliasów i montowań oraz
-przypiętych polityk. Zbierz własne identyfikatory przestrzeni i mountinfo
-repliki. Utrwal AppArmor i seccomp załadowane przed exec. Sprawdź brak
-odziedziczonych FD, obcych bibliotek, modułów Pythona oraz zapisu. W przypadku
-qemu-img sprawdź również docelową etykietę AppArmor i zachowane ograniczenia
-seccomp, NNP i capabilities potomka. Dozwolony sampler musi działać przed
-pierwszym exec i obejmować wszystkie procesy oraz ich zakończenie. Utrata
-zdarzeń, ucięty ślad lub wyjście poza zakres blokują kwalifikację. Zachowaj
-istniejące zabezpieczenia hosta podczas przechwytywania.
+Tryb `diagnose` tworzy nową replikę, sprawdza jej pomiar i zwalnia bramkę
+dopiero po podpisie recenzenta. Wszystkie pięć sond dzieli ten widok.
+Kolektor potwierdza PID i przodka, tożsamość przestrzeni, plik wykonywalny,
+AppArmor, seccomp, NNP oraz capabilities. Proces lub dowód poza ustaloną
+granicą blokuje ocenę. Szybki potomek qemu-img może zakończyć się przed
+uzyskaniem mapy. Taką próbę kwalifikator odrzuca. [Polecenie operatora](stage9_v5d11_observer_isolation.md)
 
 | Przypadek | Oczekiwana czynność |
 | --- | --- |
 | `python-startup` | Przypięty interpreter `-I -S -B`, pusta czynność diagnostyczna. |
-| `python-imports` | Przypięty finder V5d10 i `exercise_imports()` z [payloadu diagnostycznego](../../scripts/stage9_v5d11_diagnostic.py). |
-| `python-libvirt` | Ten sam finder i `exercise_libvirt()` z zatwierdzonym, istniejącym testowym UUID i siecią. |
+| `python-imports` | Izolowany interpreter, stały katalog przypiętych pakietów i `exercise_imports()` z [payloadu diagnostycznego](../../scripts/stage9_v5d11_diagnostic.py). |
+| `python-libvirt` | Ten sam przypięty katalog i `exercise_libvirt()` z zatwierdzonym, istniejącym testowym UUID i siecią. |
 | `qemu-raw`, `qemu-qcow2` | Przypięty qemu-img wywołany przez deskryptor, z `info --output=json -f raw` albo `info --output=json -f qcow2` na osobnym deskryptorze niezmiennej kopii fixture. |
 
-Dla diagnostyki glibc zbierz stderr `LD_DEBUG=files,bindings,versions` bez
-`LD_DEBUG_OUTPUT`. Jeżeli potrzebny jest dodatkowy przypadek z `LD_BIND_NOW=1`,
-zapisz go oddzielnie, ponieważ zmienia moment rozwiązywania symboli. Powiąż
-normalną i diagnostyczną ścieżkę przez zapisany exec, piny obiektów i odczyty
-map z jądra. `LD_DEBUG` zmienia środowisko względem launchera. Przejście
-AppArmor `Px` qemu-img może usunąć `LD_*`. Jeżeli standardowy ślad glibc jest
-dostępny wyłącznie w replice ze zmienionymi ustawieniami, osobna kwalifikacja
-dokładnego potomka w niezmienionym widoku pozostaje `NOT_TESTED`. Do tego kroku
-potrzebny jest zatwierdzony kolektor zewnętrzny działający przy zachowanych
-politykach i dostarczający porównywalne zdarzenia. Aktualny bootstrap służy do
-pomiaru widoku i nie ma trybu wykonania tego payloadu.
+Kolektor zapisuje stderr glibc `LD_DEBUG=files,bindings,versions`,
+surowe i znormalizowane mapy, status, etykiety i tablice symboli. Osobny
+profil diagnostyczny qemu-img używa przejścia `px`, ponieważ `Px` czyści
+`LD_DEBUG`. Wariant diagnostyczny ma odrębne piny do przeglądu i zachowuje
+oba składniki etykiety potomka. Wynik dotyczy tego wariantu i zmierzonych
+przypadków. Widok oraz loader przyszłego preflight Observera mają nadal
+status `NOT_TESTED`.
 
-Zachowaj oryginalne mapy, status, AppArmor oraz zdarzenia `open`, `mmap`, exec
-i zamknięcia procesu. Powiąż `st_dev` i `st_ino` odczytanego pliku z mapą,
+Powiąż `st_dev` i `st_ino` odczytanego pliku z mapą,
 zweryfikuj hash tych samych bajtów i zapisz `LC_ALL=C readelf --dyn-syms -W`
 z tego obiektu. Biblioteka zwolniona przez `dlclose` wymaga powiązania z jej
 wcześniejszym mapowaniem. Ślad i nazwa SONAME bez potwierdzenia rzeczywistej
@@ -89,8 +81,8 @@ niepewność. Przypadki diagnostyczne nie rozszerzają listy bibliotek A.
 W tej samej replice udostępnij jeden root-owned socket `libvirt-sock-ro` albo
 `virtqemud-sock-ro`. Zmierz `device`, `inode`, `uid`, `gid` i tryb po obu
 stronach bind mount. Konfiguracja klienta ma dokładne bajty
-`uri_default = "qemu:///system"` z końcowym LF. Zewnętrznie zarejestruj wybrane
-ścieżki `connect(2)` i ustal `SO_PEERCRED` po obu stronach widoku. PID demona
+`uri_default = "qemu:///system"` z końcowym LF. Kolektor wiąże utrzymane połączenia z inode socketu przez `SOCK_DIAG` i ustala
+`SO_PEERCRED` po obu stronach widoku. Wynik obejmuje ustanowione połączenia. PID demona
 spoza prywatnego PID namespace może przyjąć 0 wewnątrz. Na hoście przypnij PID,
 start ticks, `/proc/PID/exe`, cmdline, pliki konfiguracji, jednostki i wszystkie
 effective drop-ins oraz przyporządkuj inode listenera do aktywnej jednostki i
@@ -121,7 +113,7 @@ i klucze `profile`, `receipt_sha256`, `abi_request_sha256`,
 ma dokładnie `path` (względem `--artifacts`) i `sha256` (dokładne bajty).
 
 - `view` zawiera referencję `mountinfo`, `namespaces` z `mnt`, `pid`, `net`,
-  oraz `apparmor_sha256` i `seccomp_sha256`. Mountinfo ma obejmować dokładnie
+  oraz `apparmor_sha256`, `seccomp_sha256` i `purpose=diagnostic`. Mountinfo ma obejmować dokładnie
   `/`, prywatny `/proc`, `/dev/null` i pojedynczy socket odczytowy.
 - `libvirt` zawiera `socket`, `socket_identity`, `host_socket_identity`,
   `peer`, `host_peer`, `daemon`, `client_config_sha256`, `uri`, `connect_paths`,

@@ -395,6 +395,8 @@ def test_measure_from_staging_to_shutdown_without_dispatch(tmp_path, monkeypatch
         )
 
     monkeypatch.setattr(operator, "stage", fake_stage)
+    runtime = {"apply_tree": lambda *a: None, "verify_tree": lambda *a: None}
+    monkeypatch.setattr(operator, "load_runtime", lambda *a: (runtime, b"runtime", {}))
 
     class FakeProcess:
         stdin = io.BytesIO()
@@ -506,3 +508,254 @@ def test_build_refuses_relative_target_and_creates_static_worker(tmp_path):
         "seccomp_sha256": contract.digest(operator.seccomp_bytes(output)),
     }
     assert stat.S_IMODE(output.stat().st_mode) == 0o755
+
+
+def diagnostic_fixture(tmp_path):
+    manifest = sample_manifest(tmp_path)
+    paths = {
+        "raw": "/var/lib/libvirt/images/synthetic.raw",
+        "qcow2": "/var/lib/libvirt/images/synthetic.qcow2",
+    }
+    manifest["scratch"] = str(tmp_path)
+    manifest["data_files"] = {
+        path: {"source": str(tmp_path / name), "sha256": SHA} for name, path in paths.items()
+    }
+    raw = contract.canonical(manifest)
+    measured = {
+        "profile": operator.EVIDENCE,
+        "status": "CANDIDATE_ONLY",
+        "manifest_sha256": contract.digest(raw),
+        "runtime_receipt_sha256": SHA,
+        "immutable_images": dict.fromkeys(paths.values(), {}),
+    }
+    measurement = tmp_path / "measurement.json"
+    measurement.write_bytes(contract.canonical(measured))
+    spec = {
+        "profile": operator.DIAGNOSTIC_SPEC,
+        "manifest": str(tmp_path / "inputs.json"),
+        "manifest_sha256": contract.digest(raw),
+        "measurement": str(measurement),
+        "measurement_sha256": contract.digest(measurement.read_bytes()),
+        "runtime_receipt_sha256": SHA,
+        "payload_sha256": SHA,
+        "static_report": str(tmp_path / "report.json"),
+        "static_report_sha256": SHA,
+        "apparmor_source_sha256": "1" * 64,
+        "apparmor_compiled_sha256": "2" * 64,
+        "readonly_implementation_sha256": SHA,
+        "domain_uuid": "00000000-0000-4000-8000-000000000000",
+        "network_name": "synthetic",
+        "fixture_socket": str(tmp_path / "disposable.socket"),
+        "fixture_pid": 42,
+        "fixtures": paths,
+    }
+    spec_path = tmp_path / "diagnostic.json"
+    spec_path.write_bytes(contract.canonical(spec))
+    return raw, manifest, spec, spec_path
+
+
+@pytest.mark.parametrize("change", [None, "manifest", "fixture", "measurement", "runtime"])
+def test_diagnostic_input_binding(tmp_path, monkeypatch, change):
+    raw, manifest, spec, path = diagnostic_fixture(tmp_path)
+    monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    if change == "manifest":
+        spec["manifest_sha256"] = SHA
+    elif change == "fixture":
+        spec["fixtures"]["qcow2"] = spec["fixtures"]["raw"]
+    elif change == "measurement":
+        spec["measurement_sha256"] = SHA
+    elif change == "runtime":
+        spec["runtime_receipt_sha256"] = "0" * 64
+    path.write_bytes(contract.canonical(spec))
+    if change:
+        with pytest.raises(operator.Refusal):
+            operator.diagnostic_inputs(path, Path(spec["manifest"]), raw, manifest, CONTRACT)
+    else:
+        assert operator.diagnostic_inputs(
+            path, Path(spec["manifest"]), raw, manifest, CONTRACT
+        ) == (
+            path.read_bytes(),
+            spec,
+        )
+        diagnostic = operator.diagnostic_policy(manifest, spec)
+        assert manifest["apparmor_source_sha256"] == SHA
+        assert diagnostic["apparmor_compiled_sha256"] == "2" * 64
+        assert operator.apparmor_command(diagnostic, "check", diagnostic=True)[-1] == "--diagnostic"
+
+
+@pytest.mark.parametrize("expiry", [999, 1001, 4601])
+def test_authorization_expiry_and_domain_handoff(tmp_path, monkeypatch, expiry):
+    _, manifest, _, _ = diagnostic_fixture(tmp_path)
+    path = tmp_path / "approval.json"
+    envelope = {"review": {"nonce": SHA, "expires_utc": expiry}, "signature_hex": "placeholder"}
+    path.write_bytes(contract.canonical(envelope))
+    monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator.time, "time", lambda: 1000)
+    monkeypatch.setattr(operator, "review_key", lambda *a: b"key")
+    calls = []
+    monkeypatch.setattr(operator, "verify_review", lambda *a, **kw: calls.append((a, kw)))
+    if expiry == 1001:
+        assert operator.diagnostic_authority(path, b"spec", manifest, CONTRACT)[1] == SHA
+        assert calls[0][0][2] == {
+            "spec_sha256": contract.digest(b"spec"),
+            "nonce": SHA,
+            "expires_utc": expiry,
+        }
+        assert calls[0][1] == {
+            "profile": operator.DIAGNOSTIC_REVIEW,
+            "decision": "AUTHORIZE_NATIVE_DIAGNOSTIC_ONLY",
+        }
+    else:
+        with pytest.raises(operator.Refusal, match="AUTHORIZATION_WINDOW"):
+            operator.diagnostic_authority(path, b"spec", manifest, CONTRACT)
+        assert not calls
+
+
+def test_dedicated_account_checks_every_uid_gid_and_supplementary_group(tmp_path):
+    proc = tmp_path / "42"
+    proc.mkdir()
+    status = proc / "status"
+    status.write_bytes(b"Uid:\t1 2 3 4\nGid:\t6 7 8 9\nGroups:\t10 11\n")
+    operator.check_dedicated_account(5, 12, tmp_path)
+    for uid, group in ((4, 12), (5, 8), (5, 10)):
+        with pytest.raises(operator.Refusal, match="ACCOUNT_IN_USE"):
+            operator.check_dedicated_account(uid, group, tmp_path)
+
+
+def test_stage_diagnostic_uses_only_fixed_carrier_and_data(tmp_path, monkeypatch):
+    _, manifest, spec, _ = diagnostic_fixture(tmp_path)
+    tree = tmp_path / "test-view"
+    (tree / Path(operator.DIAGNOSTIC_SCRIPT).parent.relative_to("/")).mkdir(parents=True)
+    monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator, "pinned", lambda *a: b"trusted payload")
+    calls = []
+    monkeypatch.setattr(os, "chown", lambda *a: calls.append(a))
+    operator.stage_diagnostic(tree, manifest, spec, CONTRACT)
+    payload = tree / operator.DIAGNOSTIC_SCRIPT[1:]
+    config = tree / operator.DIAGNOSTIC_CONFIG[1:]
+    assert payload.read_bytes() == b"trusted payload"
+    assert contract.loads(config.read_bytes())["images"]["raw"]["sha256"] == SHA
+    assert calls == [(payload, 0, manifest["gid"]), (config, 0, manifest["gid"])]
+    assert all(stat.S_IMODE(item.stat().st_mode) == 0o440 for item in (payload, config))
+
+
+def test_diagnostic_frame_requires_actual_identity_and_image_check():
+    header, mountinfo = measured()
+    for expected, diagnostic, images in (
+        (header, False, False),
+        ({**header, "images_verified": True}, False, True),
+        (
+            {
+                **header,
+                "apparmor_label": operator.APPARMOR_LABEL.replace(" (", "-diagnostic ("),
+                "host_pid": 99,
+                "images_verified": True,
+            },
+            True,
+            True,
+        ),
+    ):
+        assert operator.read_frame(
+            frame(expected, mountinfo),
+            SOCKET,
+            CONTRACT,
+            LAUNCH,
+            diagnostic=diagnostic,
+            images=images,
+        ) == (expected, mountinfo)
+    with pytest.raises(operator.Refusal, match="FRAME_REJECTED"):
+        operator.read_frame(frame(header, mountinfo), SOCKET, CONTRACT, LAUNCH, diagnostic=True)
+
+
+def test_one_shot_authorization_marker_never_overwrites(tmp_path):
+    marker = tmp_path / "diagnostic-used"
+    operator.consume_diagnostic_authority(marker, b"signed-fixture")
+    with pytest.raises(FileExistsError):
+        operator.consume_diagnostic_authority(marker, b"duplicate")
+    assert marker.read_bytes() == b"signed-fixture"
+
+
+@pytest.mark.parametrize("failure", [None, "runtime", "policy", "socket", "worker"])
+def test_diagnostic_operator_only_releases_a_reviewed_view(tmp_path, monkeypatch, failure):
+    from contextlib import nullcontext
+
+    raw, manifest, spec, spec_path = diagnostic_fixture(tmp_path)
+    manifest_path = Path(spec["manifest"])
+    tree = tmp_path / "staging"
+    output = tmp_path / "run"
+    approval = contract.canonical({"review": {"expires_utc": 12345}})
+    bootstrap = tmp_path / "bootstrap"
+    socket_id = (11, 12, 0, 13, 0o666)
+    header, mountinfo = measured()
+    header["host_pid"] = 42
+    receipt = {"abi_request_sha256": SHA}
+    images = SimpleNamespace(arguments=lambda: ["--images"], evidence=lambda: {"fixture": {}})
+    stages = (
+        tree,
+        {},
+        socket_id,
+        receipt,
+        "0" * 64 if failure == "runtime" else SHA,
+        b"runtime",
+        images,
+    )
+    process = SimpleNamespace(wait=lambda **kw: 5 if failure == "worker" else 0)
+    calls = []
+
+    def capture(*args, staging_root, on_libvirt):
+        calls.append("diagnostic")
+        assert staging_root == tree
+        assert on_libvirt(123) == [SOCKET]
+        return {"python-startup": {}}, {"view": {}, "read_results": {}, "connect_paths": [SOCKET]}
+
+    daemon_id = [*socket_id] if failure != "socket" else [1, *socket_id[1:]]
+    tools = {
+        "v5d11_capture": {"collect": capture},
+        "v5d11_qualify": {
+            "PROFILE": "evidence",
+            "_objects": lambda *a: None,
+            "assess": lambda *a, **kw: {"status": "CANDIDATE"},
+        },
+        "v5d11_libvirt": {
+            "measure_host": lambda *a: {"host_socket_identity": daemon_id},
+            "collect_fixture_denial": lambda *a: calls.append("denial"),
+            "observe_live_connections": lambda *a: [SOCKET],
+            "assemble": lambda *a: {"socket": SOCKET},
+        },
+    }
+    monkeypatch.setattr(operator, "operator_inputs", lambda *a: (raw, manifest, CONTRACT, LAUNCH))
+    monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator, "diagnostic_inputs", lambda *a: (spec_path.read_bytes(), spec))
+    monkeypatch.setattr(operator, "diagnostic_authority", lambda *a: (approval, SHA))
+    monkeypatch.setattr(operator, "trusted_bootstrap", lambda *a: bootstrap)
+    monkeypatch.setattr(operator, "pinned", lambda *a, **kw: b"{}")
+    monkeypatch.setattr(operator, "tool", tools.__getitem__)
+    monkeypatch.setattr(operator, "stage_diagnostic", lambda *a: None)
+    monkeypatch.setattr(operator, "staged", lambda *a: nullcontext(stages))
+    monkeypatch.setattr(operator, "check_dedicated_account", lambda *a: None)
+    monkeypatch.setattr(
+        operator, "isolated_worker", lambda *a, **kw: nullcontext((process, header, mountinfo))
+    )
+    monkeypatch.setattr(operator.time, "time", lambda: 12344)
+    policies = [{"kernel": 1}, {"kernel": 2 if failure == "policy" else 1}, {"kernel": 1}]
+    monkeypatch.setattr(operator, "check_policy", lambda *a, **kw: policies.pop(0))
+    marker = manifest_path.parent / f"diagnostic-used-{SHA}"
+    if failure:
+        reasons = {
+            "runtime": "RUNTIME_PIN_MISMATCH",
+            "policy": "KERNEL_POLICY_CHANGED",
+            "socket": "SOCKET_IDENTITY_CHANGED",
+            "worker": "EXECUTION_FAILED",
+        }
+        with pytest.raises(operator.Refusal, match=reasons[failure]):
+            operator.diagnose(manifest_path, spec_path, tmp_path / "authorization", output)
+        assert calls == (["denial", "diagnostic"] if failure == "worker" else [])
+        assert marker.exists() == (failure in {"socket", "worker"})
+        assert not (output / "native-evidence.json").exists()
+    else:
+        operator.diagnose(manifest_path, spec_path, tmp_path / "authorization", output)
+        assert calls == ["denial", "diagnostic"] and marker.read_bytes() == approval
+        evidence = (output / "native-evidence.json").read_bytes()
+        record = contract.loads((output / "diagnostic-run.json").read_bytes())
+        assert record["evidence_sha256"] == contract.digest(evidence)
+        assert contract.loads(evidence)["view"]["purpose"] == "diagnostic"

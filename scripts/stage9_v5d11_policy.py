@@ -23,6 +23,11 @@ LABELS = (
     "cryptohunter-observer-preflight-v5d11-a",
     "cryptohunter-observer-preflight-v5d11-qemu",
 )
+DIAGNOSTIC_LABELS = tuple(label + "-diagnostic" for label in LABELS)
+DIAGNOSTIC_FILES = {
+    "/run/stage9-v5d11/diagnostic.py",
+    "/run/stage9-v5d11/diagnostic-inputs.json",
+}
 SOCKETS = {"/run/libvirt/libvirt-sock-ro", "/run/libvirt/virtqemud-sock-ro"}
 DATA_PREFIXES = ("/etc/cryptohunter/observer-v5d1/", "/var/lib/libvirt/images/")
 IMAGE_PREFIX = DATA_PREFIXES[1]
@@ -68,7 +73,12 @@ def read_pinned(path: Path, pin: str, schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def render(
-    receipt: dict[str, Any], request: dict[str, Any], socket: str, data_paths: list[str]
+    receipt: dict[str, Any],
+    request: dict[str, Any],
+    socket: str,
+    data_paths: list[str],
+    *,
+    diagnostic: bool = False,
 ) -> bytes:
     """Build deterministic exact file rules from the already validated V5d10 inputs."""
     root = PurePosixPath(literal(receipt["root"]))
@@ -137,6 +147,14 @@ def render(
     )
     observer.update({name: "rk" if name in images else "r" for name in data_paths})
     observer.update(dict.fromkeys(CONFIGURATION | {str(root / "ENVIRONMENT.json")}, "r"))
+    if diagnostic:
+        observer = {
+            path: mode
+            for path, mode in observer.items()
+            if not path.startswith((f"{root}/packages/scripts/", f"{root}/packages/deployment/"))
+            and path not in {f"{root}/launch.py", f"{root}/contract.py", f"{root}/runtime-audit.py"}
+        }
+        observer.update(dict.fromkeys(DIAGNOSTIC_FILES, "r"))
     observer[socket] = "rw"
     observer[interpreter] = "mrix"
     qemu = dict.fromkeys(
@@ -153,6 +171,19 @@ def render(
         template.count("@OBSERVER_RULES@") == template.count("@QEMU_RULES@") == 1,
         "APPARMOR_TEMPLATE_REJECTED",
     )
+    if diagnostic:
+        require(
+            template.count("rmPx") == 1 and template.count("deny ptrace,") == 2,
+            "APPARMOR_DIAGNOSTIC_TEMPLATE_REJECTED",
+        )
+        for label in LABELS:
+            template = template.replace(label, label + "-diagnostic")
+        # Px clears LD_DEBUG. The diagnostic entrypoint supplies the complete fixed env.
+        # Host procfs reads require readby even when the root reader has CAP_SYS_PTRACE.
+        template = template.replace("rmPx", "rmpx").replace(
+            "deny ptrace,",
+            "ptrace (readby) peer=unconfined,\n  deny ptrace (read, trace, tracedby),",
+        )
     return (
         template.replace("@OBSERVER_RULES@", observer_source)
         .replace("@QEMU_RULES@", qemu_source)
@@ -224,18 +255,20 @@ def kernel_revision(root: Path) -> str:
     return raw.removesuffix(b"\n").decode("ascii")
 
 
-def active_profiles(expected: bytes, root: Path = SECURITYFS) -> tuple[str, dict[str, str]]:
+def active_profiles(
+    expected: bytes, root: Path = SECURITYFS, *, labels: tuple[str, ...] = LABELS
+) -> tuple[str, dict[str, str]]:
     """Verify exported kernel blob for both exact enforced labels in one revision."""
     before = kernel_revision(root)
     entries = root / "policy/profiles"
     active: dict[str, str] = {}
     for entry in entries.iterdir():
-        if not any(re.fullmatch(re.escape(name) + r"\.[0-9]+", entry.name) for name in LABELS):
+        if not any(re.fullmatch(re.escape(name) + r"\.[0-9]+", entry.name) for name in labels):
             continue
         require(stat.S_ISDIR(entry.lstat().st_mode), "APPARMOR_PROFILE_DIRECTORY_REJECTED")
         name = fs_read(entry / "name", 128).removesuffix(b"\n").decode("ascii")
         require(
-            name in LABELS and entry.name.startswith(name + ".") and name not in active,
+            name in labels and entry.name.startswith(name + ".") and name not in active,
             "APPARMOR_PROFILE_ID_REJECTED",
         )
         require(fs_read(entry / "mode", 32) == b"enforce\n", "APPARMOR_PROFILE_MODE_REJECTED")
@@ -246,7 +279,7 @@ def active_profiles(expected: bytes, root: Path = SECURITYFS) -> tuple[str, dict
         )
         require(fs_read(raw) == expected, "APPARMOR_KERNEL_POLICY_MISMATCH")
         active[name] = "enforce"
-    require(set(active) == set(LABELS), "APPARMOR_PROFILE_SET_REJECTED")
+    require(set(active) == set(labels), "APPARMOR_PROFILE_SET_REJECTED")
     require(kernel_revision(root) == before, "APPARMOR_POLICY_CHANGED_DURING_READ")
     return before, active
 
@@ -261,13 +294,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-path", action="append", default=[])
     parser.add_argument("--source-sha256")
     parser.add_argument("--compiled-sha256")
+    parser.add_argument("--diagnostic", action="store_true")
     args = parser.parse_args(argv)
     try:
         schema = contract()
         receipt = read_pinned(args.receipt, args.receipt_sha256, schema)
         schema["validate_receipt"](receipt)
         request = read_pinned(args.abi_request, receipt["abi_request_sha256"], schema)
-        source = render(receipt, request, args.socket, args.data_path)
+        source = render(receipt, request, args.socket, args.data_path, diagnostic=args.diagnostic)
         if args.mode in {"render", "compile"}:
             require(
                 args.source_sha256 is None and args.compiled_sha256 is None,
@@ -282,7 +316,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.mode == "load":
             require(fs_read(ATOMIC_SET_LOAD, 32) == b"yes\n", "APPARMOR_ATOMIC_LOAD_UNAVAILABLE")
             parser_run(["--binary", "--add"], binary)
-        revision, profiles = active_profiles(binary)
+        revision, profiles = (
+            active_profiles(binary, labels=DIAGNOSTIC_LABELS)
+            if args.diagnostic
+            else active_profiles(binary)
+        )
         evidence = {
             "profile": "stage9-v5d11-apparmor-verification-v1",
             "source_sha256": args.source_sha256,

@@ -15,5 +15,6 @@
   "apparmor_source_sha256": "<reviewed rendered source hash>",
   "apparmor_compiled_sha256": "<reviewed compiled policy hash>",
   "seccomp_sha256": "<reviewed exact classic BPF hash>",
+  "scratch": "/var/lib/stage9-scratch",
   "data_files": {}
 }

@@ -304,3 +304,15 @@ int main(int argc, char **argv) {
     pin = (root / "deployment/stage9_v5d11/seccomp.bpf.sha256").read_text(encoding="ascii").strip()
     assert hashlib.sha256(bpf).hexdigest() == pin
     subprocess.run([str(binary)], check=True, timeout=10)
+
+
+def test_separate_diagnostic_policy_retains_trace_denials(inputs):
+    receipt, request = inputs
+    source = policy.render(receipt, request, "/run/libvirt/libvirt-sock-ro", [], diagnostic=True)
+    baseline = policy.render(receipt, request, "/run/libvirt/libvirt-sock-ro", [])
+    assert b"rmPx" in baseline and b"rmpx" in source and b"rmPx" not in source
+    assert b"-diagnostic (enforce)" not in baseline
+    assert source.count(b"ptrace (readby) peer=unconfined,") == 2
+    assert source.count(b"deny ptrace (read, trace, tracedby),") == 2
+    assert b'"/run/stage9-v5d11/diagnostic.py" r,' in source
+    assert b'"/run/stage9-v5d11/diagnostic.py" r,' not in baseline

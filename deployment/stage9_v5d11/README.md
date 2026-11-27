@@ -72,3 +72,11 @@ trybu i rewizji oraz rozbieżność eksportu jądra. Oddzielny proces testowy na
 Linux x86-64 instaluje rzeczywisty filtr i sprawdza odmowy. Fizyczne
 potwierdzenie AppArmor, loadera i zachowania potomka `qemu-img` pozostaje
 `NOT_TESTED`.
+
+### Wariant diagnostyczny
+
+Dodaj `--diagnostic` do wywołań `render` i `compile` z tymi samymi pinami
+receipt, ABI i listą dokładnych ścieżek danych. Przekaż oba wyniki do
+niezależnego przeglądu i zapisz ich SHA-256 w `diagnostic.json`. Osobna
+zgoda operatora wymagana jest do dodania tego wariantu. Stosuj instrukcję
+`load-policy --diagnostic-inputs` z [procedury operatora](../../docs/architecture/stage9_v5d11_observer_isolation.md).

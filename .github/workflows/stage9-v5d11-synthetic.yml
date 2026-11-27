@@ -23,7 +23,9 @@ jobs:
       - uses: actions/setup-python@v7
         with: {python-version: '3.12'}
       - name: Zainstaluj narzędzia testowe
-        run: python -m pip install pytest pytest-cov 'diff-cover>=9,<12' 'ruff==0.14.11' 'mypy==1.10.0'
+        run: >-
+          python -m pip install pytest pytest-cov 'diff-cover>=9,<12'
+          'ruff==0.14.11' 'mypy==1.10.0' 'defusedxml==0.7.1' 'cryptography==50.0.2'
       - name: Sprawdź styl i typy Linux oraz Win32
         run: |
           python -m ruff check scripts/stage9_v5d11*.py tests/deployment/test_stage9_v5d11*.py
@@ -33,23 +35,25 @@ jobs:
       - name: Wykonaj testy syntetyczne bez uprawnień roota
         env: {PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'}
         run: |
+          coverage_modules=()
+          for module in scripts/stage9_v5d11*.py; do
+            coverage_modules+=("--cov=scripts.$(basename "$module" .py)")
+          done
           python -m pytest -q --confcutdir=tests/deployment \
             tests/deployment/test_stage9_v5d11*.py \
-            -p pytest_cov.plugin --cov-branch \
-            --cov=scripts.stage9_v5d11_operator --cov=scripts.stage9_v5d11_policy \
-            --cov=scripts.stage9_v5d11_qualify --cov=scripts.stage9_v5d11_diagnostic \
+            -p pytest_cov.plugin --cov-branch "${coverage_modules[@]}" \
             --cov-report=xml:stage9-v5d11-coverage.xml --junitxml=stage9-v5d11-static.xml
           python - <<'PY'
+          import os
+          from pathlib import Path
+
           from coverage import CoverageData
 
-          data = CoverageData()
+          data = CoverageData(basename=os.environ.get("COVERAGE_FILE", ".coverage"))
           data.read()
-          expected = {
-              f"scripts/stage9_v5d11_{module}.py"
-              for module in ("diagnostic", "operator", "policy", "qualify")
-          }
+          expected = {path.as_posix() for path in Path("scripts").glob("stage9_v5d11*.py")}
           measured = {name.replace("\\", "/") for name in data.measured_files()}
-          if not data.has_arcs() or not expected.issubset(measured):
+          if not expected or not data.has_arcs() or not expected.issubset(measured):
               raise SystemExit("V5D11_COVERAGE_SCOPE_REFUSED")
           PY
           python -m diff_cover.diff_cover_tool stage9-v5d11-coverage.xml --compare-branch=origin/main --fail-under=70

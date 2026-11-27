@@ -1,0 +1,22 @@
+{
+  "profile": "stage9-v5d11-diagnostic-inputs-v1",
+  "manifest": "/root/stage9-private/inputs.json",
+  "manifest_sha256": "<exact operator inputs hash>",
+  "measurement": "/root/stage9-private/measurement/measurement.json",
+  "measurement_sha256": "<exact measurement hash>",
+  "runtime_receipt_sha256": "<exact runtime receipt candidate hash>",
+  "payload_sha256": "<reviewed diagnostic.py hash>",
+  "static_report": "/root/stage9-private/static-abi.json",
+  "static_report_sha256": "<independently reviewed static ABI report hash>",
+  "apparmor_source_sha256": "<reviewed diagnostic AppArmor source hash>",
+  "apparmor_compiled_sha256": "<reviewed diagnostic AppArmor binary hash>",
+  "readonly_implementation_sha256": "<reviewed daemon RO implementation evidence hash>",
+  "domain_uuid": "00000000-0000-4000-8000-000000000000",
+  "network_name": "stage9-disposable",
+  "fixture_socket": "/root/stage9-private/fixture/libvirt-readonly.sock",
+  "fixture_pid": 12345,
+  "fixtures": {
+    "raw": "/var/lib/libvirt/images/stage9-disposable.raw",
+    "qcow2": "/var/lib/libvirt/images/stage9-disposable.qcow2"
+  }
+}

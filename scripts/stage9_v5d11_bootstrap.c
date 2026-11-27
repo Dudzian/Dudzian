@@ -1,4 +1,4 @@
-/* Trusted Linux measurement of the stage9_v5d10_launch.py process view. */
+/* Trusted Linux measurement and fixed diagnostic execution of the V5d11 view. */
 #define _GNU_SOURCE
 
 #include <errno.h>
@@ -28,8 +28,10 @@
 #include "stage9_v5d11_policy.h"
 
 #define PROFILE "cryptohunter-observer-preflight-v5d11-a"
-#define PROFILE_LABEL PROFILE " (enforce)"
+#define DIAGNOSTIC_PROFILE PROFILE "-diagnostic"
 #define AUTHORITY "/run/stage9-v5d11/launch-authorization.json"
+#define DIAGNOSTIC_PAYLOAD "/run/stage9-v5d11/diagnostic.py"
+#define DIAGNOSTIC_INPUTS "/run/stage9-v5d11/diagnostic-inputs.json"
 #define MOUNTINFO_LIMIT (4U * 1024U * 1024U)
 
 struct settings {
@@ -41,6 +43,9 @@ struct settings {
     const char *receipt_sha;
     const char *approval_sha;
     const char *authority;
+    bool diagnostic;
+    char *const *image_args;
+    size_t image_arg_count;
 };
 
 struct namespace_ids {
@@ -96,6 +101,8 @@ static bool absolute_path(const char *value)
         part += length + 1;
     }
 }
+
+#include "stage9_v5d11_images.h"
 
 static void join(char result[PATH_MAX], const char *left, const char *right)
 {
@@ -317,10 +324,12 @@ static size_t read_object(const char *name, char *buffer, size_t size)
     return total;
 }
 
-static void apply_policy(int attr)
+static void apply_policy(int attr, const char *profile)
 {
-    const char command[] = "changeprofile " PROFILE;
-    if (write(attr, command, sizeof(command)) != (ssize_t)sizeof(command) || close(attr) != 0)
+    char command[128];
+    int count = snprintf(command, sizeof(command), "changeprofile %s", profile);
+    if (count < 0 || (size_t)count >= sizeof(command) ||
+        write(attr, command, (size_t)count + 1) != count + 1 || close(attr) != 0)
         fail("BOOTSTRAP_APPARMOR_TRANSITION");
     if (prctl(PR_SET_NO_NEW_PRIVS, 1L, 0L, 0L, 0L) != 0 ||
         prctl(PR_GET_NO_NEW_PRIVS, 0L, 0L, 0L, 0L) != 1 || stage9_v5d11_install_seccomp() != 0 ||
@@ -331,14 +340,17 @@ static void apply_policy(int attr)
     size_t length = read_object("/proc/self/attr/apparmor/current", label, sizeof(label));
     if (length > 0 && label[length - 1] == '\n')
         label[--length] = '\0';
-    if (strcmp(label, PROFILE_LABEL) != 0)
+    char expected[128];
+    count = snprintf(expected, sizeof(expected), "%s (enforce)", profile);
+    if (count < 0 || (size_t)count >= sizeof(expected) || strcmp(label, expected) != 0)
         fail("BOOTSTRAP_APPARMOR_LABEL");
     int probe = open("/proc/self/environ", O_RDONLY | O_CLOEXEC);
     if (probe >= 0 || errno != EACCES)
         fail("BOOTSTRAP_APPARMOR_DENIAL");
 }
 
-static void emit_measurement(struct namespace_ids host, struct stat socket)
+static void emit_measurement(struct namespace_ids host, struct stat socket,
+                             const char *profile, unsigned int host_pid, bool images_verified)
 {
     struct namespace_ids isolated = read_namespaces();
     if (host.mount == isolated.mount || host.pid == isolated.pid || host.network == isolated.network)
@@ -347,24 +359,118 @@ static void emit_measurement(struct namespace_ids host, struct stat socket)
     if (length == 0 || mountinfo[length - 1] != '\n')
         fail("BOOTSTRAP_MOUNTINFO_FORMAT");
 
+    char process[64] = "";
+    if (host_pid != 0) {
+        int written = snprintf(process, sizeof(process), ",\"host_pid\":%u", host_pid);
+        if (written < 0 || (size_t)written >= sizeof(process))
+            fail("BOOTSTRAP_FRAME");
+    }
     char header[512];
     int count = snprintf(header, sizeof(header),
         "{\"protocol\":\"stage9-v5d11-bootstrap-v1\",\"mountinfo_bytes\":%zu,"
         "\"namespaces\":{\"mnt\":%ju,\"pid\":%ju,\"net\":%ju},"
-        "\"apparmor_label\":\"" PROFILE_LABEL "\",\"socket_identity\":[%ju,%ju,%ju,%ju,%ju]}\n",
-        length, isolated.mount, isolated.pid, isolated.network, (uintmax_t)socket.st_dev,
+        "\"apparmor_label\":\"%s (enforce)\",\"socket_identity\":[%ju,%ju,%ju,%ju,%ju]%s%s}\n",
+        length, isolated.mount, isolated.pid, isolated.network, profile, (uintmax_t)socket.st_dev,
         (uintmax_t)socket.st_ino, (uintmax_t)socket.st_uid, (uintmax_t)socket.st_gid,
-        (uintmax_t)(socket.st_mode & 07777));
+        (uintmax_t)(socket.st_mode & 07777), process,
+        images_verified ? ",\"images_verified\":true" : "");
     if (count <= 0 || (size_t)count >= sizeof(header))
         fail("BOOTSTRAP_FRAME");
     write_exact(STDOUT_FILENO, header, (size_t)count);
     write_exact(STDOUT_FILENO, mountinfo, length);
 }
 
-static void parked_gate(void)
+static void protected_diagnostic_file(const char *path, gid_t gid, mode_t mode)
+{
+    struct stat info;
+    if (lstat(path, &info) != 0 || !S_ISREG(info.st_mode) || info.st_uid != 0 ||
+        info.st_gid != gid || (info.st_mode & 07777) != mode || info.st_nlink != 1 || info.st_size <= 0)
+        fail("BOOTSTRAP_DIAGNOSTIC_FILE");
+
+    char ancestor[PATH_MAX];
+    join(ancestor, path, "");
+    for (char *slash = strrchr(ancestor, '/'); slash != NULL && slash != ancestor;
+         slash = strrchr(ancestor, '/')) {
+        *slash = '\0';
+        if (lstat(ancestor, &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != 0 ||
+            (info.st_mode & 0022) != 0)
+            fail("BOOTSTRAP_DIAGNOSTIC_PATH");
+    }
+}
+
+static void execute_diagnostic(char *interpreter)
+{
+    char *const args[] = {interpreter, "-I", "-S", "-B", DIAGNOSTIC_PAYLOAD, "all", NULL};
+    char *const environment[] = {
+        "LANG=C", "LC_ALL=C", "PATH=/usr/bin:/bin", NULL,
+    };
+    if (syscall(SYS_close_range, 3U, UINT_MAX, 0U) != 0)
+        fail("BOOTSTRAP_INHERITED_DESCRIPTORS");
+    execve(interpreter, args, environment);
+    fail("BOOTSTRAP_DIAGNOSTIC_EXEC_FAILED");
+}
+
+static void read_options(struct settings *settings, int argc, char *const argv[])
+{
+    int option = 9;
+    if (option < argc && strcmp(argv[option], "--diagnostic") == 0) {
+        if (argc - option < 2 || strcmp(argv[option + 1], "all") != 0)
+            fail("BOOTSTRAP_DIAGNOSTIC_CASE");
+        settings->diagnostic = true;
+        option += 2;
+    }
+    if (option != argc) {
+        if (strcmp(argv[option], "--images") != 0 || argc - option < 3 || (argc - option) % 2 == 0)
+            fail("BOOTSTRAP_OPTION_REJECTED");
+        settings->image_args = &argv[option + 1];
+        settings->image_arg_count = (size_t)(argc - option - 1);
+    }
+}
+
+static void dispatch_diagnostic(const struct settings *settings)
+{
+    char interpreter[PATH_MAX];
+    join(interpreter, settings->root, "/venv/bin/python3.12");
+    protected_diagnostic_file(interpreter, settings->gid, 0550);
+    protected_diagnostic_file(DIAGNOSTIC_PAYLOAD, settings->gid, 0440);
+    protected_diagnostic_file(DIAGNOSTIC_INPUTS, settings->gid, 0440);
+    struct stat root = path_stat(settings->root);
+    if (root.st_uid != 0 || root.st_gid != settings->gid || (root.st_mode & 07777) != 0550)
+        fail("BOOTSTRAP_DIAGNOSTIC_RUNTIME_ROOT");
+    execute_diagnostic(interpreter);
+}
+
+static size_t gate_line(char *gate, size_t capacity)
+{
+    size_t size = 0;
+    while (size < capacity) {
+        ssize_t read_size = read(STDIN_FILENO, gate + size, 1);
+        if (read_size < 0 && errno == EINTR)
+            continue;
+        if (read_size < 0)
+            fail("BOOTSTRAP_EVIDENCE_READ");
+        if (read_size == 0)
+            break;
+        if (gate[size++] == '\n')
+            return size;
+    }
+    if (size == capacity)
+        fail("BOOTSTRAP_EVIDENCE_LIMIT");
+    return size;
+}
+
+static void parked_gate(const struct settings *settings)
 {
     char gate[69];
-    size_t size = read_bounded(STDIN_FILENO, gate, sizeof(gate));
+    size_t size = gate_line(gate, sizeof(gate) - 1);
+    if (size == sizeof("DIAGNOSTIC\n") - 1 && memcmp(gate, "DIAGNOSTIC\n", size) == 0) {
+        if (!settings->diagnostic)
+            fail("BOOTSTRAP_DIAGNOSTIC_NOT_REQUESTED");
+        /* The supervisor has already verified scoped authorization. Keep the
+         * private control pipe for the fixed diagnostic payload's handshake. */
+        dispatch_diagnostic(settings);
+    }
+    size += read_bounded(STDIN_FILENO, gate + size, sizeof(gate) - size);
     if (size == 0 || (size == 7 && memcmp(gate, "CANCEL\n", 7) == 0))
         _exit(0);
     if (size != 68 || memcmp(gate, "GO ", 3) != 0 || gate[67] != '\n')
@@ -373,12 +479,23 @@ static void parked_gate(void)
     if (!digest_string(gate + 3))
         fail("BOOTSTRAP_GATE_PROTOCOL");
 
-    /* Measurement accepts no release. Review never becomes an exec decision here. */
+    /* Observer release stays closed in both modes. */
     fail("BOOTSTRAP_NATIVE_RELEASE_DISABLED");
+}
+
+static unsigned int worker_host_pid(void)
+{
+    char value[32];
+    ssize_t length = readlink("/proc/self", value, sizeof(value) - 1);
+    if (length <= 0 || (size_t)length >= sizeof(value) - 1)
+        fail("BOOTSTRAP_HOST_PID");
+    value[length] = '\0';
+    return account_id(value);
 }
 
 static void worker(const struct settings *settings, struct namespace_ids host)
 {
+    unsigned int host_pid = settings->diagnostic ? worker_host_pid() : 0;
     char dumpable[8];
     read_object("/proc/sys/fs/suid_dumpable", dumpable, sizeof(dumpable));
     /* A UID change must never transiently permit same-UID host ptrace. */
@@ -399,21 +516,24 @@ static void worker(const struct settings *settings, struct namespace_ids host)
         (authority.st_mode & 07777) != 0444 || authority.st_size != 0)
         fail("BOOTSTRAP_AUTHORITY_PLACEHOLDER");
     drop_privilege(settings->uid, settings->gid);
-    apply_policy(attr);
-    emit_measurement(host, socket);
-    parked_gate();
+    const char *profile = settings->diagnostic ? DIAGNOSTIC_PROFILE : PROFILE;
+    apply_policy(attr, profile);
+    check_image_view(settings->image_args, settings->image_arg_count, settings->gid);
+    emit_measurement(host, socket, profile, host_pid, settings->image_arg_count != 0);
+    parked_gate(settings);
 }
 
 int main(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "--dump-seccomp") == 0)
         return stage9_v5d11_dump_seccomp(STDOUT_FILENO) == 0 ? 0 : 125;
-    if (argc != 9 || getuid() != 0 || geteuid() != 0)
+    if (argc < 9 || getuid() != 0 || geteuid() != 0)
         fail("BOOTSTRAP_SUPERVISOR_REQUIRED");
-    const struct settings settings = {
+    struct settings settings = {
         .stage = argv[1], .uid = account_id(argv[2]), .gid = account_id(argv[3]), .socket = argv[4],
         .root = argv[5], .receipt_sha = argv[6], .approval_sha = argv[7], .authority = argv[8],
     };
+    read_options(&settings, argc, argv);
     if (!absolute_path(settings.stage) || !absolute_path(settings.root) ||
         (strcmp(settings.socket, "/run/libvirt/virtqemud-sock-ro") != 0 &&
          strcmp(settings.socket, "/run/libvirt/libvirt-sock-ro") != 0) ||

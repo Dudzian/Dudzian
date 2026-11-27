@@ -50,6 +50,10 @@ CLIENT_BYTES = b'uri_default = "qemu:///system"\n'
 MAX_ARTIFACT = 32 * 1024 * 1024
 PARENT_LABEL = b"cryptohunter-observer-preflight-v5d11-a (enforce)"
 QEMU_LABEL = b"cryptohunter-observer-preflight-v5d11-qemu (enforce)"
+DIAGNOSTIC_LABEL = b"cryptohunter-observer-preflight-v5d11-a-diagnostic"
+DIAGNOSTIC_QEMU_LABEL = (
+    DIAGNOSTIC_LABEL + b"//&cryptohunter-observer-preflight-v5d11-qemu-diagnostic (enforce)"
+)
 TRACE_LINE = re.compile(r"\s*(\d+):\s*(.*?)\s*")
 GENERATOR = re.compile(r"file=(\S+) \[(\d+)\];\s+generating link map")
 DLOPEN = re.compile(r"file=(\S+) \[(\d+)\];\s+dynamically loaded by (\S+) \[(\d+)\]")
@@ -454,6 +458,8 @@ def _case(
     edges: dict[tuple[str, str], str],
     report: dict[str, Any],
     request: dict[str, Any],
+    *,
+    diagnostic: bool = False,
 ) -> dict[str, Any]:
     _fields(
         row,
@@ -473,8 +479,11 @@ def _case(
         "RUNTIME_PROCESS_IDENTITY",
     )
     _kernel_status(_artifact(artifacts, row["status"]), row["pid"])
+    label = QEMU_LABEL if qemu else PARENT_LABEL
+    if diagnostic:
+        label = DIAGNOSTIC_QEMU_LABEL if qemu else DIAGNOSTIC_LABEL + b" (enforce)"
     check(
-        _artifact(artifacts, row["label"]).strip() == (QEMU_LABEL if qemu else PARENT_LABEL),
+        _artifact(artifacts, row["label"]).strip() == label,
         "RUNTIME_APPARMOR_LABEL_REJECTED",
     )
 
@@ -614,11 +623,9 @@ def assess(
         "NATIVE_EVIDENCE_PIN_MISMATCH",
     )
     view = evidence["view"]
-    _fields(
-        view,
-        {"mountinfo", "namespaces", "apparmor_sha256", "seccomp_sha256"},
-        "NATIVE_VIEW_SCHEMA",
-    )
+    view_fields = {"mountinfo", "namespaces", "apparmor_sha256", "seccomp_sha256"}
+    diagnostic = type(view) is dict and view.get("purpose") == "diagnostic"
+    _fields(view, view_fields | ({"purpose"} if diagnostic else set()), "NATIVE_VIEW_SCHEMA")
     _fields(view["namespaces"], {"mnt", "net", "pid"}, "NATIVE_NAMESPACE_SCHEMA")
     check(
         all(_positive(inode) for inode in view["namespaces"].values())
@@ -637,7 +644,17 @@ def assess(
     objects, aliases, edges = _objects(static_report, receipt, request)
     _fields(evidence["loader"], PROBES, "NATIVE_PROBE_CASES_REQUIRED")
     observations = {
-        name: _case(name, row, artifacts, objects, aliases, edges, static_report, request)
+        name: _case(
+            name,
+            row,
+            artifacts,
+            objects,
+            aliases,
+            edges,
+            static_report,
+            request,
+            diagnostic=diagnostic,
+        )
         for name, row in evidence["loader"].items()
     }
     return {
