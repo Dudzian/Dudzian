@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from collections.abc import Callable
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -13,8 +14,9 @@ from typing import Any, cast
 from scripts import stage9_v5d10_abi as abi
 from scripts import stage9_v5d10_contract as contract
 from scripts import stage9_v5d10_launch as launch
+from scripts import stage9_v5d11_libvirt as virt
 
-PROFILE = "stage9-v5d11-profile-a-native-evidence-v1"
+PROFILE = "stage9-v5d11-profile-a-native-evidence-v2"
 STATIC_REPORT = "stage9-v5d4-static-abi-report-v1"
 READS = {
     "getURI",
@@ -48,6 +50,7 @@ PROBES = {
 VDSO = "linux-vdso.so.1"
 CLIENT_BYTES = b'uri_default = "qemu:///system"\n'
 MAX_ARTIFACT = 32 * 1024 * 1024
+MAX_MAP_SAMPLES = 16
 PARENT_LABEL = b"cryptohunter-observer-preflight-v5d11-a (enforce)"
 QEMU_LABEL = b"cryptohunter-observer-preflight-v5d11-qemu (enforce)"
 DIAGNOSTIC_LABEL = b"cryptohunter-observer-preflight-v5d11-a-diagnostic"
@@ -113,13 +116,18 @@ def _read(path: Path, expected: str, *, limit: int = MAX_ARTIFACT) -> bytes:
     return raw
 
 
-def _artifact(artifacts: Path, row: dict[str, Any]) -> bytes:
+def _artifact(artifacts: Path, row: dict[str, Any], *, limit: int = MAX_ARTIFACT) -> bytes:
     _fields(row, {"path", "sha256"}, "QUALIFICATION_ARTIFACT_SCHEMA")
     check(contract.path_value(row["path"], absolute=False), "QUALIFICATION_ARTIFACT_PATH")
-    return _read(artifacts / row["path"], row["sha256"])
+    return _read(artifacts / row["path"], row["sha256"], limit=limit)
 
 
-def _libvirt(record: dict[str, Any]) -> None:
+def _libvirt(
+    record: dict[str, Any],
+    artifacts: Path,
+    session: dict[str, str],
+    namespaces: dict[str, int],
+) -> None:
     _fields(
         record,
         {
@@ -213,11 +221,12 @@ def _libvirt(record: dict[str, Any]) -> None:
         {
             "scope",
             "daemon_sha256",
+            "reviewed_readonly_implementation_sha256",
             "config",
             "unit_files",
             "client_connect_flags",
-            "wire_request",
-            "wire_reply",
+            "fixture",
+            "trace",
         },
         "LIBVIRT_DENIAL_SCHEMA",
     )
@@ -226,14 +235,73 @@ def _libvirt(record: dict[str, Any]) -> None:
     check(
         denial["scope"] == "DISPOSABLE_FIXTURE"
         and denial["daemon_sha256"] == daemon["executable_sha256"]
+        and denial["reviewed_readonly_implementation_sha256"]
+        == daemon["reviewed_readonly_implementation_sha256"]
         and denial["config"] == daemon["config"]
         and denial["unit_files"] == daemon["unit_files"]
         and type(denial["client_connect_flags"]) is int
-        and denial["client_connect_flags"] == 0
-        and denial["wire_request"] == ["REMOTE_PROC_DOMAIN_GET_XML_DESC", 1]
-        and denial["wire_reply"] == "VIR_ERR_OPERATION_DENIED",
+        and denial["client_connect_flags"] == 0,
         "LIBVIRT_SERVER_READONLY_UNPROVEN",
     )
+    fixture = denial["fixture"]
+    _fields(
+        fixture,
+        {
+            "socket",
+            "socket_identity",
+            "connection_identity",
+            "peer",
+            "start_ticks",
+            "namespaces",
+            "host_namespaces",
+            "executable",
+            "cmdline_sha256",
+            "domain_uuid",
+        },
+        "LIBVIRT_FIXTURE_IDENTITY",
+    )
+    _ints(fixture["socket_identity"], 5, "LIBVIRT_FIXTURE_IDENTITY")
+    _ints(fixture["connection_identity"], 2, "LIBVIRT_FIXTURE_IDENTITY")
+    _ints(fixture["peer"], 3, "LIBVIRT_FIXTURE_IDENTITY")
+    socket_dev, socket_inode, socket_uid, _, socket_mode = fixture["socket_identity"]
+    fixture_pid, fixture_uid, _ = fixture["peer"]
+    check(
+        contract.path_value(fixture["socket"], absolute=True)
+        and fixture["socket"] not in launch.LOCAL_SOCKETS
+        and socket_dev > 0
+        and socket_inode > 0
+        and socket_uid == 0
+        and 0 < socket_mode < 0o1000
+        and fixture["socket_identity"][:2] != record["socket_identity"][:2]
+        and all(_positive(item) for item in fixture["connection_identity"])
+        and fixture_pid > 1
+        and fixture_pid != daemon["pid"]
+        and fixture_uid == 0
+        and _positive(fixture["start_ticks"])
+        and fixture["executable"] == daemon["executable"]
+        and contract.sha256_value(fixture["cmdline_sha256"])
+        and type(fixture["domain_uuid"]) is str,
+        "LIBVIRT_FIXTURE_IDENTITY",
+    )
+    namespace_names = {"mnt", "net", "pid"}
+    _fields(fixture["namespaces"], namespace_names, "LIBVIRT_FIXTURE_NAMESPACE_REQUIRED")
+    _fields(fixture["host_namespaces"], namespace_names, "LIBVIRT_FIXTURE_NAMESPACE_REQUIRED")
+    check(
+        all(
+            _positive(observed)
+            and _positive(fixture["host_namespaces"][name])
+            and observed not in {namespaces[name], fixture["host_namespaces"][name]}
+            for name, observed in fixture["namespaces"].items()
+        ),
+        "LIBVIRT_FIXTURE_NAMESPACE_REQUIRED",
+    )
+    raw = _artifact(artifacts, denial["trace"], limit=virt.TRACE_LIMIT)
+    try:
+        virt.verify_denial_trace(
+            raw, session, {key: value for key, value in denial.items() if key != "trace"}
+        )
+    except virt.Refusal as exc:
+        raise contract.Refusal(str(exc)) from exc
 
 
 def _objects(
@@ -332,6 +400,29 @@ def _maps(raw: bytes, canonicalize: Callable[[str], str]) -> dict[str, tuple[int
     return objects
 
 
+def normalize_maps(raw: bytes, staging_root: Path) -> bytes:
+    prefix = os.fsencode(staging_root) + b"/"
+    records = []
+    for line in raw.splitlines():
+        parts = line.split(maxsplit=5)
+        if len(parts) == 6 and parts[5].startswith(prefix):
+            parts[5] = b"/" + parts[5][len(prefix) :]
+        records.append(b" ".join(parts))
+    return b"\n".join(records) + b"\n"
+
+
+def merge_mappings(
+    observed: dict[str, tuple[int, ...]], current: dict[str, tuple[int, ...]]
+) -> bool:
+    check(
+        all(observed.get(name, identity) == identity for name, identity in current.items()),
+        "RUNTIME_MAP_IDENTITY_CHANGED",
+    )
+    extended = not current.keys() <= observed.keys()
+    observed.update(current)
+    return extended
+
+
 def _trace(
     raw: bytes, pid: int, canonicalize: Callable[[str], str], library_map: dict[str, str]
 ) -> tuple[
@@ -340,21 +431,12 @@ def _trace(
     set[tuple[str, str]],
     set[tuple[str, str, str]],
     set[tuple[str, str, str, str | None]],
-    set[str],
 ]:
     objects: set[str] = set()
     dlopen: set[str] = set()
     needed: set[tuple[str, str]] = set()
     versions: set[tuple[str, str, str]] = set()
     bindings: set[tuple[str, str, str, str | None]] = set()
-    observed_paths: set[str] = set()
-
-    def observe(path: str) -> str:
-        name = canonicalize(path)
-        if path.startswith("/") or path == VDSO:
-            observed_paths.add(name)
-        return name
-
     for line in raw.decode("utf-8").splitlines():
         parsed = TRACE_LINE.fullmatch(line)
         if parsed is None:
@@ -365,30 +447,28 @@ def _trace(
             path, scope = match.groups()
             check(scope == "0", "RUNTIME_LINK_NAMESPACE")
             target = library_map.get(path, path)
-            objects.add(observe(path) if path.startswith("/") else canonicalize(target))
+            objects.add(canonicalize(path if path.startswith("/") else target))
         elif match := DLOPEN.fullmatch(event):
             target, scope, source, src_scope = match.groups()
             check(scope == src_scope == "0", "RUNTIME_LINK_NAMESPACE")
-            observe(source)
+            canonicalize(source)
             dlopen.add(
-                observe(target)
-                if target.startswith("/")
-                else canonicalize(library_map.get(target, target))
+                canonicalize(target if target.startswith("/") else library_map.get(target, target))
             )
         elif match := NEEDED.fullmatch(event):
             name, scope, source, src_scope = match.groups()
             check(scope == src_scope == "0", "RUNTIME_LINK_NAMESPACE")
-            needed.add((observe(source), name))
+            needed.add((canonicalize(source), name))
         elif match := INIT.fullmatch(event):
-            objects.add(observe(match[1]))
+            objects.add(canonicalize(match[1]))
         elif match := VERSION.fullmatch(event):
             version, target, scope, source, src_scope = match.groups()
             check(scope == src_scope == "0", "RUNTIME_LINK_NAMESPACE")
-            versions.add((observe(source), observe(target), version))
+            versions.add((canonicalize(source), canonicalize(target), version))
         elif match := BINDING.fullmatch(event):
             source, src_scope, target, scope, symbol, version = match.groups()
             check(scope == src_scope == "0", "RUNTIME_LINK_NAMESPACE")
-            bindings.add((observe(source), observe(target), symbol, version))
+            bindings.add((canonicalize(source), canonicalize(target), symbol, version))
         else:
             check(
                 "error: symbol lookup error" not in event
@@ -399,7 +479,7 @@ def _trace(
                 ),
                 "RUNTIME_TRACE_EVENT_REJECTED",
             )
-    return objects, dlopen, needed, versions, bindings, observed_paths
+    return objects, dlopen, needed, versions, bindings
 
 
 def _symbols(
@@ -463,7 +543,18 @@ def _case(
 ) -> dict[str, Any]:
     _fields(
         row,
-        {"pid", "argv0", "trace", "maps", "objects", "symbols", "status", "label", "outcome"},
+        {
+            "pid",
+            "argv0",
+            "trace",
+            "maps",
+            "maps_root",
+            "objects",
+            "symbols",
+            "status",
+            "label",
+            "outcome",
+        },
         "RUNTIME_CASE_SCHEMA",
     )
     qemu = name.startswith("qemu-")
@@ -512,21 +603,41 @@ def _case(
     def canonicalize(path: str) -> str:
         return _canonical(path, approved, aliases, argv0=row["argv0"], executable=executable)
 
-    traced, dlopen, needed, versions, bindings, observed_paths = _trace(
+    traced, dlopen, needed, versions, bindings = _trace(
         _artifact(artifacts, row["trace"]), row["pid"], canonicalize, request["library_map"]
     )
-    map_identities = _maps(_artifact(artifacts, row["maps"]), canonicalize)
+    check(
+        type(row["maps"]) is list
+        and 1 <= len(row["maps"]) <= MAX_MAP_SAMPLES
+        and contract.path_value(row["maps_root"], absolute=True),
+        "RUNTIME_MAP_SAMPLES_REJECTED",
+    )
+    map_identities: dict[str, tuple[int, ...]] = {}
+    map_bytes = 0
+    for sample in row["maps"]:
+        _fields(sample, {"raw", "normalized"}, "RUNTIME_MAP_SAMPLE_SCHEMA")
+        raw = _artifact(artifacts, sample["raw"])
+        normalized = _artifact(artifacts, sample["normalized"])
+        map_bytes += len(raw)
+        check(map_bytes <= MAX_ARTIFACT, "RUNTIME_MAP_SAMPLES_REJECTED")
+        check(
+            normalize_maps(raw, Path(row["maps_root"])) == normalized,
+            "RUNTIME_MAP_NORMALIZATION_MISMATCH",
+        )
+        current = _maps(normalized, canonicalize)
+        check(executable in current, "RUNTIME_PROBE_EXECUTABLE_UNMAPPED")
+        merge_mappings(map_identities, current)
     mapped = set(map_identities)
     check(executable in mapped and bool(bindings) and bool(versions), "RUNTIME_TRACE_INCOMPLETE")
+    check(traced <= mapped, "RUNTIME_TRACE_MAPPING_UNOBSERVED")
     check(
         mapped <= traced | {executable, VDSO}
-        and traced <= mapped | observed_paths
         and dlopen <= traced
         and all((source, target) in edges for source, target in needed)
-        and all(edges[source, target] in traced | mapped for source, target in needed),
+        and all(edges[source, target] in mapped for source, target in needed),
         "RUNTIME_NEEDED_OR_DLOPEN_MISMATCH",
     )
-    loaded = traced | mapped
+    loaded = mapped
     required = {executable}
     if name == "python-libvirt":
         required.add(request["libvirt_extension"])
@@ -561,7 +672,7 @@ def _case(
         _ints(identity, 3, "RUNTIME_OBJECT_MEASUREMENT_IDENTITY")
         check(
             identity[2] > 0
-            and tuple(identity) == map_identities.get(source, tuple(identity))
+            and tuple(identity) == map_identities[source]
             and entry["sha256"] == objects[source],
             "RUNTIME_OBJECT_MEASUREMENT_MISMATCH",
         )
@@ -602,6 +713,10 @@ def assess(
     artifacts: Path,
 ) -> dict[str, Any]:
     """Cross-check native evidence and pinned ABI; never grant authorization."""
+    check(
+        evidence.get("profile") != "stage9-v5d11-profile-a-native-evidence-v1",
+        "NATIVE_EVIDENCE_SOURCE_ARTIFACTS_REQUIRED",
+    )
     _fields(
         evidence,
         {
@@ -609,6 +724,7 @@ def assess(
             "receipt_sha256",
             "abi_request_sha256",
             "static_report_sha256",
+            "session",
             "view",
             "libvirt",
             "loader",
@@ -632,7 +748,13 @@ def assess(
         and all(contract.sha256_value(view[key]) for key in {"apparmor_sha256", "seccomp_sha256"}),
         "NATIVE_VIEW_PIN_REQUIRED",
     )
-    _libvirt(evidence["libvirt"])
+    session = evidence["session"]
+    _fields(session, virt.SESSION_FIELDS, "LIBVIRT_FIXTURE_SESSION")
+    check(
+        all(contract.sha256_value(value) for value in session.values()),
+        "LIBVIRT_FIXTURE_SESSION",
+    )
+    _libvirt(evidence["libvirt"], artifacts, session, view["namespaces"])
     socket = evidence["libvirt"]["socket"]
     mountinfo = _artifact(artifacts, view["mountinfo"])
     launch._mount_view(mountinfo, socket)

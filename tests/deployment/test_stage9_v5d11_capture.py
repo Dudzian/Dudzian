@@ -217,6 +217,7 @@ def test_complete_capture_authorized_cases_and_drift(tmp_path, monkeypatch, drif
         def event(self, sample=None):
             if sample:
                 sample()
+                sample()
             return events.pop(0)
 
         def command(self, data):
@@ -233,16 +234,24 @@ def test_complete_capture_authorized_cases_and_drift(tmp_path, monkeypatch, drif
         capture, "target", lambda carrier, pid, names: capture.Target(100 + pid, pid, 2)
     )
     monkeypatch.setattr(capture.qualify, "_objects", lambda *_: ({}, {}, {}))
-    monkeypatch.setattr(
-        capture,
-        "snapshot",
-        lambda *a, **kw: capture.Snapshot(b"maps", b"maps", b"status", b"label", {}),
+    samples = iter(
+        [
+            (b"first map", {"/usr/lib/transient.so": (1, 2, 3)}),
+            (b"later map", {"/usr/lib/later.so": (1, 2, 4)}),
+        ]
+        * 2
     )
+
+    def snapshot(*args, qemu):
+        raw, identities = next(samples) if qemu else (b"maps", {})
+        return capture.Snapshot(raw, raw, b"status", b"label", identities)
+
+    monkeypatch.setattr(capture, "snapshot", snapshot)
     monkeypatch.setattr(capture, "object_evidence", lambda *a, **kw: ({}, {}))
     processo = SimpleNamespace(pid=100, wait=lambda timeout: 0)
 
-    def libvirt(host_pid):
-        observed.append(host_pid)
+    def libvirt(host_pid, start):
+        observed.append((host_pid, start))
         return ["/run/libvirt/libvirt-sock-ro"]
 
     def collect():
@@ -266,9 +275,12 @@ def test_complete_capture_authorized_cases_and_drift(tmp_path, monkeypatch, drif
         assert list(cases) == list(capture.CASES)
         assert commands[0] == b"DIAGNOSTIC\n" and not events
         assert commands.count(b"RUN\n") == 2
-        assert observed == [104]
+        assert observed == [(104, 2)]
         assert virt["read_results"] == {"close": "PASS"}
         assert (tmp_path / "qemu-raw.trace").read_bytes() == b"glibc loader trace fixture"
+        assert [
+            (tmp_path / item["raw"]["path"]).read_bytes() for item in cases["qemu-raw"]["maps"]
+        ] == [b"first map", b"later map"]
 
 
 def test_target_checks_real_ancestry_namespace_and_lifetime(monkeypatch):
@@ -301,6 +313,7 @@ def test_target_checks_real_ancestry_namespace_and_lifetime(monkeypatch):
         ("namespace", "CHILD_IDENTITY"),
         ("environ", "ENVIRONMENT_REJECTED"),
         ("exe", "EXECUTABLE_IDENTITY"),
+        ("maps_inode", "CHILD_IDENTITY"),
         ("reused", "CHILD_REUSED"),
         ("parked", ""),
     ],
@@ -324,7 +337,8 @@ def test_snapshot_verified_live_inputs(tmp_path, monkeypatch, change, reason):
         b"\0".join(f"{key}={value}".encode() for key, value in trace_env.items()) + b"\0"
     )
     major, minor, inode = capture.file_identity(program.stat())
-    raw_maps = f"1-2 r-xp 0000 {major:x}:{minor:x} {inode} {program}\n2-3 r-xp 0000 00:00 0 [vdso]\n".encode()
+    mapped_inode = inode + (change == "maps_inode")
+    raw_maps = f"1-2 r-xp 0000 {major:x}:{minor:x} {mapped_inode} {program}\n2-3 r-xp 0000 00:00 0 [vdso]\n".encode()
     (proc / "maps").write_bytes(raw_maps)
     monkeypatch.setattr(capture.Target, "proc", property(lambda _: proc))
     monkeypatch.setattr(capture, "ticks", lambda _: 8 if change != "reused" else 9)
@@ -370,7 +384,7 @@ def test_object_evidence_pins_symbols_and_inode(tmp_path, monkeypatch):
     digest = capture.contract.digest(original.read_bytes())
     identity = capture.file_identity(original.stat())
     monkeypatch.setattr(Path, "lstat", synthetic_ownership)
-    monkeypatch.setattr(capture.qualify, "_trace", lambda *_: ({EXE}, None, None, None, None, None))
+    monkeypatch.setattr(capture.qualify, "_trace", lambda *_: ({EXE}, None, None, None, None))
     monkeypatch.setattr(capture.contract, "secure_read", lambda path, **_: path.read_bytes())
     fake_symbols = b"Symbol table '.dynsym' contains 0 entries:\n"
     monkeypatch.setattr(
@@ -378,18 +392,17 @@ def test_object_evidence_pins_symbols_and_inode(tmp_path, monkeypatch):
         "run",
         lambda *a, **kw: SimpleNamespace(returncode=0, stdout=fake_symbols),
     )
-    info = capture.Snapshot(b"maps", b"maps", b"status", b"label", {EXE: identity})
     output = tmp_path / "bundle"
     output.mkdir()
     subject = capture.Target(101, 2, 7)
 
-    def run(pin):
+    def run(pin, mapped):
         return capture.object_evidence(
             output,
             "qemu-raw",
             tree,
             b"trace",
-            info,
+            mapped,
             subject,
             lambda x: x,
             {EXE: pin},
@@ -397,8 +410,12 @@ def test_object_evidence_pins_symbols_and_inode(tmp_path, monkeypatch):
         )
 
     with pytest.raises(ValueError, match="OBJECT_PIN_MISMATCH"):
-        run("0" * 64)
-    obj, symbols = run(digest)
+        run("0" * 64, {EXE: identity})
+    with pytest.raises(ValueError, match="OBJECT_PIN_MISMATCH"):
+        run(digest, {EXE: (identity[0], identity[1], identity[2] + 1)})
+    with pytest.raises(ValueError, match="OBJECT_MAPPING_UNOBSERVED"):
+        run(digest, {})
+    obj, symbols = run(digest, {EXE: identity})
     assert obj == {EXE: {"sha256": digest, "identity": list(identity)}}
     assert (output / symbols[EXE]["path"]).read_bytes() == fake_symbols
 

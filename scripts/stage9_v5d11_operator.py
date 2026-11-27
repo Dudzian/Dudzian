@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Iterator
 from contextlib import contextmanager
 import hashlib
+from importlib import util
 import json
 import os
 from pathlib import Path
@@ -33,11 +34,21 @@ COMMAND_ENV = {"LANG": "C", "LC_ALL": "C", "PATH": "/usr/bin:/bin"}
 LIMIT = 1024 * 1024
 CONTROL_TIMEOUT = 3600
 DIAGNOSTIC_SPEC = "stage9-v5d11-diagnostic-inputs-v1"
-DIAGNOSTIC_REVIEW = "stage9-v5d11-diagnostic-authorization-v1"
+DIAGNOSTIC_REVIEW = "stage9-v5d11-diagnostic-authorization-v2"
+BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 DIAGNOSTIC_SCRIPT = "/run/stage9-v5d11/diagnostic.py"
 DIAGNOSTIC_CONFIG = "/run/stage9-v5d11/diagnostic-inputs.json"
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 DATA_PREFIXES = ("/etc/cryptohunter/observer-v5d1/", "/var/lib/libvirt/images/")
+HOST_IMPORTS = (
+    "v5d10_abi",
+    "v5d10_contract",
+    "v5d10_launch",
+    "v5d11_diagnostic",
+    "v5d11_libvirt",
+    "v5d11_qualify",
+    "v5d11_capture",
+)
 
 
 class Refusal(ValueError):
@@ -51,6 +62,39 @@ def require(condition: bool, reason: str) -> None:
 
 def tool(name: str) -> dict[str, Any]:
     return runpy.run_path(str(Path(__file__).with_name(f"stage9_{name}.py")))
+
+
+def host_tools(
+    contract: dict[str, Any], launch: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Load the reviewed source set with no checkout or bytecode search path."""
+    require(
+        not any(name == "scripts" or name.startswith("scripts.") for name in sys.modules),
+        "OPERATOR_IMPORT_ALREADY_LOADED",
+    )
+    scripts = Path(__file__).parent
+    names = {"scripts": "__init__.py"}
+    names.update({f"scripts.stage9_{name}": f"stage9_{name}.py" for name in HOST_IMPORTS})
+    for name, filename in names.items():
+        path = scripts / filename
+        source = cast(bytes, contract["secure_read"](path, limit=LIMIT))
+        loader = launch["PinnedSourceLoader"](name, str(path), lambda _, raw=source: raw)
+        spec = util.spec_from_loader(name, loader, is_package=name == "scripts")
+        require(spec is not None, "OPERATOR_IMPORT_SPEC_REJECTED")
+        assert spec is not None
+        if name == "scripts":
+            spec.submodule_search_locations = []
+        module = util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            loader.exec_module(module)
+        except ImportError as exc:
+            raise Refusal("OPERATOR_IMPORT_REFUSED") from exc
+    return (
+        vars(sys.modules["scripts.stage9_v5d11_capture"]),
+        vars(sys.modules["scripts.stage9_v5d11_qualify"]),
+        vars(sys.modules["scripts.stage9_v5d11_libvirt"]),
+    )
 
 
 def protected(path: Path, *, private: bool = False, directory: bool = False) -> None:
@@ -549,15 +593,9 @@ def operator_inputs(
     scripts = Path(__file__).parent
     trusted = (
         "__init__.py",
-        "stage9_v5d10_abi.py",
-        "stage9_v5d10_contract.py",
-        "stage9_v5d10_launch.py",
-        "stage9_v5d11_capture.py",
-        "stage9_v5d11_diagnostic.py",
+        *(f"stage9_{name}.py" for name in HOST_IMPORTS),
         "stage9_v5d11_images.py",
-        "stage9_v5d11_libvirt.py",
         "stage9_v5d11_policy.py",
-        "stage9_v5d11_qualify.py",
         "stage9_v5d11_runtime.py",
     )
     for name in trusted:
@@ -701,6 +739,19 @@ def trusted_bootstrap(manifest: dict[str, Any], contract: dict[str, Any]) -> Pat
     return bootstrap
 
 
+def check_apparmor_transition(
+    setting: Path = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined"),
+) -> None:
+    """Require the host setting compatible with the bootstrap's exact label."""
+    try:
+        with setting.open("rb") as stream:
+            raw = stream.read(3)
+    except OSError as exc:
+        raise Refusal("APPARMOR_UNCONFINED_SYSCTL_UNREADABLE") from exc
+    require(raw in {b"0\n", b"1\n"}, "APPARMOR_UNCONFINED_SYSCTL_INVALID")
+    require(raw == b"0\n", "APPARMOR_UNCONFINED_TRANSITION_INCOMPATIBLE")
+
+
 def review_key(manifest: dict[str, Any], contract: dict[str, Any]) -> bytes:
     key_path = Path(manifest["review_key"])
     protected(key_path, private=True)
@@ -710,6 +761,7 @@ def review_key(manifest: dict[str, Any], contract: dict[str, Any]) -> bytes:
 def measure(manifest_path: Path, output: Path, keep_live: bool = False) -> None:
     raw, manifest, contract, launch = operator_inputs(manifest_path)
     protected(output.parent, private=True, directory=True)
+    check_apparmor_transition()
     bootstrap = trusted_bootstrap(manifest, contract)
     policy = check_policy(manifest, bootstrap, contract)
     output.mkdir(mode=0o700)
@@ -873,11 +925,11 @@ def diagnostic_inputs(
         and doc["fixture_pid"] > 1,
         "DIAGNOSTIC_INPUTS_REJECTED",
     )
+    network_name_valid = tool("v5d11_diagnostic")["valid_network_name"]
     require(
         type(doc["domain_uuid"]) is str
         and str(uuid.UUID(doc["domain_uuid"])) == doc["domain_uuid"]
-        and type(doc["network_name"]) is str
-        and 0 < len(doc["network_name"]) <= 128
+        and network_name_valid(doc["network_name"])
         and type(doc["fixtures"]) is dict
         and set(doc["fixtures"]) == {"raw", "qcow2"}
         and all(
@@ -908,6 +960,20 @@ def diagnostic_policy(manifest: dict[str, Any], spec: dict[str, Any]) -> dict[st
     return {**manifest, **{key: spec[key] for key in keys}}
 
 
+def diagnostic_boot_id() -> str:
+    """Read the kernel's UUID for the current boot."""
+    try:
+        with BOOT_ID.open("rb") as stream:
+            raw = stream.read(38).decode("ascii")
+        identifier = uuid.UUID(raw.removesuffix("\n"))
+    except (OSError, ValueError) as exc:
+        raise Refusal("DIAGNOSTIC_HOST_BOOT_ID_UNAVAILABLE") from exc
+    require(
+        identifier.version == 4 and raw == f"{identifier}\n", "DIAGNOSTIC_HOST_BOOT_ID_UNAVAILABLE"
+    )
+    return str(identifier)
+
+
 def diagnostic_authority(
     authorization: Path,
     spec_raw: bytes,
@@ -923,6 +989,8 @@ def diagnostic_authority(
         and time.time() < review["expires_utc"] <= time.time() + 3600,
         "DIAGNOSTIC_AUTHORIZATION_WINDOW_REJECTED",
     )
+    boot_id = diagnostic_boot_id()
+    require(review.get("host_boot_id") == boot_id, "DIAGNOSTIC_AUTHORIZATION_BOOT_REJECTED")
     verify_review(
         raw,
         review_key(manifest, contract),
@@ -930,6 +998,7 @@ def diagnostic_authority(
             "spec_sha256": contract["digest"](spec_raw),
             "nonce": review["nonce"],
             "expires_utc": review["expires_utc"],
+            "host_boot_id": boot_id,
         },
         authorization.parent,
         contract,
@@ -940,14 +1009,25 @@ def diagnostic_authority(
 
 
 def consume_diagnostic_authority(path: Path, approval: bytes) -> None:
-    write(path, approval, 0o600)
-    with path.open("rb") as stream:
-        os.fsync(stream.fileno())
-    flags = getattr(os, "O_DIRECTORY", None)
-    require(type(flags) is int, "OPERATOR_DIRECTORY_SYNC_UNAVAILABLE")
-    assert flags is not None
-    directory = os.open(path.parent, os.O_RDONLY | flags)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    set_mode = getattr(os, "fchmod", None)
+    require(
+        type(directory_flag) is int
+        and type(no_follow) is int
+        and callable(set_mode)
+        and os.open in os.supports_dir_fd,
+        "OPERATOR_DIRECTORY_SYNC_UNAVAILABLE",
+    )
+    assert directory_flag is not None and no_follow is not None and set_mode is not None
+    directory = os.open(path.parent, os.O_RDONLY | directory_flag | no_follow)
     try:
+        fd = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+        with os.fdopen(fd, "wb") as stream:
+            set_mode(stream.fileno(), 0o600)
+            stream.write(approval)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.fsync(directory)
     finally:
         os.close(directory)
@@ -1009,6 +1089,7 @@ def diagnose(manifest_path: Path, spec_path: Path, authorization: Path, output: 
     protected(output.parent, private=True, directory=True)
     protected(manifest_path.parent, private=True, directory=True)
     spec_raw, spec = diagnostic_inputs(spec_path, manifest_path, manifest_raw, manifest, contract)
+    check_apparmor_transition()
     approval, nonce = diagnostic_authority(authorization, spec_raw, manifest, contract)
     bootstrap = trusted_bootstrap(manifest, contract)
     diagnostic_manifest = diagnostic_policy(manifest, spec)
@@ -1016,15 +1097,7 @@ def diagnose(manifest_path: Path, spec_path: Path, authorization: Path, output: 
     report = contract["loads"](
         pinned(spec["static_report"], spec["static_report_sha256"], contract, limit=32 * LIMIT)
     )
-    # The trusted, protected checkout contains the host-only collector imports.
-    checkout = str(Path(__file__).absolute().parents[1])
-    sys.path.insert(0, checkout)
-    try:
-        capture = tool("v5d11_capture")
-        qualifier = tool("v5d11_qualify")
-        virt = tool("v5d11_libvirt")
-    finally:
-        sys.path.remove(checkout)
+    capture, qualifier, virt = host_tools(contract, launch)
     check_dedicated_account(manifest["uid"], manifest["gid"])
     output.mkdir(mode=0o700)
     output.chmod(0o700)
@@ -1059,6 +1132,11 @@ def diagnose(manifest_path: Path, spec_path: Path, authorization: Path, output: 
             consume_diagnostic_authority(
                 manifest_path.parent / f"diagnostic-used-{nonce}", approval
             )
+            session = {
+                "spec_sha256": contract["digest"](spec_raw),
+                "authorization_sha256": contract["digest"](approval),
+                "nonce": nonce,
+            }
             host_before = virt["measure_host"](
                 manifest["libvirt_socket"], spec["readonly_implementation_sha256"]
             )
@@ -1071,6 +1149,8 @@ def diagnose(manifest_path: Path, spec_path: Path, authorization: Path, output: 
                 spec["fixture_pid"],
                 spec["domain_uuid"],
                 host_before,
+                output=output,
+                session=session,
             )
             write(output / "mountinfo", mountinfo, 0o600)
             write(output / "runtime-receipt.json", runtime_raw, 0o600)
@@ -1090,8 +1170,8 @@ def diagnose(manifest_path: Path, spec_path: Path, authorization: Path, output: 
                 report,
                 output,
                 staging_root=tree,
-                on_libvirt=lambda pid: virt["observe_live_connections"](
-                    pid, manifest["libvirt_socket"]
+                on_libvirt=lambda pid, start: virt["observe_live_connections"](
+                    pid, start, view["namespaces"], host_before
                 ),
             )
             require(process.wait(timeout=10) == 0, "DIAGNOSTIC_EXECUTION_FAILED")
@@ -1107,6 +1187,7 @@ def diagnose(manifest_path: Path, spec_path: Path, authorization: Path, output: 
                 "receipt_sha256": manifest["receipt_sha256"],
                 "abi_request_sha256": receipt["abi_request_sha256"],
                 "static_report_sha256": spec["static_report_sha256"],
+                "session": session,
                 "view": view,
                 "loader": loader,
                 "libvirt": virt["assemble"](
@@ -1134,8 +1215,7 @@ def diagnose(manifest_path: Path, spec_path: Path, authorization: Path, output: 
                 contract["canonical"](
                     {
                         "profile": DIAGNOSTIC_SPEC,
-                        "spec_sha256": contract["digest"](spec_raw),
-                        "authorization_sha256": contract["digest"](approval),
+                        **session,
                         "runtime_receipt_sha256": runtime_pin,
                         "evidence_sha256": contract["digest"](contract["canonical"](native)),
                         "immutable_images": images.evidence(),

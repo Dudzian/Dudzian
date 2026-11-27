@@ -10,6 +10,7 @@ import stat
 import struct
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 import uuid
@@ -24,14 +25,16 @@ DOMAIN = uuid.UUID("c1cf34ad-539d-4669-899a-6859ea57e925")
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Linux-only observer evidence")
 
 
-def reply(connection, message, *, error=0, serial_shift=0):
+def reply(connection, message, frames, *, error=0, serial_shift=0):
     header = virt.receive(connection, 4, time.monotonic() + 2)
     (length,) = struct.unpack("!I", header)
     raw = virt.receive(connection, length - 4, time.monotonic() + 2)
     program, version, procedure, kind, serial, status = virt.RPC_HEADER.unpack_from(raw)
     assert (program, version, kind, status) == (virt.REMOTE_PROGRAM, 1, 0, 0)
     output = virt.RPC_HEADER.pack(program, version, procedure, 1, serial + serial_shift, error)
-    connection.sendall(struct.pack("!I", len(output) + len(message) + 4) + output + message)
+    response = struct.pack("!I", len(output) + len(message) + 4) + output + message
+    connection.sendall(response)
+    frames.extend((header + raw, response))
     return procedure, raw[virt.RPC_HEADER.size :]
 
 
@@ -44,12 +47,15 @@ def reply(connection, message, *, error=0, serial_shift=0):
         ("domain", "DOMAIN_REJECTED"),
         ("allowed", "DENIAL_UNPROVEN"),
         ("other_error", "DENIAL_UNPROVEN"),
+        ("incomplete_error", "DENIAL_UNPROVEN"),
+        ("bad_padding", "DENIAL_UNPROVEN"),
     ],
 )
 def test_actual_socketpair_only_sends_read_operations(variant, reason):
     client, server = socket.socketpair()
     with client, server:
         handle = virt.xdr_string(b"disposable") + DOMAIN.bytes + b"\xff" * 4
+        frames = []
 
         def serve():
             methods = []
@@ -57,19 +63,26 @@ def test_actual_socketpair_only_sends_read_operations(variant, reason):
                 reply(
                     server,
                     struct.pack("!II", 1, 2 if variant == "auth" else 0),
+                    frames,
                     serial_shift=int(variant == "peer"),
                 )
             )
             if variant in {"auth", "peer"}:
                 return methods
-            methods.append(reply(server, b""))
-            methods.append(reply(server, handle + (b"x" if variant == "domain" else b"")))
+            methods.append(reply(server, b"", frames))
+            methods.append(reply(server, handle + (b"x" if variant == "domain" else b""), frames))
             if variant == "domain":
                 return methods
             code = 1 if variant == "other_error" else virt.OPERATION_DENIED
-            methods.append(
-                reply(server, struct.pack("!II", code, 0), error=int(variant != "allowed"))
+            message = b"deny!" if variant != "bad_padding" else b"deny!\0\0x"
+            error = struct.pack("!III", code, 0, 1)
+            error += (
+                virt.xdr_string(message) if variant != "bad_padding" else b"\0\0\0\x05" + message
             )
+            error += struct.pack("!8I", 2, 0, 0, 0, 0, 0, 0, 0)
+            if variant == "incomplete_error":
+                error = error[:8]
+            methods.append(reply(server, error, frames, error=int(variant != "allowed")))
             return methods
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as workers:
@@ -78,7 +91,7 @@ def test_actual_socketpair_only_sends_read_operations(variant, reason):
                 with pytest.raises(virt.Refusal, match=reason):
                     virt.wire_denial(client, DOMAIN)
             else:
-                virt.wire_denial(client, DOMAIN)
+                transcript = virt.wire_denial(client, DOMAIN)
             assert (
                 future.result(timeout=2)
                 == [
@@ -91,6 +104,8 @@ def test_actual_socketpair_only_sends_read_operations(variant, reason):
                     (virt.GET_XML_DESC, handle + b"\0\0\0\x01"),
                 ][: {"auth": 1, "peer": 1, "domain": 3}.get(variant, 4)]
             )
+            if not reason:
+                assert transcript == b"".join(frames)
 
 
 def test_receive_fails_for_truncated_and_expired_socket():
@@ -173,19 +188,174 @@ class SocketDouble:
         return self.response
 
 
-def test_sockdiag_dump_and_connection_correlation(monkeypatch):
+def test_sockdiag_dump(monkeypatch):
     monitor = SocketDouble(sockdiag_packet())
     monkeypatch.setattr(socket, "socket", lambda *args: monitor)
-    monkeypatch.setattr(virt, "proc_start", lambda _: 100)
-    monkeypatch.setattr(virt, "descriptor_sockets", lambda _: {15})
-    assert virt.observe_live_connections(3, HOST_SOCKET) == [HOST_SOCKET]
+    assert virt.sock_diag() == [(1, 17, HOST_SOCKET, 15, None)]
     length, kind, flags, sequence, _ = virt.NL_HEADER.unpack_from(monitor.sent)
     assert (length, kind, flags, sequence) == (len(monitor.sent), 20, 0x301, 1)
     assert monitor.bound == (0, 0)
-    with pytest.raises(virt.Refusal, match="PATHS_REJECTED"):
-        virt.observe_live_connections(3, "/run/libvirt/libvirt-sock")
-    with pytest.raises(virt.Refusal, match="CONNECTION_SCOPE"):
-        virt.observe_live_connections(1, HOST_SOCKET)
+
+
+@pytest.mark.parametrize("case", ["ok", "wrong_handle", "wrong_thread_netns"])
+def test_sockdiag_uses_held_namespace_in_dedicated_thread(monkeypatch, tmp_path, case):
+    namespace = tmp_path / "net"
+    namespace.touch()
+    expected = namespace.stat()
+    worker_ns = tmp_path / "thread-self" / "ns"
+    worker_ns.mkdir(parents=True)
+    (worker_ns / "net").touch()
+    caller = threading.get_ident()
+    called = []
+
+    def enter(fd, kind):
+        assert kind == 0x40000000 and threading.get_ident() != caller
+        held = os.fstat(fd)
+        assert (held.st_dev, held.st_ino) == (expected.st_dev, expected.st_ino)
+        called.append("setns")
+        if case != "wrong_thread_netns":
+            (worker_ns / "net").unlink()
+            (worker_ns / "net").symlink_to(namespace)
+
+    def dump():
+        assert threading.get_ident() != caller and called == ["setns"]
+        called.append("dump")
+        return [(1, 17, HOST_SOCKET, 15, None)]
+
+    monkeypatch.setattr(os, "setns", enter, raising=False)
+    monkeypatch.setattr(os, "CLONE_NEWNET", 0x40000000, raising=False)
+    monkeypatch.setattr(virt, "PROC", tmp_path)
+    monkeypatch.setattr(virt, "sock_diag", dump)
+    if case == "ok":
+        assert virt.sock_diag_in_namespace(namespace, expected.st_ino) == [
+            (1, 17, HOST_SOCKET, 15, None)
+        ]
+        assert called == ["setns", "dump"]
+    else:
+        with pytest.raises(virt.Refusal, match="SOCKDIAG_NETNS_CHANGED"):
+            virt.sock_diag_in_namespace(namespace, expected.st_ino + (case == "wrong_handle"))
+        assert called == ([] if case == "wrong_handle" else ["setns"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "ok",
+        "bad_subject",
+        "bad_path",
+        "bad_client_start",
+        "bad_daemon_start",
+        "bad_netns",
+        "host_netns",
+        "socket_drift",
+        "no_listener",
+        "wrong_daemon",
+        "changed_client_fds",
+        "changed_process",
+        "changed_namespace",
+        "no_client",
+        "different_socket",
+        "different_vfs",
+        "nonreciprocal",
+        "ambiguous_client",
+        "ambiguous_server",
+    ],
+)
+def test_connection_requires_reciprocal_kernel_peers_and_exact_identities(
+    monkeypatch, tmp_path, change
+):
+    subject_ns = tmp_path / "3" / "ns"
+    host_ns = tmp_path / "self" / "ns"
+    namespaces = {}
+    for directory in (subject_ns, host_ns):
+        directory.mkdir(parents=True)
+        for name in ("mnt", "pid", "net"):
+            (directory / name).touch()
+    for item in subject_ns.iterdir():
+        namespaces[item.name] = item.stat().st_ino
+    if change == "bad_netns":
+        namespaces["net"] += 1
+    elif change == "host_netns":
+        (subject_ns / "net").unlink()
+        (subject_ns / "net").symlink_to(host_ns / "net")
+        namespaces["net"] = (host_ns / "net").stat().st_ino
+
+    identity = [os.makedev(8, 2), 90, 0, 0, 0o666]
+    node = virt.kernel_socket_node(identity)
+    daemon = {"pid": 42, "start_ticks": 304, "listener_inode": 23}
+    host = {
+        "socket": HOST_SOCKET if change != "bad_path" else "/run/libvirt/libvirt-sock",
+        "host_socket_identity": identity,
+        "daemon": daemon,
+    }
+    started = 201
+    rows = [(1, 15, "", 17, None), (1, 17, HOST_SOCKET, 15, node)]
+    if change == "different_socket":
+        rows[1] = (1, 17, "/run/libvirt/virtqemud-sock-ro", 15, node)
+    elif change == "different_vfs":
+        rows[1] = (1, 17, HOST_SOCKET, 15, (91, node[1]))
+    elif change == "nonreciprocal":
+        rows[0] = (1, 15, "", 18, None)
+    elif change == "no_client":
+        del rows[0]
+    elif change == "ambiguous_client":
+        rows.append((1, 16, "", 18, None))
+    elif change == "ambiguous_server":
+        rows.append((1, 18, HOST_SOCKET, 15, node))
+
+    queried = False
+
+    def dump(namespace, inode):
+        nonlocal queried
+        assert (namespace, inode) == (subject_ns / "net", namespaces["net"])
+        queried = True
+        if change == "changed_namespace":
+            replacement = subject_ns / "replacement"
+            replacement.touch()
+            replacement.rename(subject_ns / "net")
+        return rows
+
+    def pid_start(pid):
+        if pid == 3:
+            return started + (
+                change == "bad_client_start" or queried and change == "changed_process"
+            )
+        assert pid == 42
+        return 304 + (change == "bad_daemon_start")
+
+    def descriptors(pid):
+        if pid == 3:
+            return (
+                {15, 16}
+                if change == "ambiguous_client" or (queried and change == "changed_client_fds")
+                else {15}
+            )
+        assert pid == 42
+        return {"no_listener": {17}, "wrong_daemon": {23}}.get(change, {17, 23})
+
+    monkeypatch.setattr(virt, "PROC", tmp_path)
+    monkeypatch.setattr(virt, "proc_start", pid_start)
+    monkeypatch.setattr(virt, "descriptor_sockets", descriptors)
+    monkeypatch.setattr(virt, "sock_diag_in_namespace", dump)
+    monkeypatch.setattr(
+        virt, "socket_identity", lambda path: identity if change != "socket_drift" else []
+    )
+    if change == "ok":
+        assert virt.observe_live_connections(3, started, namespaces, host) == [HOST_SOCKET]
+        return
+    reasons = {
+        "bad_subject": "CONNECTION_SCOPE",
+        "bad_path": "CONNECTION_SCOPE",
+        "bad_client_start": "CONNECTION_IDENTITY",
+        "bad_daemon_start": "CONNECTION_IDENTITY",
+        "bad_netns": "CONNECTION_IDENTITY",
+        "host_netns": "CONNECTION_IDENTITY",
+        "socket_drift": "CONNECTION_IDENTITY",
+    }
+    with pytest.raises(virt.Refusal, match=reasons.get(change, "CONNECTION_PATHS_REJECTED")):
+        virt.observe_live_connections(
+            42 if change == "bad_subject" else 3, started, namespaces, host
+        )
 
 
 def test_proc_start_and_fds_without_mocked_kernel(tmp_path):
@@ -357,18 +527,45 @@ def test_fixture_namespace_binary_config_and_peer_guards(tmp_path, monkeypatch):
         if "/ns/" in str(p)
         else stat_actual(p, **kw),
     )
-    monkeypatch.setattr(virt, "digest", lambda raw: SHA)
+    actual_fstat = os.fstat
+    monkeypatch.setattr(connection, "fileno", lambda: 999, raising=False)
+    monkeypatch.setattr(
+        os,
+        "fstat",
+        lambda fd: SimpleNamespace(st_mode=stat.S_IFSOCK, st_dev=9, st_ino=404)
+        if fd == 999
+        else actual_fstat(fd),
+    )
+    for role in ("config", "unit_files"):
+        host["daemon"][role] = dict.fromkeys(host["daemon"][role], virt.digest(b"same"))
     monkeypatch.setattr(virt, "protected_file", lambda *a: b"same")
     wire = []
-    monkeypatch.setattr(virt, "wire_denial", lambda conn, domain: wire.append((conn, domain)))
+    session = dict.fromkeys(virt.SESSION_FIELDS, SHA)
+
+    def collect(conn, domain):
+        wire.append((conn, domain))
+        return b"synthetic-source-frames"
+
+    monkeypatch.setattr(virt, "wire_denial", collect)
     connection.response = struct.pack("=iII", 43, 0, 9)
-    evidence = virt.collect_fixture_denial(path, 43, str(DOMAIN), host)
+    evidence = virt.collect_fixture_denial(
+        path, 43, str(DOMAIN), host, output=tmp_path, session=session
+    )
     assert evidence["scope"] == "DISPOSABLE_FIXTURE" and wire == [(connection, DOMAIN)]
+    assert evidence["fixture"]["connection_identity"] == [9, 404]
+    trace = tmp_path / evidence["trace"]["path"]
+    assert stat.S_IMODE(trace.stat().st_mode) == 0o600
+    raw = trace.read_bytes()
+    assert raw.endswith(b"synthetic-source-frames") and evidence["trace"]["sha256"] == virt.digest(
+        raw
+    )
+    with pytest.raises(FileExistsError):
+        virt.collect_fixture_denial(path, 43, str(DOMAIN), host, output=tmp_path, session=session)
     connection.response = struct.pack("=iII", 44, 0, 9)
     with pytest.raises(virt.Refusal, match="FIXTURE_PEER_REJECTED"):
-        virt.collect_fixture_denial(path, 43, str(DOMAIN), host)
+        virt.collect_fixture_denial(path, 43, str(DOMAIN), host, output=tmp_path, session=session)
     namespace = 91
     with pytest.raises(virt.Refusal, match="NAMESPACE_REQUIRED"):
-        virt.collect_fixture_denial(path, 43, str(DOMAIN), host)
+        virt.collect_fixture_denial(path, 43, str(DOMAIN), host, output=tmp_path, session=session)
     with pytest.raises(virt.Refusal, match="FIXTURE_SCOPE"):
-        virt.collect_fixture_denial(path, 42, str(DOMAIN), host)
+        virt.collect_fixture_denial(path, 42, str(DOMAIN), host, output=tmp_path, session=session)

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 import re
 import socket
@@ -50,6 +53,11 @@ GET_XML_DESC = 14
 SECURE_XML = 1
 OPERATION_DENIED = 29
 RPC_HEADER = struct.Struct("!6I")
+RPC_LENGTH = struct.Struct("!I")
+TRACE_MAGIC = b"STAGE9-V5D11-LIBVIRT-RPC\0"
+TRACE_METADATA_LIMIT = 32 * 1024
+TRACE_LIMIT = len(TRACE_MAGIC) + RPC_LENGTH.size + TRACE_METADATA_LIMIT + 8 * CONTROL_LIMIT
+SESSION_FIELDS = {"spec_sha256", "authorization_sha256", "nonce"}
 MAX_DIAG_DATAGRAMS = 2048
 DiagRow = tuple[int, int, str, int, tuple[int, int] | None]
 
@@ -270,26 +278,86 @@ def sock_diag() -> list[DiagRow]:
     raise Refusal("LIBVIRT_SOCKDIAG_LIMIT")
 
 
-def observe_live_connections(host_pid: int, socket_path: str) -> list[str]:
-    """Correlate the held process descriptors with live host-side AF_UNIX peers."""
+def sock_diag_in_namespace(namespace: Path, expected_inode: int) -> list[DiagRow]:
+    """Open the monitor in the held client netns without moving the supervisor."""
+    setns = getattr(os, "setns", None)
+    newnet = getattr(os, "CLONE_NEWNET", None)
+    require(callable(setns) and type(newnet) is int, "LIBVIRT_SOCKDIAG_NETNS_UNAVAILABLE")
+    assert callable(setns) and type(newnet) is int
+
+    with namespace.open("rb") as descriptor:
+        fd = descriptor.fileno()
+        held = os.fstat(fd)
+        require(held.st_ino == expected_inode, "LIBVIRT_SOCKDIAG_NETNS_CHANGED")
+
+        def inspect() -> list[DiagRow]:
+            # setns only moves the calling thread. Linux creates both connected
+            # AF_UNIX stream endpoints in the client's netns, even when the
+            # filesystem listener lives in the host netns.
+            setns(fd, newnet)
+            current = (PROC / "thread-self" / "ns" / "net").stat()
+            require(
+                (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino),
+                "LIBVIRT_SOCKDIAG_NETNS_CHANGED",
+            )
+            return sock_diag()
+
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            return worker.submit(inspect).result()
+
+
+def observe_live_connections(
+    host_pid: int, subject_start: int, namespaces: dict[str, int], host: dict[str, Any]
+) -> list[str]:
+    """Bind an actual connected stream and its accepted peer to the measured daemon."""
+    socket_path = host["socket"]
+    identity = host["host_socket_identity"]
+    daemon = host["daemon"]
+    daemon_pid, listener = daemon["pid"], daemon["listener_inode"]
     require(
-        endpoint_path(socket_path) and type(host_pid) is int and host_pid > 1,
+        socket_path in SOCKETS
+        and type(host_pid) is int
+        and host_pid > 1
+        and host_pid != daemon_pid
+        and set(namespaces) == {"mnt", "pid", "net"},
         "LIBVIRT_CONNECTION_SCOPE",
     )
-    started = proc_start(host_pid)
-    descriptors = descriptor_sockets(host_pid)
-    matched = [
-        name
-        for state, _, name, peer, _ in sock_diag()
-        if state == TCP_ESTABLISHED and peer in descriptors
-    ]
+    subject = PROC / str(host_pid) / "ns"
     require(
-        matched == [socket_path]
-        and proc_start(host_pid) == started
-        and descriptors == descriptor_sockets(host_pid),
+        all(
+            value == (subject / name).stat().st_ino
+            and value != (PROC / "self" / "ns" / name).stat().st_ino
+            for name, value in namespaces.items()
+        )
+        and proc_start(host_pid) == subject_start
+        and proc_start(daemon_pid) == daemon["start_ticks"]
+        and socket_identity(Path(socket_path)) == identity,
+        "LIBVIRT_CONNECTION_IDENTITY",
+    )
+    client_fds = descriptor_sockets(host_pid)
+    daemon_fds = descriptor_sockets(daemon_pid)
+    rows = sock_diag_in_namespace(subject / "net", namespaces["net"])
+    clients = [row for row in rows if row[0] == TCP_ESTABLISHED and row[1] in client_fds]
+    servers = [row for row in rows if row[0] == TCP_ESTABLISHED and row[3] in client_fds]
+    require(len(clients) == len(servers) == 1, "LIBVIRT_CONNECTION_PATHS_REJECTED")
+    _, client_inode, _, client_peer, _ = clients[0]
+    _, server_inode, server_path, server_peer, server_vfs = servers[0]
+    current_daemon_fds = descriptor_sockets(daemon_pid)
+    require(
+        server_path == socket_path
+        and server_vfs == kernel_socket_node(identity)
+        and server_peer == client_inode
+        and client_peer == server_inode
+        and len({client_inode, server_inode, listener}) == 3
+        and {server_inode, listener} <= daemon_fds & current_daemon_fds
+        and client_fds == descriptor_sockets(host_pid)
+        and proc_start(host_pid) == subject_start
+        and proc_start(daemon_pid) == daemon["start_ticks"]
+        and all((subject / name).stat().st_ino == value for name, value in namespaces.items())
+        and socket_identity(Path(socket_path)) == identity,
         "LIBVIRT_CONNECTION_PATHS_REJECTED",
     )
-    return matched
+    return [server_path]
 
 
 def endpoint_path(path: str) -> bool:
@@ -496,42 +564,102 @@ def receive(connection: socket.socket, length: int, deadline: float) -> bytes:
     return bytes(raw)
 
 
-def rpc(
-    connection: socket.socket, procedure: int, serial: int, payload: bytes, deadline: float
-) -> tuple[int, bytes]:
-    message = RPC_HEADER.pack(REMOTE_PROGRAM, REMOTE_VERSION, procedure, 0, serial, 0) + payload
-    remaining = deadline - time.monotonic()
-    require(remaining > 0, "LIBVIRT_RPC_TIMEOUT")
-    connection.settimeout(remaining)
-    connection.sendall(struct.pack("!I", len(message) + 4) + message)
-    (length,) = struct.unpack("!I", receive(connection, 4, deadline))
-    require(4 + RPC_HEADER.size <= length <= CONTROL_LIMIT, "LIBVIRT_RPC_LENGTH")
-    reply = receive(connection, length - 4, deadline)
-    program, version, method, kind, reply_serial, status = RPC_HEADER.unpack_from(reply)
+def rpc_request(procedure: int, serial: int, payload: bytes) -> bytes:
+    header = RPC_HEADER.pack(REMOTE_PROGRAM, REMOTE_VERSION, procedure, 0, serial, 0)
+    return RPC_LENGTH.pack(RPC_LENGTH.size + len(header) + len(payload)) + header + payload
+
+
+def rpc_length(raw: bytes, offset: int = 0) -> int:
+    require(len(raw) - offset >= RPC_LENGTH.size, "LIBVIRT_RPC_LENGTH")
+    (length,) = RPC_LENGTH.unpack_from(raw, offset)
+    require(RPC_LENGTH.size + RPC_HEADER.size <= length <= CONTROL_LIMIT, "LIBVIRT_RPC_LENGTH")
+    return int(length)
+
+
+def rpc_reply(raw: bytes, procedure: int, serial: int) -> tuple[int, bytes]:
+    require(rpc_length(raw) == len(raw), "LIBVIRT_RPC_LENGTH")
+    program, version, method, kind, reply_serial, status = RPC_HEADER.unpack_from(
+        raw, RPC_LENGTH.size
+    )
     require(
         (program, version, method, kind, reply_serial)
         == (REMOTE_PROGRAM, REMOTE_VERSION, procedure, 1, serial)
         and status in {0, 1},
         "LIBVIRT_RPC_CORRELATION",
     )
-    return status, reply[RPC_HEADER.size :]
+    return status, raw[RPC_LENGTH.size + RPC_HEADER.size :]
+
+
+def rpc(
+    connection: socket.socket,
+    procedure: int,
+    serial: int,
+    payload: bytes,
+    deadline: float,
+    transcript: list[bytes],
+) -> tuple[int, bytes]:
+    request = rpc_request(procedure, serial, payload)
+    remaining = deadline - time.monotonic()
+    require(remaining > 0, "LIBVIRT_RPC_TIMEOUT")
+    connection.settimeout(remaining)
+    connection.sendall(request)
+    prefix = receive(connection, RPC_LENGTH.size, deadline)
+    reply = prefix + receive(connection, rpc_length(prefix) - RPC_LENGTH.size, deadline)
+    result = rpc_reply(reply, procedure, serial)
+    transcript.extend((request, reply))
+    return result
 
 
 def xdr_string(raw: bytes) -> bytes:
     return struct.pack("!I", len(raw)) + raw + b"\0" * ((-len(raw)) % 4)
 
 
-def wire_denial(connection: socket.socket, domain: uuid.UUID) -> None:
-    deadline = time.monotonic() + TIMEOUT
-    status, authorization = rpc(connection, AUTH_LIST, 1, b"", deadline)
+def denied_error(raw: bytes) -> None:
+    """Verify the complete bounded virNetMessageError XDR, including its error code."""
+    offset = 0
+    reason = "LIBVIRT_FIXTURE_DENIAL_UNPROVEN"
+
+    def word() -> int:
+        nonlocal offset
+        require(offset + RPC_LENGTH.size <= len(raw), reason)
+        (value,) = RPC_LENGTH.unpack_from(raw, offset)
+        offset += RPC_LENGTH.size
+        return int(value)
+
+    def optional_string() -> None:
+        nonlocal offset
+        present = word()
+        require(present in {0, 1}, reason)
+        if present:
+            length = word()
+            end = offset + ((length + 3) & ~3)
+            require(end <= len(raw) and not any(raw[offset + length : end]), reason)
+            offset = end
+
+    require(word() == OPERATION_DENIED, reason)
+    word()  # error domain
+    optional_string()  # message
+    word()  # error level
+    require(word() == 0, reason)  # unused domain object
+    for _ in range(3):
+        optional_string()
+    word()
+    word()
+    require(word() == 0 and offset == len(raw), reason)  # unused network object
+
+
+def check_denial(
+    exchange: Callable[[int, int, bytes], tuple[int, bytes]], domain: uuid.UUID
+) -> None:
+    status, authorization = exchange(AUTH_LIST, 1, b"")
     require(
         status == 0 and authorization in {struct.pack("!I", 0), struct.pack("!II", 1, 0)},
         "LIBVIRT_FIXTURE_AUTH_REJECTED",
     )
     open_args = struct.pack("!I", 1) + xdr_string(b"qemu:///system") + struct.pack("!I", 0)
-    status, result = rpc(connection, CONNECT_OPEN, 2, open_args, deadline)
+    status, result = exchange(CONNECT_OPEN, 2, open_args)
     require(status == 0 and not result, "LIBVIRT_FIXTURE_OPEN_REJECTED")
-    status, handle = rpc(connection, LOOKUP_BY_UUID, 3, domain.bytes, deadline)
+    status, handle = exchange(LOOKUP_BY_UUID, 3, domain.bytes)
     require(status == 0 and len(handle) >= 24, "LIBVIRT_FIXTURE_DOMAIN_REJECTED")
     (length,) = struct.unpack_from("!I", handle)
     end = 4 + ((length + 3) & ~3)
@@ -542,21 +670,78 @@ def wire_denial(connection: socket.socket, domain: uuid.UUID) -> None:
         and not any(handle[4 + length : end]),
         "LIBVIRT_FIXTURE_DOMAIN_REJECTED",
     )
-    status, denied = rpc(
-        connection, GET_XML_DESC, 4, handle + struct.pack("!I", SECURE_XML), deadline
+    status, denied = exchange(GET_XML_DESC, 4, handle + struct.pack("!I", SECURE_XML))
+    require(status == 1, "LIBVIRT_FIXTURE_DENIAL_UNPROVEN")
+    denied_error(denied)
+
+
+def wire_denial(connection: socket.socket, domain: uuid.UUID) -> bytes:
+    """Collect the exact sent and received frames over one connected socket."""
+    deadline = time.monotonic() + TIMEOUT
+    frames: list[bytes] = []
+    check_denial(
+        lambda method, serial, arg: rpc(connection, method, serial, arg, deadline, frames), domain
     )
+    return b"".join(frames)
+
+
+def trace_header(session: dict[str, str], denial: dict[str, Any]) -> bytes:
     require(
-        status == 1
-        and len(denied) >= 8
-        and struct.unpack_from("!I", denied)[0] == OPERATION_DENIED,
-        "LIBVIRT_FIXTURE_DENIAL_UNPROVEN",
+        set(session) == SESSION_FIELDS
+        and all(re.fullmatch(r"[0-9a-f]{64}", value) for value in session.values()),
+        "LIBVIRT_FIXTURE_SESSION",
     )
+    metadata = json.dumps(
+        {"session": session, "denial": denial},
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("ascii")
+    require(0 < len(metadata) <= TRACE_METADATA_LIMIT, "LIBVIRT_FIXTURE_TRACE_METADATA")
+    return TRACE_MAGIC + RPC_LENGTH.pack(len(metadata)) + metadata
+
+
+def verify_denial_trace(raw: bytes, session: dict[str, str], denial: dict[str, Any]) -> None:
+    """Use the original frames independently of the collector's interpretation."""
+    header = trace_header(session, denial)
+    require(
+        len(header) < len(raw) <= TRACE_LIMIT and raw.startswith(header),
+        "LIBVIRT_FIXTURE_TRACE_BINDING",
+    )
+    offset = len(header)
+
+    def next_frame() -> bytes:
+        nonlocal offset
+        end = offset + rpc_length(raw, offset)
+        require(end <= len(raw), "LIBVIRT_FIXTURE_TRACE_TRUNCATED")
+        frame = raw[offset:end]
+        offset = end
+        return frame
+
+    def exchange(method: int, serial: int, arg: bytes) -> tuple[int, bytes]:
+        require(next_frame() == rpc_request(method, serial, arg), "LIBVIRT_FIXTURE_TRACE_REQUEST")
+        return rpc_reply(next_frame(), method, serial)
+
+    domain_uuid = denial["fixture"]["domain_uuid"]
+    try:
+        domain = uuid.UUID(domain_uuid)
+    except (AttributeError, ValueError) as exc:
+        raise Refusal("LIBVIRT_FIXTURE_DOMAIN_REJECTED") from exc
+    require(str(domain) == domain_uuid, "LIBVIRT_FIXTURE_DOMAIN_REJECTED")
+    check_denial(exchange, domain)
+    require(offset == len(raw), "LIBVIRT_FIXTURE_TRACE_TRAILING")
 
 
 def collect_fixture_denial(
-    path: Path, disposable_pid: int, domain_uuid: str, host: dict[str, Any]
+    path: Path,
+    disposable_pid: int,
+    domain_uuid: str,
+    host: dict[str, Any],
+    *,
+    output: Path,
+    session: dict[str, str],
 ) -> dict[str, Any]:
-    """Verify identity and secure XML denial using a separate, existing test daemon."""
+    """Save original frames tied to this authorized session and disposable daemon."""
     domain = uuid.UUID(domain_uuid)
     require(
         str(domain) == domain_uuid
@@ -579,42 +764,79 @@ def collect_fixture_denial(
     daemon = host["daemon"]
     base = PROC / str(disposable_pid)
     started = proc_start(disposable_pid)
-    for name in ("mnt", "pid", "net"):
+    names = ("mnt", "pid", "net")
+    host_namespaces = {name: (PROC / "self" / "ns" / name).stat().st_ino for name in names}
+    namespaces = {name: (base / "ns" / name).stat().st_ino for name in names}
+    require(
+        all(namespaces[name] != host_namespaces[name] for name in names),
+        "LIBVIRT_FIXTURE_NAMESPACE_REQUIRED",
+    )
+
+    def measured_daemon() -> tuple[str, str, str]:
+        observed = daemon_identity(disposable_pid, SOCKETS[host["socket"]], started)
         require(
-            (base / "ns" / name).stat().st_ino != (PROC / "self" / "ns" / name).stat().st_ino,
-            "LIBVIRT_FIXTURE_NAMESPACE_REQUIRED",
+            observed[0:2] == (daemon["executable"], daemon["executable_sha256"]),
+            "LIBVIRT_FIXTURE_BINARY_MISMATCH",
         )
-    _, exe_hash, _ = daemon_identity(disposable_pid, SOCKETS[host["socket"]], started)
-    require(exe_hash == daemon["executable_sha256"], "LIBVIRT_FIXTURE_BINARY_MISMATCH")
-    for paths in (daemon["config"], daemon["unit_files"]):
-        for name, expected in paths.items():
-            require(
-                digest(protected_file(Path(name), base / "root")) == expected,
-                "LIBVIRT_FIXTURE_CONFIGURATION_MISMATCH",
-            )
+        for paths in (daemon["config"], daemon["unit_files"]):
+            for name, expected in paths.items():
+                require(
+                    digest(protected_file(Path(name), base / "root")) == expected,
+                    "LIBVIRT_FIXTURE_CONFIGURATION_MISMATCH",
+                )
+        return observed
+
+    executable, exe_hash, cmdline = measured_daemon()
     identity = socket_identity(path)
-    require(identity != host["host_socket_identity"], "LIBVIRT_FIXTURE_SOCKET_ALIAS")
+    require(identity[:2] != host["host_socket_identity"][:2], "LIBVIRT_FIXTURE_SOCKET_ALIAS")
     with socket.socket(AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(TIMEOUT)
         connection.connect(str(path))
+        peer = peer_credentials(connection)
+        connection_stat = os.fstat(connection.fileno())
         require(
-            peer_credentials(connection)[0] == disposable_pid and socket_identity(path) == identity,
+            peer[0] == disposable_pid
+            and socket_identity(path) == identity
+            and stat.S_ISSOCK(connection_stat.st_mode)
+            and connection_stat.st_ino > 0,
             "LIBVIRT_FIXTURE_PEER_REJECTED",
         )
-        wire_denial(connection, domain)
+        wire = wire_denial(connection, domain)
         require(
-            proc_start(disposable_pid) == started and socket_identity(path) == identity,
+            peer_credentials(connection) == peer
+            and socket_identity(path) == identity
+            and proc_start(disposable_pid) == started
+            and all((base / "ns" / name).stat().st_ino == namespaces[name] for name in names)
+            and measured_daemon() == (executable, exe_hash, cmdline),
             "LIBVIRT_FIXTURE_CHANGED",
         )
-    return {
+    denial = {
         "scope": "DISPOSABLE_FIXTURE",
         "daemon_sha256": exe_hash,
+        "reviewed_readonly_implementation_sha256": daemon[
+            "reviewed_readonly_implementation_sha256"
+        ],
         "config": daemon["config"],
         "unit_files": daemon["unit_files"],
         "client_connect_flags": 0,
-        "wire_request": ["REMOTE_PROC_DOMAIN_GET_XML_DESC", SECURE_XML],
-        "wire_reply": "VIR_ERR_OPERATION_DENIED",
+        "fixture": {
+            "socket": str(path),
+            "socket_identity": identity,
+            "connection_identity": [connection_stat.st_dev, connection_stat.st_ino],
+            "peer": peer,
+            "start_ticks": started,
+            "namespaces": namespaces,
+            "host_namespaces": host_namespaces,
+            "executable": executable,
+            "cmdline_sha256": cmdline,
+            "domain_uuid": domain_uuid,
+        },
     }
+    artifact = output / "fixture-readonly.rpc"
+    raw = trace_header(session, denial) + wire
+    with os.fdopen(os.open(artifact, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+        stream.write(raw)
+    return {**denial, "trace": {"path": artifact.name, "sha256": digest(raw)}}
 
 
 def assemble(

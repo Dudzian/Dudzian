@@ -25,6 +25,7 @@ QEMU_LABEL = (
 )
 ENV = diagnostic.COMMAND_ENV
 check = contract.require
+normalize_maps = qualify.normalize_maps
 
 
 @dataclass(frozen=True)
@@ -109,17 +110,6 @@ def file_identity(info: os.stat_result) -> tuple[int, int, int]:
     )
 
 
-def normalize_maps(raw: bytes, staging_root: Path) -> bytes:
-    prefix = os.fsencode(staging_root) + b"/"
-    records = []
-    for line in raw.splitlines():
-        parts = line.split(maxsplit=5)
-        if len(parts) == 6 and parts[5].startswith(prefix):
-            parts[5] = b"/" + parts[5][len(prefix) :]
-        records.append(b" ".join(parts))
-    return b"\n".join(records) + b"\n"
-
-
 def snapshot(
     subject: Target,
     expected: dict[str, int],
@@ -156,7 +146,9 @@ def snapshot(
         raw = normalize_maps(raw_maps, staging_root)
         mapped = qualify._maps(raw, canonical)
         check(
-            ticks(proc) == before and namespaces(proc) == expected and executable in mapped,
+            ticks(proc) == before
+            and namespaces(proc) == expected
+            and mapped.get(executable) == file_identity(actual),
             "CAPTURE_CHILD_IDENTITY",
         )
         return Snapshot(raw, raw_maps, status, label + b"\n", mapped)
@@ -239,16 +231,17 @@ def object_evidence(
     case: str,
     staging_root: Path,
     trace: bytes,
-    sampled: Snapshot,
+    mapped: dict[str, tuple[int, ...]],
     subject: Target,
     canonical: Callable[[str], str],
     pins: dict[str, str],
     request: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    traced, _, _, _, _, _ = qualify._trace(
+    traced, _, _, _, _ = qualify._trace(
         trace, subject.namespace_pid, canonical, request["library_map"]
     )
-    paths = sorted((traced | sampled.mapped.keys()) - {qualify.VDSO})
+    check(traced <= mapped.keys(), "CAPTURE_OBJECT_MAPPING_UNOBSERVED")
+    paths = sorted(mapped.keys() - {qualify.VDSO})
     objects: dict[str, Any] = {}
     symbols: dict[str, Any] = {}
     for i, name in enumerate(paths):
@@ -262,7 +255,7 @@ def object_evidence(
             and info.st_uid == 0
             and info.st_nlink == 1
             and digest == pins[name]
-            and identity == sampled.mapped.get(name, identity)
+            and identity == mapped[name]
             and file_identity(original.lstat()) == identity,
             "CAPTURE_OBJECT_PIN_MISMATCH",
         )
@@ -292,7 +285,7 @@ def collect(
     output: Path,
     *,
     staging_root: Path,
-    on_libvirt: Callable[[int], list[str]],
+    on_libvirt: Callable[[int, int], list[str]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Drive only the parked fixed carrier, then emit exact qualifier case rows."""
     carrier_proc = Path("/proc") / str(host_pid)
@@ -328,27 +321,34 @@ def collect(
                 str, qualify._canonical(path, approved, aliases, argv0=argv0, executable=executable)
             )
 
+        snapshots: list[Snapshot] = []
+        mapped: dict[str, tuple[int, ...]] = {}
+
+        def observe() -> None:
+            sample = snapshot(subject, expected, staging_root, executable, canonical, qemu=qemu)
+            if sample is None:
+                return
+            extended = qualify.merge_mappings(mapped, sample.mapped)
+            if not snapshots or extended:
+                check(
+                    len(snapshots) < qualify.MAX_MAP_SAMPLES
+                    and sum(len(previous.raw_maps) for previous in snapshots) + len(sample.raw_maps)
+                    <= MAX_ARTIFACT,
+                    "CAPTURE_MAP_SAMPLES_LIMIT",
+                )
+                snapshots.append(sample)
+
         if qemu:
-            snapshots: dict[str, Snapshot] = {}
-
-            def observe() -> None:
-                sample = snapshot(subject, expected, staging_root, executable, canonical, qemu=True)
-                if sample is not None and (
-                    "best" not in snapshots or len(sample.mapped) >= len(snapshots["best"].mapped)
-                ):
-                    snapshots["best"] = sample
-
             channel.command(b"RUN\n")
             result = channel.event(observe)
-            sample = snapshots.get("best")
             expect(result, case, "result", {"outcome"}, subject.namespace_pid)
             check(result["outcome"]["argv"] == first["argv"], "CAPTURE_QEMU_ARGV_DRIFT")
             outcome: Any = result["outcome"]
         else:
-            sample = snapshot(subject, expected, staging_root, executable, canonical, qemu=False)
+            observe()
             if libvirt_case:
                 libvirt["view"] = first["view"]
-                libvirt["connect_paths"] = on_libvirt(subject.host_pid)
+                libvirt["connect_paths"] = on_libvirt(subject.host_pid, subject.start)
             channel.command(b"ACK\n")
             result = channel.event()
             expect(
@@ -362,26 +362,33 @@ def collect(
                 libvirt["read_results"] = result["read_results"]
             expect(channel.event(), case, "end", set(), subject.namespace_pid)
             outcome = "PASS"
-        check(sample is not None, "CAPTURE_PROCESS_MAPS_UNOBSERVED")
-        assert sample is not None
+        check(bool(snapshots), "CAPTURE_PROCESS_MAPS_UNOBSERVED")
         trace = channel.finish_case()
         objects, symbols = object_evidence(
             output,
             case,
             staging_root,
             trace,
-            sample,
+            mapped,
             subject,
             canonical,
             pins,
             request,
         )
-        artifact(output, f"{case}.maps.raw", sample.raw_maps)
+        maps = [
+            {
+                "raw": artifact(output, f"{case}.{index}.maps.raw", sample.raw_maps),
+                "normalized": artifact(output, f"{case}.{index}.maps", sample.maps),
+            }
+            for index, sample in enumerate(snapshots)
+        ]
+        sample = snapshots[-1]
         row = {
             "pid": subject.namespace_pid,
             "argv0": argv0,
             "trace": artifact(output, f"{case}.trace", trace),
-            "maps": artifact(output, f"{case}.maps", sample.maps),
+            "maps_root": str(staging_root),
+            "maps": maps,
             "status": artifact(output, f"{case}.status", sample.status),
             "label": artifact(output, f"{case}.label", sample.label),
             "objects": objects,

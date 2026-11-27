@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import struct
 from types import SimpleNamespace
 from typing import Any
+import uuid
 
 import pytest
 
 from scripts import stage9_v5d10_contract as contract
 from scripts import stage9_v5d11_diagnostic as diagnostic
+from scripts import stage9_v5d11_libvirt as virt
 from scripts import stage9_v5d11_qualify as qualify
 
 pytestmark = [
@@ -20,6 +23,7 @@ pytestmark = [
 ]
 
 ROOT = "/profile-a"
+STAGING_ROOT = b"/stage9-v5d11-fixture/root"
 PYTHON = f"{ROOT}/venv/bin/python3.12"
 LIBVIRT = f"{ROOT}/packages/libvirtmod.so"
 CFFI = f"{ROOT}/packages/_cffi_backend.so"
@@ -29,6 +33,8 @@ LIBC = "/usr/lib/x86_64-linux-gnu/libc.so.6"
 SOCKET = "/run/libvirt/libvirt-sock-ro"
 DAEMON = "/usr/sbin/libvirtd"
 PIN = "a" * 64
+SESSION = {"spec_sha256": PIN, "authorization_sha256": "b" * 64, "nonce": "c" * 64}
+FIXTURE_DOMAIN = uuid.UUID("c1cf34ad-539d-4669-899a-6859ea57e925")
 MOUNTINFO = (
     b"21 0 00:12 / / ro,nosuid,nodev - tmpfs tmpfs ro\n"
     b"22 21 00:13 / /proc ro,nosuid,nodev,noexec - proc proc ro\n"
@@ -48,9 +54,67 @@ def artifact(path: Path, data: bytes) -> dict[str, str]:
     return {"path": path.name, "sha256": contract.digest(data)}
 
 
-def daemon() -> dict[str, Any]:
+def map_artifacts(path: Path, normalized: bytes) -> dict[str, dict[str, str]]:
+    raw = (
+        b"\n".join(
+            line.replace(b" /", b" " + STAGING_ROOT + b"/") for line in normalized.splitlines()
+        )
+        + b"\n"
+    )
+    return {
+        "raw": artifact(path.with_suffix(".maps.raw"), raw),
+        "normalized": artifact(path, normalized),
+    }
+
+
+def wire_frames(*, secure=1, serial=4, code=29, reply_status=1) -> bytes:
+    def frame(method, kind, sequence, status, body):
+        return (
+            struct.pack("!7I", 28 + len(body), 0x20008086, 1, method, kind, sequence, status) + body
+        )
+
+    handle = b"\0\0\0\x04test" + FIXTURE_DOMAIN.bytes + b"\xff" * 4
+    return b"".join(
+        (
+            frame(66, 0, 1, 0, b""),
+            frame(66, 1, 1, 0, struct.pack("!I", 0)),
+            frame(1, 0, 2, 0, struct.pack("!II", 1, 14) + b"qemu:///system\0\0" + b"\0" * 4),
+            frame(1, 1, 2, 0, b""),
+            frame(24, 0, 3, 0, FIXTURE_DOMAIN.bytes),
+            frame(24, 1, 3, 0, handle),
+            frame(14, 0, 4, 0, handle + struct.pack("!I", secure)),
+            frame(
+                14, 1, serial, reply_status, struct.pack("!11I", code, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+            ),
+        )
+    )
+
+
+def daemon(tmp_path: Path) -> dict[str, Any]:
     config = {"/etc/libvirt/libvirtd.conf": PIN}
     units = {f"/lib/systemd/system/libvirtd{suffix}": PIN for suffix in ("-ro.socket", ".service")}
+    denial: dict[str, Any] = {
+        "scope": "DISPOSABLE_FIXTURE",
+        "daemon_sha256": PIN,
+        "reviewed_readonly_implementation_sha256": PIN,
+        "config": config,
+        "unit_files": units,
+        "client_connect_flags": 0,
+        "fixture": {
+            "socket": "/root/stage9/fixture.sock",
+            "socket_identity": [15, 25, 0, 0, 0o660],
+            "connection_identity": [9, 404],
+            "peer": [2020, 0, 0],
+            "start_ticks": 110,
+            "namespaces": {"mnt": 17, "pid": 18, "net": 19},
+            "host_namespaces": {"mnt": 7, "pid": 8, "net": 9},
+            "executable": DAEMON,
+            "cmdline_sha256": PIN,
+            "domain_uuid": str(FIXTURE_DOMAIN),
+        },
+    }
+    trace = virt.trace_header(SESSION, denial) + wire_frames()
+    denial["trace"] = artifact(tmp_path / "fixture-readonly.rpc", trace)
     return {
         "socket": SOCKET,
         "socket_identity": [11, 22, 0, 0, 0o777],
@@ -74,15 +138,7 @@ def daemon() -> dict[str, Any]:
         "uri": "qemu:///system",
         "connect_paths": [SOCKET],
         "read_results": dict.fromkeys(qualify.READS, "PASS"),
-        "fixture_denial": {
-            "scope": "DISPOSABLE_FIXTURE",
-            "daemon_sha256": PIN,
-            "config": config,
-            "unit_files": units,
-            "client_connect_flags": 0,
-            "wire_request": ["REMOTE_PROC_DOMAIN_GET_XML_DESC", 1],
-            "wire_reply": "VIR_ERR_OPERATION_DENIED",
-        },
+        "fixture_denial": denial,
     }
 
 
@@ -139,7 +195,8 @@ def loader_case(path: Path, name: str) -> dict[str, Any]:
         "pid": 123,
         "argv0": argv0,
         "trace": artifact(path / f"{name}.trace", trace.encode()),
-        "maps": artifact(path / f"{name}.maps", maps.encode()),
+        "maps_root": os.fsdecode(STAGING_ROOT),
+        "maps": [map_artifacts(path / f"{name}.maps", maps.encode())],
         "status": artifact(path / f"{name}.status", KERNEL_STATUS),
         "label": artifact(
             path / f"{name}.label", qualify.QEMU_LABEL if qemu else qualify.PARENT_LABEL
@@ -221,13 +278,14 @@ def inputs(tmp_path: Path) -> tuple[dict[str, Any], ...]:
         "receipt_sha256": contract.digest(contract.canonical(receipt)),
         "abi_request_sha256": receipt["abi_request_sha256"],
         "static_report_sha256": contract.digest(contract.canonical(report)),
+        "session": dict(SESSION),
         "view": {
             "mountinfo": artifact(tmp_path / "mountinfo", MOUNTINFO),
             "apparmor_sha256": PIN,
             "seccomp_sha256": PIN,
             "namespaces": {"mnt": 1, "net": 2, "pid": 3},
         },
-        "libvirt": daemon(),
+        "libvirt": daemon(tmp_path),
         "loader": {name: loader_case(tmp_path, name) for name in qualify.PROBES},
     }
     return receipt, request, report, evidence
@@ -283,6 +341,65 @@ def test_readonly_client_flag_does_not_prove_server_denial(inputs, tmp_path: Pat
 
 
 @pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ("different_session", "LIBVIRT_FIXTURE_TRACE_BINDING"),
+        ("different_connection", "LIBVIRT_FIXTURE_TRACE_BINDING"),
+        ("different_domain", "LIBVIRT_FIXTURE_TRACE_BINDING"),
+        ("aliased_socket", "LIBVIRT_FIXTURE_IDENTITY"),
+        ("host_namespace", "LIBVIRT_FIXTURE_NAMESPACE_REQUIRED"),
+        ("diagnostic_namespace", "LIBVIRT_FIXTURE_NAMESPACE_REQUIRED"),
+        ("unpinned_trace", "QUALIFICATION_ARTIFACT_PIN_MISMATCH"),
+        ("bad_request", "LIBVIRT_FIXTURE_TRACE_REQUEST"),
+        ("bad_serial", "LIBVIRT_RPC_CORRELATION"),
+        ("not_denied", "LIBVIRT_FIXTURE_DENIAL_UNPROVEN"),
+        ("wrong_code", "LIBVIRT_FIXTURE_DENIAL_UNPROVEN"),
+        ("truncated", "LIBVIRT_FIXTURE_TRACE_TRUNCATED"),
+        ("trailing", "LIBVIRT_FIXTURE_TRACE_TRAILING"),
+    ],
+)
+def test_refuses_uncorrelated_fixture_wire_evidence(inputs, tmp_path, change, error) -> None:
+    evidence = inputs[3]
+    record = evidence["libvirt"]
+    denial = record["fixture_denial"]
+    fixture = denial["fixture"]
+    if change == "different_session":
+        evidence["session"]["nonce"] = "d" * 64
+    elif change == "different_connection":
+        fixture["connection_identity"][1] += 1
+    elif change == "different_domain":
+        fixture["domain_uuid"] = "c1cf34ad-539d-4669-899a-6859ea57e926"
+    elif change == "aliased_socket":
+        fixture["socket_identity"] = record["socket_identity"]
+    elif change == "host_namespace":
+        fixture["namespaces"]["net"] = fixture["host_namespaces"]["net"]
+    elif change == "diagnostic_namespace":
+        fixture["namespaces"]["net"] = evidence["view"]["namespaces"]["net"]
+    else:
+        changes = {
+            "bad_request": wire_frames(secure=0),
+            "bad_serial": wire_frames(serial=5),
+            "not_denied": wire_frames(reply_status=0),
+            "wrong_code": wire_frames(code=1),
+            "truncated": wire_frames()[:-1],
+            "trailing": wire_frames() + b"unexpected",
+            "unpinned_trace": wire_frames()[:-1],
+        }
+        trace = denial.pop("trace")
+        header = virt.trace_header(SESSION, denial)
+        updated = artifact(tmp_path / trace["path"], header + changes[change])
+        denial["trace"] = trace if change == "unpinned_trace" else updated
+    with pytest.raises(contract.Refusal, match=error):
+        assess(inputs, tmp_path)
+
+
+def test_legacy_native_evidence_refused_without_source_artifacts(inputs, tmp_path) -> None:
+    inputs[3]["profile"] = "stage9-v5d11-profile-a-native-evidence-v1"
+    with pytest.raises(contract.Refusal, match="NATIVE_EVIDENCE_SOURCE_ARTIFACTS_REQUIRED"):
+        assess(inputs, tmp_path)
+
+
+@pytest.mark.parametrize(
     ("field", "before", "after", "error"),
     [
         ("trace", LIBC, "/tmp/rogue.so", "UNAPPROVED_RUNTIME_OBJECT"),
@@ -304,8 +421,12 @@ def test_readonly_client_flag_does_not_prove_server_denial(inputs, tmp_path: Pat
 )
 def test_refuses_loader_drift(inputs, tmp_path: Path, field, before, after, error) -> None:
     case = inputs[3]["loader"]["python-startup"]
-    path = tmp_path / case[field]["path"]
-    case[field] = artifact(path, path.read_text().replace(before, after, 1).encode())
+    if field == "maps":
+        path = tmp_path / case[field][0]["normalized"]["path"]
+        case[field] = [map_artifacts(path, path.read_text().replace(before, after, 1).encode())]
+    else:
+        path = tmp_path / case[field]["path"]
+        case[field] = artifact(path, path.read_text().replace(before, after, 1).encode())
     with pytest.raises(contract.Refusal, match=error):
         assess(inputs, tmp_path)
 
@@ -320,6 +441,43 @@ def test_refuses_unmeasured_dlopen(inputs, tmp_path: Path) -> None:
     del inputs[3]["loader"]["python-imports"]["objects"][RUST]
     with pytest.raises(contract.Refusal, match="RUNTIME_OBJECT_MEASUREMENTS_INCOMPLETE"):
         assess(inputs, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("observation", "error"),
+    [
+        ("absent", "RUNTIME_TRACE_MAPPING_UNOBSERVED"),
+        ("earlier", None),
+        ("changed-inode", "RUNTIME_MAP_IDENTITY_CHANGED"),
+        ("raw-drift", "RUNTIME_MAP_NORMALIZATION_MISMATCH"),
+    ],
+)
+def test_dlopen_requires_kernel_mapping(inputs, tmp_path: Path, observation, error) -> None:
+    receipt, request, report, evidence = inputs
+    case = evidence["loader"]["python-imports"]
+    prior = case["maps"][0]
+    prior_maps = (tmp_path / prior["normalized"]["path"]).read_bytes()
+    later_maps = b"\n".join(line for line in prior_maps.splitlines() if RUST.encode() not in line)
+    if observation == "changed-inode":
+        later_maps = later_maps.replace(f"50 {PYTHON}".encode(), f"99 {PYTHON}".encode())
+    later = map_artifacts(tmp_path / "after-dlclose.maps", later_maps + b"\n")
+    case["maps"] = [later] if observation == "absent" else [prior, later]
+    if observation == "raw-drift":
+        path = tmp_path / later["raw"]["path"]
+        later["raw"] = artifact(path, path.read_bytes().replace(b"00:23", b"00:24", 1))
+
+    objects, aliases, edges = qualify._objects(report, receipt, request)
+
+    def inspect_case() -> dict[str, Any]:
+        return qualify._case(
+            "python-imports", case, tmp_path, objects, aliases, edges, report, request
+        )
+
+    if error:
+        with pytest.raises(contract.Refusal, match=error):
+            inspect_case()
+    else:
+        assert inspect_case()["observed_dlopen_objects"] == 2
 
 
 @pytest.mark.parametrize(

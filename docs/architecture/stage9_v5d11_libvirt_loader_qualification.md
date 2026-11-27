@@ -66,11 +66,16 @@ oba składniki etykiety potomka. Wynik dotyczy tego wariantu i zmierzonych
 przypadków. Widok oraz loader przyszłego preflight Observera mają nadal
 status `NOT_TESTED`.
 
-Powiąż `st_dev` i `st_ino` odczytanego pliku z mapą,
+Powiąż `st_dev` i `st_ino` każdego odczytanego ELF z mapą procesu,
 zweryfikuj hash tych samych bajtów i zapisz `LC_ALL=C readelf --dyn-syms -W`
-z tego obiektu. Biblioteka zwolniona przez `dlclose` wymaga powiązania z jej
-wcześniejszym mapowaniem. Ślad i nazwa SONAME bez potwierdzenia rzeczywistej
-ścieżki są niewystarczające. Zestawienia wersji porównuj z krawędziami
+z tego obiektu. Kolektor qemu-img zachowuje wcześniejsze migawki, które
+wnoszą nową zaobserwowaną tożsamość. Każda migawka pochodzi od tego samego
+procesu, po sprawdzeniu PID, czasu startu, przestrzeni nazw i tożsamości
+pliku wykonywalnego. Biblioteka zwolniona przez `dlclose` wymaga zgodnej
+tożsamości z wcześniejszej migawki. Gdy krótkiego mapowania nie uchwycono,
+kwalifikator odmawia oceny pakietu. Porównuje też mapy znormalizowane z
+oryginalnymi i odrzuca zmianę tożsamości między migawkami. Zestawienia wersji
+porównuj z krawędziami
 `DT_NEEDED` i przypiętymi providers. Pozytywne wiązanie słabego symbolu można
 obserwować. Brak zdarzenia może oznaczać leniwe wiązanie, nieużyty kod albo
 brak definicji. `weak_references_without_observed_binding` zachowuje tę
@@ -81,12 +86,39 @@ niepewność. Przypadki diagnostyczne nie rozszerzają listy bibliotek A.
 W tej samej replice udostępnij jeden root-owned socket `libvirt-sock-ro` albo
 `virtqemud-sock-ro`. Zmierz `device`, `inode`, `uid`, `gid` i tryb po obu
 stronach bind mount. Konfiguracja klienta ma dokładne bajty
-`uri_default = "qemu:///system"` z końcowym LF. Kolektor wiąże utrzymane połączenia z inode socketu przez `SOCK_DIAG` i ustala
-`SO_PEERCRED` po obu stronach widoku. Wynik obejmuje ustanowione połączenia. PID demona
-spoza prywatnego PID namespace może przyjąć 0 wewnątrz. Na hoście przypnij PID,
+`uri_default = "qemu:///system"` z końcowym LF. Kolektor ustala
+`SO_PEERCRED` po obu stronach widoku. Dla `SOCK_DIAG` oddzielny wątek
+kolektora używa przypiętego deskryptora przestrzeni sieciowej żywego klienta.
+Linux tworzy oba końce ustanowionego połączenia UNIX w przestrzeni klienta.
+Kolektor wymaga jednej pary wzajemnych peer, zgodnego inode socketu w VFS
+oraz deskryptorów przyjętego połączenia i listenera w zmierzonym demonie.
+PID demona spoza prywatnego PID namespace może przyjąć 0 wewnątrz. Na hoście przypnij PID,
 start ticks, `/proc/PID/exe`, cmdline, pliki konfiguracji, jednostki i wszystkie
 effective drop-ins oraz przyporządkuj inode listenera do aktywnej jednostki i
 procesu. Przy socket activation uwzględnij pochodzenie deskryptora z PID 1.
+
+Zachowanie z końcami połączenia w przestrzeni klienta występuje w źródłach
+[Linux 6.8](https://github.com/torvalds/linux/blob/v6.8/net/unix/af_unix.c#L1465-L1501)
+i [Ubuntu `linux-hwe-7.0` `7.0.0-43.43~24.04.1`](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble/tree/net/unix/af_unix.c?id=60e65196d87a3b82950ceb158a08953b6468c785#n1625).
+[Zrzut SOCK_DIAG w tym wydaniu Ubuntu](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble/tree/net/unix/diag.c?id=60e65196d87a3b82950ceb158a08953b6468c785#n177)
+pozostaje ograniczony do przestrzeni monitora. Podczas inwentaryzacji odczytaj
+dokładną wersję źródłową pakietu jądra, `CONFIG_UNIX_DIAG` i stan pary jednostek.
+Poniższe polecenia odczytują lokalne metadane.
+
+```sh
+release=$(uname -r)
+cat /proc/version_signature
+dpkg-query -W -f='${binary:Package}\t${Version}\t${source:Package}\t${source:Version}\n' \
+  "linux-image-$release" "linux-modules-$release"
+grep -E '^(CONFIG_UNIX_DIAG=|# CONFIG_UNIX_DIAG is not set)' "/boot/config-$release"
+systemctl --system --no-pager show -p Id,ActiveState,MainPID,FragmentPath,DropInPaths \
+  libvirtd.service libvirtd-ro.socket
+```
+
+Aktywny `libvirtd-ro.socket` z `MainPID=0` usługi pozostawia pomiar tożsamości
+demona `BLOCKED`. Inwentaryzacja nie otwiera połączenia, które mogłoby aktywować
+usługę. Ocena wymaga później działającego, zweryfikowanego demona i obsługi
+AF_UNIX `SOCK_DIAG` w jądrze stanowiska.
 
 Uruchamiaj wyłącznie odczyty na wcześniej przygotowanej domenie testowej.
 Payload wymaga, aby aktywne XML faktycznie odwoływało się do testowej sieci.
@@ -101,16 +133,24 @@ kolektora protokołu wykonaj wyłącznie żądanie odczytowe XML z
 `VIR_ERR_OPERATION_DENIED` i przypnij zrecenzowany kod obsługi trybu RO dla
 wersji demona. Odczyt ten odróżnia decyzję serwera od kontroli flagi RO po
 stronie `libvirt-python` bez wykonywania operacji zmieniającej. Zachowaj
-oryginalny ślad źródłowy i sprawdź zgodność wszystkich pozostałych reguł
-protokołu z implementacją wersji demona. Sam mount ro pozwala wysłać RPC i
+oryginalne ramki w prywatnym pliku `fixture-readonly.rpc` i sprawdź zgodność
+pozostałych reguł protokołu z implementacją wersji demona. Ślad wiąże sesję,
+tożsamość połączenia, endpoint i zweryfikowaną tożsamość fixture. Kwalifikator
+odczytuje ramki ponownie i sprawdza pełną korelację żądań i odpowiedzi,
+w tym status i kod odmowy serwera. Kolektor zapisuje plik z trybem `0600`.
+Po znaczniku formatu i kanonicznych metadanych plik zawiera dokładne bajty
+ośmiu ramek wraz z ich oryginalnymi prefiksami długości. Każde żądanie i
+odpowiedź należą do tej samej sesji i połączenia. Sam mount ro pozwala wysłać RPC i
 odczyt `openReadOnly()` nie wystarcza do oceny drogi dla zwykłego klienta.
 
 ## Format prywatnych dowodów
 
-Plik `native-evidence.json` ma profil `stage9-v5d11-profile-a-native-evidence-v1`
+Plik `native-evidence.json` ma profil `stage9-v5d11-profile-a-native-evidence-v2`
 i klucze `profile`, `receipt_sha256`, `abi_request_sha256`,
-`static_report_sha256`, `view`, `libvirt`, `loader`. Każda referencja do pliku
+`static_report_sha256`, `session`, `view`, `libvirt`, `loader`. `session`
+wiąże `spec_sha256`, `authorization_sha256` oraz `nonce`. Każda referencja do pliku
 ma dokładnie `path` (względem `--artifacts`) i `sha256` (dokładne bajty).
+Pakiet v1 bez wymaganych dowodów źródłowych otrzymuje odmowę kwalifikacji.
 
 - `view` zawiera referencję `mountinfo`, `namespaces` z `mnt`, `pid`, `net`,
   oraz `apparmor_sha256`, `seccomp_sha256` i `purpose=diagnostic`. Mountinfo ma obejmować dokładnie
@@ -118,11 +158,14 @@ ma dokładnie `path` (względem `--artifacts`) i `sha256` (dokładne bajty).
 - `libvirt` zawiera `socket`, `socket_identity`, `host_socket_identity`,
   `peer`, `host_peer`, `daemon`, `client_config_sha256`, `uri`, `connect_paths`,
   `read_results` i `fixture_denial`. `read_results` odwzorowuje każdy klucz
-  zwracany przez payload na `PASS`. Struktury demona i dowodu odmowy stosują
+  zwracany przez payload na `PASS`. `fixture_denial` zawiera metadane
+  tożsamości oraz referencję do surowego śladu. Struktury demona i dowodu odmowy stosują
   pola i warunki walidacji w [`_libvirt`](../../scripts/stage9_v5d11_qualify.py).
 - `loader` zawiera wszystkie pięć przypadków z tabeli. Każdy ma `pid` (PID
-  widziany wewnątrz), `argv0`, referencje do `trace`, `maps`, `status`,
-  `label` oraz `symbols` mapujące rzeczywistą ścieżkę ELF do referencji wyjścia
+  widziany wewnątrz), `argv0`, referencje do `trace`, `status`, `label` i
+  `maps_root` z dokładną ścieżką katalogu przygotowanego widoku. `maps`
+  zawiera od 1 do 16 migawek `/proc/PID/maps`, każda z referencjami `raw`
+  i `normalized`. `symbols` mapuje rzeczywistą ścieżkę ELF do referencji wyjścia
   `readelf`. `objects` mapuje każdą zmierzoną ścieżkę ELF do słownika
   `sha256` i `identity=[major, minor, inode]`. `outcome` programu Python to
   `PASS`. `outcome` qemu-img zawiera `argv`, `fixture_sha256`, `exit` (0) i
