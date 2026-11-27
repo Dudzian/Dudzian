@@ -1,0 +1,52 @@
+# Stage 9 V5d11, profil A v1. Kompilator wstawia wyłącznie ścieżki przypięte w wejściach.
+abi <abi/4.0>,
+
+@{pid}=[1-9]{,[0-9],[0-9][0-9],[0-9][0-9][0-9],[0-9][0-9][0-9][0-9],[0-9][0-9][0-9][0-9][0-9],[0-9][0-9][0-9][0-9][0-9][0-9]}
+
+profile cryptohunter-observer-preflight-v5d11-a flags=(enforce) {
+  # Wyłącznie bootstrap wybiera argv, a launcher sprawdza swój widok.
+  @OBSERVER_RULES@
+
+  # Gniazdo nazwane ścieżką ma osobną regułę plikową. Prawa zapisu dotyczą
+  # transportu RPC, którego granicę egzekwuje demon libvirt.
+  unix (create, getattr, getopt, shutdown) type=stream addr=none,
+  /dev/null rw,
+  /proc/@{pid}/{mountinfo,status,exe} r,
+  /proc/@{pid}/attr/apparmor/current r,
+  /proc/@{pid}/ns/{mnt,pid,net} r,
+  /proc/@{pid}/fd/ r,
+  /proc/@{pid}/fd/[0-9]* r,
+  deny /proc/@{pid}/environ r,
+
+  # Zagnieżdżona etykieta zachowuje profil rodzica pod NoNewPrivs i nakłada
+  # ograniczenia qemu. Brak dopuszczenia do wykonania w profilu qemu uniemożliwia
+  # ponowne wykonanie interpretera, samego qemu-img lub innego programu.
+  /usr/bin/qemu-img rmPx -> &cryptohunter-observer-preflight-v5d11-qemu,
+  signal (send, receive) set=(term, kill) peer=cryptohunter-observer-preflight-v5d11-a,
+  signal (send) set=(term, kill) peer=cryptohunter-observer-preflight-v5d11-qemu,
+  signal (receive) set=(term, kill) peer=unconfined,
+  deny network inet,
+  deny network inet6,
+  deny ptrace,
+  deny capability,
+  deny mount,
+  deny umount,
+  deny pivot_root,
+}
+
+profile cryptohunter-observer-preflight-v5d11-qemu flags=(enforce) {
+  @QEMU_RULES@
+  /usr/bin/qemu-img mr,
+  /proc/@{pid}/fd/[0-9]* r,
+  /proc/@{pid}/status r,
+  /dev/null rw,
+
+  signal (receive) set=(term, kill) peer=cryptohunter-observer-preflight-v5d11-a,
+  deny network,
+  deny network unix,
+  deny ptrace,
+  deny capability,
+  deny mount,
+  deny umount,
+  deny pivot_root,
+}
