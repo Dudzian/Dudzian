@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from importlib import import_module
+import re
 from types import ModuleType
 from typing import Any
 import uuid
@@ -14,6 +15,10 @@ URI = "qemu:///system"
 
 class Refusal(ValueError):
     """The diagnostic fixture or read observations were incompatible."""
+
+
+def valid_network_name(value: Any) -> bool:
+    return type(value) is str and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value) is not None
 
 
 def exercise_imports() -> tuple[str, ...]:
@@ -49,7 +54,7 @@ def exercise_libvirt(
 ) -> dict[str, str]:
     """Exercise V5d1 read RPCs on a preprovisioned disposable domain."""
     expected_uuid = _uuid(domain_uuid)
-    if not network_name or len(network_name) > 128:
+    if not valid_network_name(network_name):
         raise Refusal("DIAGNOSTIC_FIXTURE_NETWORK_REJECTED")
     connection = module.openReadOnly(URI)
     if connection is None:
@@ -150,7 +155,6 @@ def inputs() -> dict[str, Any]:
 def validate_inputs(raw: bytes) -> dict[str, Any]:
     import json
     from pathlib import PurePosixPath
-    import re
 
     def path(value: Any) -> bool:
         return (
@@ -167,8 +171,7 @@ def validate_inputs(raw: bytes) -> dict[str, Any]:
         or not path(doc["root"])
         or doc["socket"] not in {"/run/libvirt/libvirt-sock-ro", "/run/libvirt/virtqemud-sock-ro"}
         or _uuid(doc["domain_uuid"]) != doc["domain_uuid"]
-        or type(doc["network_name"]) is not str
-        or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", doc["network_name"])
+        or not valid_network_name(doc["network_name"])
         or type(doc["images"]) is not dict
         or set(doc["images"]) != set(IMAGE_FORMATS)
     ):

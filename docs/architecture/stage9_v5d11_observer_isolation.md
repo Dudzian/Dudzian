@@ -18,6 +18,33 @@ grupy oraz innych użytkowników. Przykład zakłada prywatny katalog wejść
 Potrzebne są chronione narzędzia Ubuntu 24.04, w tym CPython 3.12, OpenSSL,
 kompilator ze statyczną libc, parser AppArmor oraz `/usr/bin/readelf` z binutils.
 
+Przygotuj świeży eksport z zaufanego checkoutu. Podaj pełny SHA zatwierdzonego
+commita z niezależnego przeglądu. Wymagaj pustej listy z `find` i sprawdź
+własność i tryby przodków wskazane przez `namei`. `-B` wyłącza zapis cache
+Pythona. Zaufanie do źródeł opiera się na eksporcie zatwierdzonego commita
+i ochronie katalogu przed zmianami. Uprzywilejowany operator ładuje zamkniętą
+listę plików `.py` z tego drzewa bez wyszukiwania modułów i cache w checkout.
+
+```bash
+(
+  set -euo pipefail
+  read -r -p 'Bezwzględna ścieżka zaufanego checkoutu: ' checkout
+  read -r -p 'Pełny SHA niezależnie zatwierdzonego commita: ' revision
+  [[ $checkout = /* && $revision =~ ^[0-9a-f]{40}$ ]]
+  [[ $(git -C "$checkout" cat-file -t "$revision") = commit ]]
+  git -C "$checkout" fsck --full --strict
+  target=/opt/stage9-reviewed
+  sudo /usr/bin/mkdir -m 0755 -- "$target"
+  git -C "$checkout" archive "$revision" -- scripts deployment/stage9_v5d11 |
+    sudo /usr/bin/tar -x --no-same-owner --no-same-permissions -C "$target"
+  sudo /usr/bin/namei -l -- "$target"
+  findings=$(sudo /usr/bin/find "$target" -xdev \( ! -uid 0 -o -perm /022 \
+    -o -type l -o -name '__pycache__' -o -name '*.pyc' -o -name '*.pyo' \) -print)
+  test -z "$findings" || { printf '%s\n' "$findings"; exit 2; }
+  (cd "$target" && sha256sum --strict --check deployment/stage9_v5d11/SHA256SUMS)
+)
+```
+
 Utwórz `inputs.json` według przykładu. Wprowadź niezależne piny receipt, aprobaty
 V2, klucza publicznego recenzenta oraz polityk pomiarowych. Wybierz osobny UID
 i GID dedykowanego konta diagnostycznego bez działających procesów,
@@ -51,6 +78,27 @@ sudo /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
 ```
 
 ## 2. Fizyczny pomiar widoku
+
+W inwentaryzacji odczytaj wersję jądra i ustawienie AppArmor. Zachowaj oba
+odczyty w prywatnym pakiecie.
+
+```sh
+uname -srmo
+sudo /usr/bin/cat /proc/sys/kernel/apparmor_restrict_unprivileged_unconfined
+```
+
+Oczekiwana wartość przed `measure` i `diagnose` to `0`. Wartość `1` może
+spowodować dołączenie etykiety do `unconfined` po zrzuceniu capabilities.
+Bootstrap wymaga pojedynczej dokładnej etykiety `enforce`. Wartość `1`,
+brak odczytu lub nieprawidłowa wartość blokują próbę. Wartość `0` pozwala
+ocenić tę bramkę wejściową. Faktyczne przejście i etykietę sprawdza bootstrap.
+Każda zmiana konfiguracji zabezpieczeń hosta ma własną procedurę.
+
+Dla jąder z zachowaniem źródeł Ubuntu Noble GA 6.8 lub HWE `7.0.0-43.43~24.04.1`
+odnotuj osobną przeszkodę. AppArmor może odmówić `stat` obiektu z wewnętrznego
+montowania `nsfs` po przejściu do `enforce` i zakończyć bootstrap przez
+`BOOTSTRAP_NAMESPACE_STAT` przed zapisaniem pomiaru. Ustal zgodność dokładnego
+jądra hosta przed dopuszczeniem prób. [Obsługa ścieżki w AppArmor w HWE 7.0.0-43](https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble/tree/security/apparmor/path.c?id=60e65196d87a3b82950ceb158a08953b6468c785#n97)
 
 Po dopuszczeniu samego pomiaru uruchom polecenie z nowym katalogiem wynikowym.
 
@@ -95,13 +143,15 @@ sudo /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
   --diagnostic-inputs /root/stage9-private/diagnostic.json
 ```
 
-Niezależny recenzent przygotowuje obiekt `review` z dokładnie pięcioma polami.
+Niezależny recenzent przygotowuje obiekt `review` z dokładnie sześcioma polami.
 Wartości `profile` i `decision` to
-`stage9-v5d11-diagnostic-authorization-v1` i
+`stage9-v5d11-diagnostic-authorization-v2` i
 `AUTHORIZE_NATIVE_DIAGNOSTIC_ONLY`. `spec_sha256` wiąże dokładne bajty
 `diagnostic.json`. `nonce` to losowy, jednorazowy identyfikator z 64 małych
 znaków hex. `expires_utc` to całkowity czas wygaśnięcia Unix, maksymalnie
-godzinę po weryfikacji. Recenzent podpisuje kanoniczne bajty `review` Ed25519
+godzinę po weryfikacji. `host_boot_id` ma wartość kanonicznego UUIDv4 z
+`/proc/sys/kernel/random/boot_id`, przekazaną recenzentowi w prywatnym obiegu
+bez końcowego LF. Recenzent podpisuje kanoniczne bajty `review` Ed25519
 według serializatora V5d10, bez końcowego znaku nowej linii. Odpowiedź zawiera
 tylko `review` i `signature_hex`. Klucz publiczny w DER SubjectPublicKeyInfo
 musi odpowiadać niezależnemu pinowi w manifeście. Narzędzie pomiarowe nie tworzy
@@ -111,6 +161,11 @@ Po otrzymaniu podpisu operator uruchamia nową sesję, ponownie sprawdza widok
 i zużywa nonce przed pierwszym działaniem diagnostycznym. Użycie innego
 katalogu specyfikacji nie zmienia powiązanej ścieżki manifestu ani miejsca
 zapisu znacznika. Nieudana próba po zużyciu nonce wymaga nowej zgody.
+Marker pozostaje w trwałym, chronionym katalogu manifestu. W okresie ważności
+zgody zachowaj katalog i znaczniki, również podczas procedur odtwarzania.
+Zgody V1, zgody z innego rozruchu i próby po ponownym uruchomieniu hosta
+wymagają nowego podpisu V2. Bajty specyfikacji diagnostycznej zachowują
+dotychczasowy schemat.
 
 ```sh
 sudo /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \

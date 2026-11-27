@@ -6,6 +6,7 @@ from copy import deepcopy
 import io
 import os
 from pathlib import Path
+import py_compile
 import shutil
 import stat
 import subprocess
@@ -16,6 +17,7 @@ import pytest
 
 from scripts import stage9_v5d10_contract as contract
 from scripts import stage9_v5d10_launch as launch
+from scripts import stage9_v5d11_diagnostic as payload
 from scripts import stage9_v5d11_operator as operator
 
 pytestmark = [
@@ -377,6 +379,7 @@ def test_measure_from_staging_to_shutdown_without_dispatch(tmp_path, monkeypatch
         operator, "operator_inputs", lambda p: (manifest_bytes, manifest, CONTRACT, LAUNCH)
     )
     monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator, "check_apparmor_transition", lambda: None)
     monkeypatch.setattr(operator, "pinned", lambda *a, **kw: b"key")
     policies = [{"rule": 1}, {"rule": 2 if change == "policy" else 1}]
     monkeypatch.setattr(operator, "check_policy", lambda *a: policies.pop(0))
@@ -445,6 +448,54 @@ def test_measure_from_staging_to_shutdown_without_dispatch(tmp_path, monkeypatch
         )
 
 
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        (b"0\n", None),
+        (b"1\n", "APPARMOR_UNCONFINED_TRANSITION_INCOMPATIBLE"),
+        (b"0\n1\n", "APPARMOR_UNCONFINED_SYSCTL_INVALID"),
+        (None, "APPARMOR_UNCONFINED_SYSCTL_UNREADABLE"),
+    ],
+)
+def test_apparmor_transition_setting(tmp_path, raw, reason):
+    setting = tmp_path / "apparmor_restrict_unprivileged_unconfined"
+    if raw is not None:
+        setting.write_bytes(raw)
+    if reason is None:
+        operator.check_apparmor_transition(setting)
+    else:
+        with pytest.raises(operator.Refusal, match=reason):
+            operator.check_apparmor_transition(setting)
+
+
+@pytest.mark.parametrize("diagnostic", [False, True])
+def test_refuses_apparmor_stacking_before_measurement(tmp_path, monkeypatch, diagnostic):
+    manifest = sample_manifest(tmp_path)
+    manifest_path = tmp_path / "operator.json"
+    output = tmp_path / "out"
+    setting = tmp_path / "apparmor_restrict_unprivileged_unconfined"
+    setting.write_bytes(b"1\n")
+    check_apparmor_transition = operator.check_apparmor_transition
+    monkeypatch.setattr(
+        operator, "check_apparmor_transition", lambda: check_apparmor_transition(setting)
+    )
+    monkeypatch.setattr(
+        operator, "operator_inputs", lambda p: (b"manifest", manifest, CONTRACT, LAUNCH)
+    )
+    monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator, "diagnostic_inputs", lambda *a: (b"spec", {}))
+    for action in ("trusted_bootstrap", "diagnostic_authority", "staged"):
+        monkeypatch.setattr(
+            operator, action, lambda *a: pytest.fail("session progressed past gate")
+        )
+    with pytest.raises(operator.Refusal, match="APPARMOR_UNCONFINED_TRANSITION_INCOMPATIBLE"):
+        if diagnostic:
+            operator.diagnose(manifest_path, tmp_path / "spec", tmp_path / "approval", output)
+        else:
+            operator.measure(manifest_path, output)
+    assert not output.exists()
+
+
 def test_live_review_reads_one_absolute_file_and_pins_candidate(tmp_path, monkeypatch):
     authority = tmp_path / "candidate.json"
     authority.write_bytes(b"candidate")
@@ -508,6 +559,64 @@ def test_build_refuses_relative_target_and_creates_static_worker(tmp_path):
         "seccomp_sha256": contract.digest(operator.seccomp_bytes(output)),
     }
     assert stat.S_IMODE(output.stat().st_mode) == 0o755
+
+
+def test_privileged_host_imports_use_only_reviewed_sources(tmp_path):
+    source = Path(operator.__file__).parent
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for name in (
+        "__init__.py",
+        "stage9_v5d11_operator.py",
+        *(f"stage9_{name}.py" for name in operator.HOST_IMPORTS),
+    ):
+        shutil.copyfile(source / name, scripts / name)
+    module = scripts / "stage9_v5d10_contract.py"
+    reviewed = module.read_bytes()
+    module.write_text('CACHE_SAMPLE = "old source"\n', encoding="utf-8")
+    py_compile.compile(
+        str(module), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH
+    )
+    module.write_bytes(reviewed)
+    (scripts / "unreviewed.py").write_text('VALUE = "extra module"\n', encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            """
+import importlib
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1])
+tool = module["tool"]
+path = tuple(sys.path)
+capture, qualify, virt = module["host_tools"](tool("v5d10_contract"), tool("v5d10_launch"))
+assert "collect" in capture and "assess" in qualify and "measure_host" in virt
+assert not hasattr(capture["contract"], "CACHE_SAMPLE")
+assert tuple(sys.path) == path
+try:
+    importlib.import_module("scripts.unreviewed")
+except ModuleNotFoundError:
+    pass
+else:
+    raise AssertionError("extra checkout module was importable")
+""",
+            str(scripts / "stage9_v5d11_operator.py"),
+        ],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+
+
+def test_privileged_host_imports_refuse_an_existing_package():
+    with pytest.raises(operator.Refusal, match="OPERATOR_IMPORT_ALREADY_LOADED"):
+        operator.host_tools(CONTRACT, LAUNCH)
 
 
 def diagnostic_fixture(tmp_path):
@@ -583,14 +692,51 @@ def test_diagnostic_input_binding(tmp_path, monkeypatch, change):
         assert operator.apparmor_command(diagnostic, "check", diagnostic=True)[-1] == "--diagnostic"
 
 
+@pytest.mark.parametrize("name", ["", "two names", "dir/name", "ż", "a" * 129, 8, None])
+def test_invalid_network_name_refused_by_both_before_authorization(tmp_path, monkeypatch, name):
+    raw, manifest, spec, path = diagnostic_fixture(tmp_path)
+    spec["network_name"] = name
+    path.write_bytes(contract.canonical(spec))
+    manifest_path = Path(spec["manifest"])
+    monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator, "operator_inputs", lambda *a: (raw, manifest, CONTRACT, LAUNCH))
+    monkeypatch.setattr(
+        operator, "diagnostic_authority", lambda *a: pytest.fail("authorization touched")
+    )
+    output = tmp_path / "run"
+    with pytest.raises(operator.Refusal, match="DIAGNOSTIC_FIXTURE_REJECTED"):
+        operator.diagnose(manifest_path, path, tmp_path / "authorization", output)
+    assert not output.exists()
+    with pytest.raises(payload.Refusal, match="DIAGNOSTIC_INPUT_SCHEMA"):
+        payload.validate_inputs(
+            contract.canonical(
+                {
+                    "root": manifest["root"],
+                    "socket": SOCKET,
+                    "domain_uuid": spec["domain_uuid"],
+                    "network_name": name,
+                    "images": {
+                        fmt: {"path": image, "sha256": SHA}
+                        for fmt, image in spec["fixtures"].items()
+                    },
+                }
+            )
+        )
+
+
 @pytest.mark.parametrize("expiry", [999, 1001, 4601])
 def test_authorization_expiry_and_domain_handoff(tmp_path, monkeypatch, expiry):
     _, manifest, _, _ = diagnostic_fixture(tmp_path)
     path = tmp_path / "approval.json"
-    envelope = {"review": {"nonce": SHA, "expires_utc": expiry}, "signature_hex": "placeholder"}
+    boot_id = "aec31b19-ee7a-43da-a167-62629179a6b2"
+    envelope = {
+        "review": {"nonce": SHA, "expires_utc": expiry, "host_boot_id": boot_id},
+        "signature_hex": "placeholder",
+    }
     path.write_bytes(contract.canonical(envelope))
     monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
     monkeypatch.setattr(operator.time, "time", lambda: 1000)
+    monkeypatch.setattr(operator, "diagnostic_boot_id", lambda: boot_id)
     monkeypatch.setattr(operator, "review_key", lambda *a: b"key")
     calls = []
     monkeypatch.setattr(operator, "verify_review", lambda *a, **kw: calls.append((a, kw)))
@@ -600,6 +746,7 @@ def test_authorization_expiry_and_domain_handoff(tmp_path, monkeypatch, expiry):
             "spec_sha256": contract.digest(b"spec"),
             "nonce": SHA,
             "expires_utc": expiry,
+            "host_boot_id": boot_id,
         }
         assert calls[0][1] == {
             "profile": operator.DIAGNOSTIC_REVIEW,
@@ -609,6 +756,76 @@ def test_authorization_expiry_and_domain_handoff(tmp_path, monkeypatch, expiry):
         with pytest.raises(operator.Refusal, match="AUTHORIZATION_WINDOW"):
             operator.diagnostic_authority(path, b"spec", manifest, CONTRACT)
         assert not calls
+
+
+@pytest.mark.parametrize("value", [None, b"invalid\n", b"\xff\n", b"0" * 38])
+def test_host_boot_id_requires_a_canonical_kernel_value(tmp_path, monkeypatch, value):
+    path = tmp_path / "boot-id"
+    monkeypatch.setattr(operator, "BOOT_ID", path)
+    if value is not None:
+        path.write_bytes(value)
+    with pytest.raises(operator.Refusal, match="HOST_BOOT_ID_UNAVAILABLE"):
+        operator.diagnostic_boot_id()
+
+
+@pytest.mark.skipif(
+    shutil.which("openssl") is None, reason="OpenSSL required for synthetic Ed25519 test"
+)
+def test_diagnostic_signature_binds_boot_and_spec(tmp_path, monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    _, manifest, _, _ = diagnostic_fixture(tmp_path)
+    path = tmp_path / "approval.json"
+    boot = tmp_path / "boot-id"
+    boot_id = "aec31b19-ee7a-43da-a167-62629179a6b2"
+    other_boot_id = "0c486705-3358-4bce-991d-9710bc673c33"
+    boot.write_text(f"{boot_id}\n", encoding="ascii")
+    signing_key = Ed25519PrivateKey.generate()
+    public_key = signing_key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator.time, "time", lambda: 1000)
+    monkeypatch.setattr(operator, "BOOT_ID", boot)
+    monkeypatch.setattr(operator, "review_key", lambda *a: public_key)
+
+    def signed(review):
+        return contract.canonical(
+            {"review": review, "signature_hex": signing_key.sign(contract.canonical(review)).hex()}
+        )
+
+    spec_raw = b"exact reviewed spec bytes"
+    review = {
+        "profile": operator.DIAGNOSTIC_REVIEW,
+        "decision": "AUTHORIZE_NATIVE_DIAGNOSTIC_ONLY",
+        "spec_sha256": contract.digest(spec_raw),
+        "nonce": SHA,
+        "expires_utc": 1001,
+        "host_boot_id": boot_id,
+    }
+    path.write_bytes(signed(review))
+    assert operator.diagnostic_authority(path, spec_raw, manifest, CONTRACT) == (
+        path.read_bytes(),
+        SHA,
+    )
+    with pytest.raises(operator.Refusal, match="REVIEW_SCOPE_REJECTED"):
+        operator.diagnostic_authority(path, spec_raw + b"\n", manifest, CONTRACT)
+
+    boot.write_text(f"{other_boot_id}\n", encoding="ascii")
+    with pytest.raises(operator.Refusal, match="AUTHORIZATION_BOOT_REJECTED"):
+        operator.diagnostic_authority(path, spec_raw, manifest, CONTRACT)
+    envelope = contract.loads(path.read_bytes())
+    envelope["review"]["host_boot_id"] = other_boot_id
+    path.write_bytes(contract.canonical(envelope))
+    with pytest.raises(operator.Refusal, match="REVIEW_SIGNATURE_REJECTED"):
+        operator.diagnostic_authority(path, spec_raw, manifest, CONTRACT)
+
+    legacy = {**review, "profile": "stage9-v5d11-diagnostic-authorization-v1"}
+    del legacy["host_boot_id"]
+    path.write_bytes(signed(legacy))
+    with pytest.raises(operator.Refusal, match="AUTHORIZATION_BOOT_REJECTED"):
+        operator.diagnostic_authority(path, spec_raw, manifest, CONTRACT)
 
 
 def test_dedicated_account_checks_every_uid_gid_and_supplementary_group(tmp_path):
@@ -667,12 +884,32 @@ def test_diagnostic_frame_requires_actual_identity_and_image_check():
         operator.read_frame(frame(header, mountinfo), SOCKET, CONTRACT, LAUNCH, diagnostic=True)
 
 
-def test_one_shot_authorization_marker_never_overwrites(tmp_path):
+def test_one_shot_authorization_marker_never_overwrites(tmp_path, monkeypatch):
     marker = tmp_path / "diagnostic-used"
+    syncs = []
+    fsync = os.fsync
+
+    def track_sync(fd):
+        syncs.append(stat.S_IFMT(os.fstat(fd).st_mode))
+        fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", track_sync)
     operator.consume_diagnostic_authority(marker, b"signed-fixture")
     with pytest.raises(FileExistsError):
         operator.consume_diagnostic_authority(marker, b"duplicate")
     assert marker.read_bytes() == b"signed-fixture"
+    assert stat.S_IMODE(marker.stat().st_mode) == 0o600
+    assert syncs == [stat.S_IFREG, stat.S_IFDIR]
+
+
+def test_nonce_ledger_refuses_symlinked_parent(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    with pytest.raises(OSError):
+        operator.consume_diagnostic_authority(alias / "diagnostic-used", b"signed-fixture")
+    assert not list(real.iterdir())
 
 
 @pytest.mark.parametrize("failure", [None, "runtime", "policy", "socket", "worker"])
@@ -701,14 +938,30 @@ def test_diagnostic_operator_only_releases_a_reviewed_view(tmp_path, monkeypatch
     )
     process = SimpleNamespace(wait=lambda **kw: 5 if failure == "worker" else 0)
     calls = []
+    expected_session = {
+        "spec_sha256": contract.digest(spec_path.read_bytes()),
+        "authorization_sha256": contract.digest(approval),
+        "nonce": SHA,
+    }
 
     def capture(*args, staging_root, on_libvirt):
         calls.append("diagnostic")
         assert staging_root == tree
-        assert on_libvirt(123) == [SOCKET]
+        assert on_libvirt(123, 456) == [SOCKET]
         return {"python-startup": {}}, {"view": {}, "read_results": {}, "connect_paths": [SOCKET]}
 
     daemon_id = [*socket_id] if failure != "socket" else [1, *socket_id[1:]]
+
+    def fixture_denial(*args, output, session):
+        assert output == tmp_path / "run"
+        assert session == expected_session
+        calls.append("denial")
+
+    def observe(pid, started, namespaces, host):
+        assert (pid, started, namespaces) == (123, 456, header["namespaces"])
+        assert host == {"host_socket_identity": daemon_id}
+        return [SOCKET]
+
     tools = {
         "v5d11_capture": {"collect": capture},
         "v5d11_qualify": {
@@ -718,18 +971,23 @@ def test_diagnostic_operator_only_releases_a_reviewed_view(tmp_path, monkeypatch
         },
         "v5d11_libvirt": {
             "measure_host": lambda *a: {"host_socket_identity": daemon_id},
-            "collect_fixture_denial": lambda *a: calls.append("denial"),
-            "observe_live_connections": lambda *a: [SOCKET],
+            "collect_fixture_denial": fixture_denial,
+            "observe_live_connections": observe,
             "assemble": lambda *a: {"socket": SOCKET},
         },
     }
     monkeypatch.setattr(operator, "operator_inputs", lambda *a: (raw, manifest, CONTRACT, LAUNCH))
     monkeypatch.setattr(operator, "protected", lambda *a, **kw: None)
+    monkeypatch.setattr(operator, "check_apparmor_transition", lambda: None)
     monkeypatch.setattr(operator, "diagnostic_inputs", lambda *a: (spec_path.read_bytes(), spec))
     monkeypatch.setattr(operator, "diagnostic_authority", lambda *a: (approval, SHA))
     monkeypatch.setattr(operator, "trusted_bootstrap", lambda *a: bootstrap)
     monkeypatch.setattr(operator, "pinned", lambda *a, **kw: b"{}")
-    monkeypatch.setattr(operator, "tool", tools.__getitem__)
+    monkeypatch.setattr(
+        operator,
+        "host_tools",
+        lambda *a: (tools["v5d11_capture"], tools["v5d11_qualify"], tools["v5d11_libvirt"]),
+    )
     monkeypatch.setattr(operator, "stage_diagnostic", lambda *a: None)
     monkeypatch.setattr(operator, "staged", lambda *a: nullcontext(stages))
     monkeypatch.setattr(operator, "check_dedicated_account", lambda *a: None)
@@ -758,4 +1016,6 @@ def test_diagnostic_operator_only_releases_a_reviewed_view(tmp_path, monkeypatch
         evidence = (output / "native-evidence.json").read_bytes()
         record = contract.loads((output / "diagnostic-run.json").read_bytes())
         assert record["evidence_sha256"] == contract.digest(evidence)
+        assert contract.loads(evidence)["session"] == expected_session
+        assert {name: record[name] for name in expected_session} == expected_session
         assert contract.loads(evidence)["view"]["purpose"] == "diagnostic"
