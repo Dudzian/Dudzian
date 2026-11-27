@@ -1,0 +1,20 @@
+{
+  "profile": "stage9-v5d11-operator-inputs-v1",
+  "root": "/path/to/materialized-profile-a",
+  "uid": 1234,
+  "gid": 1234,
+  "approval": "/root/stage9-private/approval.v2.json",
+  "abi_request": "/root/stage9-private/abi-request.json",
+  "bootstrap": "/root/stage9-private/bootstrap",
+  "review_key": "/root/stage9-private/reviewer-public.der",
+  "libvirt_socket": "/run/libvirt/libvirt-sock-ro",
+  "receipt_sha256": "<independent receipt hash>",
+  "approval_sha256": "<independent V2 approval hash>",
+  "bootstrap_sha256": "<reviewed static bootstrap hash>",
+  "review_key_sha256": "<independently provisioned key hash>",
+  "apparmor_source_sha256": "<reviewed rendered source hash>",
+  "apparmor_compiled_sha256": "<reviewed compiled policy hash>",
+  "seccomp_sha256": "<reviewed exact classic BPF hash>",
+  "scratch": "/var/lib/stage9-scratch",
+  "data_files": {}
+}

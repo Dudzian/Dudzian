@@ -1,0 +1,69 @@
+name: Stage 9 V5d11 synthetic isolation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/stage9-v5d11-synthetic.yml'
+      - 'deployment/stage9_v5d11/**'
+      - 'scripts/stage9_v5d11*'
+      - 'scripts/stage9_v5d10*'
+      - 'tests/deployment/test_stage9_v5d11*'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    name: Syntetyczne regresje i pokrycie V5d11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-python@v7
+        with: {python-version: '3.12'}
+      - name: Zainstaluj narzędzia testowe
+        run: >-
+          python -m pip install pytest pytest-cov 'diff-cover>=9,<12'
+          'ruff==0.14.11' 'mypy==1.10.0' 'defusedxml==0.7.1' 'cryptography==50.0.2'
+      - name: Sprawdź styl i typy Linux oraz Win32
+        run: |
+          python -m ruff check scripts/stage9_v5d11*.py tests/deployment/test_stage9_v5d11*.py
+          python -m ruff format --check scripts/stage9_v5d11*.py tests/deployment/test_stage9_v5d11*.py
+          python -m mypy scripts/stage9_v5d11*.py
+          python -m mypy --platform win32 scripts/stage9_v5d11*.py
+      - name: Wykonaj testy syntetyczne bez uprawnień roota
+        env: {PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'}
+        run: |
+          coverage_modules=()
+          for module in scripts/stage9_v5d11*.py; do
+            coverage_modules+=("--cov=scripts.$(basename "$module" .py)")
+          done
+          python -m pytest -q --confcutdir=tests/deployment \
+            tests/deployment/test_stage9_v5d11*.py \
+            -p pytest_cov.plugin --cov-branch "${coverage_modules[@]}" \
+            --cov-report=xml:stage9-v5d11-coverage.xml --junitxml=stage9-v5d11-static.xml
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from coverage import CoverageData
+
+          data = CoverageData(basename=os.environ.get("COVERAGE_FILE", ".coverage"))
+          data.read()
+          expected = {path.as_posix() for path in Path("scripts").glob("stage9_v5d11*.py")}
+          measured = {name.replace("\\", "/") for name in data.measured_files()}
+          if not expected or not data.has_arcs() or not expected.issubset(measured):
+              raise SystemExit("V5D11_COVERAGE_SCOPE_REFUSED")
+          PY
+          python -m diff_cover.diff_cover_tool stage9-v5d11-coverage.xml --compare-branch=origin/main --fail-under=70
+      - name: Zachowaj dowody testów syntetycznych
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stage9-v5d11-synthetic-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            stage9-v5d11-coverage.xml
+            stage9-v5d11-static.xml
+          if-no-files-found: error
+          retention-days: 14
